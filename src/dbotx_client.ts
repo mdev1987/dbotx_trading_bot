@@ -246,8 +246,10 @@ async function handleNewPairInfo(msg: DbotxNewPairInfo): Promise<void> {
   }
 
   /* defer trade opening – wait for first observable price */
-  pendingFirstPrice.push(mint);
-  pendingFirstPriceTimestamps.set(mint, Date.now());
+  if (!pendingFirstPrice.includes(mint)) {
+    pendingFirstPrice.push(mint);
+    pendingFirstPriceTimestamps.set(mint, Date.now());
+  }
 }
 
 async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
@@ -271,6 +273,7 @@ async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
     const idx = pendingFirstPrice.indexOf(mint);
     if (idx !== -1) {
       pendingFirstPrice.splice(idx, 1);
+      pendingFirstPriceTimestamps.delete(mint);
       isFirstPrice = true;
     }
   }
@@ -282,6 +285,7 @@ async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
    */
   if (!mint && pendingFirstPrice.length > 0) {
     mint = pendingFirstPrice.shift()!;
+    pendingFirstPriceTimestamps.delete(mint);
     isFirstPrice = true;
   }
 
