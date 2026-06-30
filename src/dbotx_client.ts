@@ -71,7 +71,19 @@ function sendSubscribe(type: string, args: Record<string, unknown> = {}): void {
 // ---------------------------------------------------------------------------
 
 async function handleNewPairInfo(msg: DbotxNewPairInfo): Promise<void> {
-  const { pair, token: mint } = msg.result;
+  const pair = msg.result.p;
+  const mint = msg.result.m;
+
+  if (!mint || !pair) {
+    console.warn("[ws] newPairInfo missing mint/pair, skipping");
+    saveRawEvent(Date.now(), "newPairInfo", mint ?? null, pair ?? null, msg);
+    return;
+  }
+
+  const initialLiquiditySol = msg.result.sl
+    ? msg.result.sl / 1_000_000_000
+    : null;
+
   const rawJson = JSON.stringify(msg);
 
   saveRawEvent(Date.now(), "newPairInfo", mint, pair, msg);
@@ -79,11 +91,9 @@ async function handleNewPairInfo(msg: DbotxNewPairInfo): Promise<void> {
   upsertToken(
     mint,
     pair,
-    msg.result.initial_market_cap != null
-      ? msg.result.initial_market_cap / 1_000_000
-      : null,
-    msg.result.initial_market_cap ?? null,
-    msg.result.initial_liquidity ?? null,
+    null,
+    null,
+    initialLiquiditySol,
     rawJson,
   );
 

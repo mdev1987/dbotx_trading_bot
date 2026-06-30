@@ -65,6 +65,9 @@ function evaluateExit(trade: TradeRow): ExitAction | null {
   /* need a price for most checks */
   if (priceSol === null || priceSol === 0) return null;
 
+  /* skip trades that haven't received their first price yet */
+  if (trade.token_amount <= 0) return null;
+
   const remaining = trade.token_amount - trade.filled_token_amount;
   if (remaining <= 0) {
     /* all tokens already sold via partial TPs – close the empty trade */

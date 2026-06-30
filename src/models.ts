@@ -24,18 +24,34 @@ export interface DbotxSubscribeAck {
 /**
  * Payload of a `newPairInfo` message – fired when a brand-new
  * trading pair is created on a DEX that DBotX monitors.
+ *
+ * Field names are DBotX's short codes:
+ *   p  – pair address
+ *   m  – token mint
+ *   s  – symbol
+ *   n  – name
+ *   pt – pool type (e.g. "pump")
+ *   sl – initial liquidity in SOL lamports
+ *   ca – created timestamp (milliseconds)
+ *   da – deployer address
+ *   ipm – immutable (mint authority disabled)
+ *   ita – freeze authority disabled
+ *   im  – token image URL
  */
 export interface DbotxNewPairInfo {
   type: "newPairInfo";
   result: {
-    pair: string;
-    token: string;
-    symbol: string;
-    name: string;
-    dex: string;
-    initial_liquidity: number;
-    initial_market_cap: number;
-    created_timestamp: number;
+    p: string;
+    m: string;
+    s: string;
+    n: string;
+    pt: string;
+    sl: number;
+    ca: number;
+    da: string;
+    ipm: boolean;
+    ita: boolean;
+    im?: string;
     [key: string]: unknown;
   };
 }

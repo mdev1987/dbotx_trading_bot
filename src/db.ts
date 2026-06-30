@@ -364,6 +364,13 @@ export function updateTradePnL(
   const trade = getTradeById(id);
   if (!trade) return;
 
+  /* initialise token_amount when the first price arrives */
+  if (trade.token_amount === 0 && priceSol !== null && priceSol > 0) {
+    const newTokenAmount = trade.amount_sol / priceSol;
+    db.query("UPDATE trades SET token_amount = ? WHERE id = ?").run(newTokenAmount, id);
+    trade.token_amount = newTokenAmount;
+  }
+
   let highestPrice = trade.highest_price ?? priceSol;
   let lowestPrice = trade.lowest_price ?? priceSol;
 
