@@ -45,18 +45,13 @@ export async function openPaperTrade(
 ): Promise<TradeRow | null> {
   const rawJson = JSON.stringify(rawEvent);
 
-  /* extract entry market data from the newPairInfo event */
-  const eventData = rawEvent != null && typeof rawEvent === "object"
+  /* extract entry market data from msg.result (mp/cr live in result) */
+  const raw = rawEvent != null && typeof rawEvent === "object"
     ? (rawEvent as Record<string, unknown>)
     : null;
-
-  const entryMarketCap = eventData?.mp != null
-    ? (eventData.mp as number)
-    : null;
-
-  const entryLiquidity = eventData?.cr != null
-    ? (eventData.cr as number)
-    : null;
+  const result = (raw?.result as Record<string, unknown> | undefined) ?? null;
+  const entryMarketCap = (result?.mp as number) ?? null;
+  const entryLiquidity = (result?.cr as number) ?? null;
 
   /* ---- guard rails ---- */
   const balance = await getWalletBalance();

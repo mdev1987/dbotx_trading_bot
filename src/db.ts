@@ -591,7 +591,7 @@ export async function recalculateWalletEquity(): Promise<void> {
 
   for (const trade of openTrades) {
     const remaining = trade.token_amount - trade.filled_token_amount;
-    if (remaining <= 0) continue;
+    if (remaining < 1e-9) continue;
 
     if (trade.current_price !== null && trade.current_price > 0 && trade.token_amount > 0) {
       openValue += remaining * trade.current_price + trade.filled_sol_proceeds;
