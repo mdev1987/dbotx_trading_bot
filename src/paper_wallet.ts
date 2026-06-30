@@ -132,8 +132,12 @@ export async function closeTrade(
   const updated = dbCloseTrade(tradeId, exitPriceSol, exitPriceUsd, reason);
 
   if (updated) {
+    const proceeds = updated.amount_sol + (updated.pnl_sol ?? 0);
+    addWalletBalance(proceeds);
+
     console.log(
       `[wallet] SELL ${updated.mint.slice(0, 8)}..  ` +
+        `proceeds: ${proceeds.toFixed(6)} SOL  ` +
         `PnL: ${updated.pnl_percent !== null ? (updated.pnl_percent * 100).toFixed(2) : "?"}%  ` +
         `reason: ${reason}`,
     );

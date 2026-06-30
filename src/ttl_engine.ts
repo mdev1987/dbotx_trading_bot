@@ -27,10 +27,10 @@ import {
   getOpenTrades,
   getTradeById,
   getLatestSnapshot,
-  closeTrade as dbCloseTrade,
   insertPartialFill,
   getFilledTierIndices,
 } from "./db";
+import { closeTrade as walletCloseTrade } from "./paper_wallet";
 import type { TradeRow, ExitReason } from "./models";
 
 const TICK_INTERVAL_MS = 1_000;
@@ -57,9 +57,10 @@ interface ExitAction {
 function evaluateExit(trade: TradeRow): ExitAction | null {
   const now = Date.now();
   const ageSeconds = (now - trade.entry_ts) / 1_000;
+  /* use the latest market price; fall back to entry price */
   const priceSol = trade.exit_price_sol
-    ?? trade.entry_price_sol
     ?? getLatestSnapshot(trade.mint)?.price_sol
+    ?? trade.entry_price_sol
     ?? null;
 
   /* need a price for most checks */
@@ -214,9 +215,8 @@ async function tick(): Promise<void> {
       }
 
       // --- full close ---
-      dbCloseTrade(trade.id, null, null, action.close!);
+      const updated = await walletCloseTrade(trade.id, action.close!);
 
-      const updated = getTradeById(trade.id);
       if (updated) {
         console.log(
           `[ttl] trade ${trade.id} CLOSED ${updated.mint.slice(0, 8)}..  ` +

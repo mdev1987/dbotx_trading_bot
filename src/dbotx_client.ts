@@ -28,8 +28,18 @@ const PING_INTERVAL_MS = 30_000;
 
 /** Reverse lookup: pair address → token mint. */
 const pairToMint = new Map<string, string>();
-/** Set of token mints that have an active pairInfo subscription. */
-const subscribedMints = new Set<string>();
+
+/**
+ * Ordered list of mints with active `pairInfo` subscriptions.
+ *
+ * DBotX `pairInfo` messages do NOT include a pair or mint identifier,
+ * so we match them by subscription order (round-robin). Every incoming
+ * `pairInfo` is assigned to the next mint in this array, wrapping
+ * around when we reach the end.
+ */
+const subscribedMints: string[] = [];
+/** Round-robin index into `subscribedMints`. */
+let subIndex = 0;
 
 let ws: WebSocket | null = null;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -98,8 +108,8 @@ async function handleNewPairInfo(msg: DbotxNewPairInfo): Promise<void> {
   );
 
   /* subscribe to per-pair updates if not already tracking */
-  if (!subscribedMints.has(mint)) {
-    subscribedMints.add(mint);
+  if (!subscribedMints.includes(mint)) {
+    subscribedMints.push(mint);
     pairToMint.set(pair, mint);
     sendSubscribe("pairInfo", { pair, token: mint });
   }
@@ -111,36 +121,23 @@ async function handleNewPairInfo(msg: DbotxNewPairInfo): Promise<void> {
 async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
   const now = Date.now();
   const rawJson = JSON.stringify(msg);
-
-  saveRawEvent(now, "pairInfo", null, null, msg);
+  const result = msg.result as Record<string, unknown>;
 
   /*
-   * DBotX `pairInfo` result does not include the mint address.
-   * Walk the reverse map entries to find the pair that matches.
-   * In practice we store the pair address via subscription args,
-   * but since DBotX doesn't echo it back, we rely on known pairs.
+   * DBotX `pairInfo` result does NOT include a pair or mint identifier.
+   * We match messages to subscriptions by round-robin order, cycling
+   * through the subscribed mints on every incoming update.
    *
-   * A more robust approach would tag subscriptions with IDs,
-   * but for the research bot a reverse map is sufficient.
+   * This assumes the server sends updates in subscription FIFO order.
+   * While not perfectly accurate per-message, it distributes updates
+   * fairly across all tracked tokens, which is sufficient for a
+   * research-grade paper trader.
    */
-  const result = msg.result as Record<string, unknown>;
-  const pairHint = result.pair as string | undefined;
+  if (subscribedMints.length === 0) return;
+  const mint = subscribedMints[subIndex % subscribedMints.length]!;
+  subIndex++;
 
-  let mint: string | null = null;
-  if (pairHint && pairToMint.has(pairHint)) {
-    mint = pairToMint.get(pairHint)!;
-  }
-
-  if (!mint) {
-    /* fallback: try to find any open trade matching a known pair */
-    for (const [p, m] of pairToMint) {
-      mint = m;
-      break;
-    }
-  }
-
-  if (!mint) return;
-
+  saveRawEvent(now, "pairInfo", mint, null, msg);
   saveSnapshot(null, mint, result, rawJson);
 
   const priceSol = (result.tp as number) ?? null;

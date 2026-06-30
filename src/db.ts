@@ -387,8 +387,8 @@ export function updateTradePnL(
 
   db.query(
     `UPDATE trades
-     SET entry_price_sol    = COALESCE(?, entry_price_sol),
-         entry_price_usd    = COALESCE(?, entry_price_usd),
+     SET entry_price_sol    = COALESCE(entry_price_sol, ?),
+         entry_price_usd    = COALESCE(entry_price_usd, ?),
          pnl_sol            = ?,
          pnl_percent        = ?,
          highest_price      = ?,
@@ -541,21 +541,25 @@ export function getFilledTierIndices(tradeId: number): Set<number> {
 // ---------------------------------------------------------------------------
 
 export function deductWalletBalance(amountSol: number): void {
+  const now = Date.now();
   db.query(
     `UPDATE wallet
      SET balance_sol = balance_sol - ?,
-         updated_at = ?
+         equity_sol  = equity_sol - ?,
+         updated_at  = ?
      WHERE id = 1`,
-  ).run(amountSol, Date.now());
+  ).run(amountSol, amountSol, now);
 }
 
 export function addWalletBalance(amountSol: number): void {
+  const now = Date.now();
   db.query(
     `UPDATE wallet
      SET balance_sol = balance_sol + ?,
-         updated_at = ?
+         equity_sol  = equity_sol + ?,
+         updated_at  = ?
      WHERE id = 1`,
-  ).run(amountSol, Date.now());
+  ).run(amountSol, amountSol, now);
 }
 
 export function getWalletBalance(): number {
