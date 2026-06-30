@@ -28,6 +28,15 @@ const subscribedMints: string[] = [];
  */
 const pendingFirstPrice: string[] = [];
 
+/** Timestamp (ms) when each mint was added to pendingFirstPrice. */
+const pendingFirstPriceTimestamps = new Map<string, number>();
+
+const PENDING_SWEEP_MS = 120 * 1_000;
+
+/** Cooldown: prevent duplicate BUYs for the same mint within this window. */
+const TRADE_COOLDOWN_MS = 60 * 1_000;
+const lastTradeOpenAt = new Map<string, number>();
+
 /**
  * Last known price per mint (SOL) with timestamp. Used for
  * consistency-based matching when no explicit identifier is available.
@@ -238,6 +247,7 @@ async function handleNewPairInfo(msg: DbotxNewPairInfo): Promise<void> {
 
   /* defer trade opening – wait for first observable price */
   pendingFirstPrice.push(mint);
+  pendingFirstPriceTimestamps.set(mint, Date.now());
 }
 
 async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
@@ -312,6 +322,25 @@ async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
   );
 
   if (isFirstPrice) {
+    if (incomingPrice === 0) {
+      console.warn(
+        `[ws] first price for ${mint.slice(0, 10)}.. has tp=0 – ` +
+        `trade opened at pending price`,
+      );
+    }
+
+    /* cooldown guard: skip if a trade was just opened for this mint */
+    const lastOpen = lastTradeOpenAt.get(mint);
+    const sinceLastOpen = lastOpen ? now - lastOpen : Infinity;
+    if (sinceLastOpen < TRADE_COOLDOWN_MS) {
+      console.warn(
+        `[ws] cooldown: skipping duplicate BUY for ${mint.slice(0, 10)}.. ` +
+        `(${sinceLastOpen}ms since last open)`,
+      );
+      return;
+    }
+    lastTradeOpenAt.set(mint, now);
+
     const pair = mintToPair.get(mint) ?? "";
     await openPaperTrade(mint, pair, priceSol, priceUsd, msg);
 
@@ -366,8 +395,31 @@ export function unsubscribeMint(mint: string): void {
   }
 
   lastPrice.delete(mint);
+  pendingFirstPriceTimestamps.delete(mint);
+  lastTradeOpenAt.delete(mint);
 
   sendUnsubscribe("pairInfo", { token: mint });
+}
+
+/**
+ * Remove entries from pendingFirstPrice that have been waiting longer
+ * than PENDING_SWEEP_MS.  Prevents unbounded growth when a `newPairInfo`
+ * subscription never receives a corresponding `pairInfo`.
+ */
+export function sweepPendingFirstPrice(): void {
+  const now = Date.now();
+  for (let i = pendingFirstPrice.length - 1; i >= 0; i--) {
+    const mint = pendingFirstPrice[i]!;
+    const added = pendingFirstPriceTimestamps.get(mint);
+    if (added !== undefined && now - added > PENDING_SWEEP_MS) {
+      console.warn(
+        `[ws] sweep: removing stale pending mint ${mint.slice(0, 10)}.. ` +
+        `(waited ${((now - added) / 1_000).toFixed(0)}s)`,
+      );
+      pendingFirstPrice.splice(i, 1);
+      pendingFirstPriceTimestamps.delete(mint);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

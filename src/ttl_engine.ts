@@ -31,7 +31,7 @@ import {
   getFilledTierIndices,
 } from "./db";
 import { closeTrade as walletCloseTrade } from "./paper_wallet";
-import { unsubscribeMint } from "./dbotx_client";
+import { unsubscribeMint, sweepPendingFirstPrice } from "./dbotx_client";
 import type { TradeRow, ExitReason } from "./models";
 
 const TICK_INTERVAL_MS = 1_000;
@@ -165,7 +165,16 @@ async function evaluateExit(trade: TradeRow): Promise<ExitAction | null> {
 // Tick
 // ---------------------------------------------------------------------------
 
+let tickCount = 0;
+
 async function tick(): Promise<void> {
+  tickCount++;
+
+  /* sweep stale pendingFirstPrice entries every ~10 s */
+  if (tickCount % 10 === 0) {
+    sweepPendingFirstPrice();
+  }
+
   const trades = await getOpenTrades();
 
   for (const trade of trades) {
