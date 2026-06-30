@@ -19,6 +19,7 @@ import {
   closeTrade as dbCloseTrade,
   getLatestSnapshot,
   getTradeById,
+  recalculateWalletEquity,
 } from "./db";
 import type { ExitReason, TradeRow } from "./models";
 
@@ -43,33 +44,42 @@ export async function openPaperTrade(
   rawEvent: unknown,
 ): Promise<TradeRow | null> {
   const rawJson = JSON.stringify(rawEvent);
-  const marketCap =
-    rawEvent != null && typeof rawEvent === "object" && "mp" in rawEvent
-      ? (rawEvent as Record<string, unknown>).mp as number
-      : null;
+
+  /* extract entry market data from the newPairInfo event */
+  const eventData = rawEvent != null && typeof rawEvent === "object"
+    ? (rawEvent as Record<string, unknown>)
+    : null;
+
+  const entryMarketCap = eventData?.mp != null
+    ? (eventData.mp as number)
+    : null;
+
+  const entryLiquidity = eventData?.cr != null
+    ? (eventData.cr as number)
+    : null;
 
   /* ---- guard rails ---- */
-  const balance = getWalletBalance();
+  const balance = await getWalletBalance();
   if (balance < CONFIG.positionSize) {
     console.warn(`[wallet] insufficient balance for ${mint}: ${balance} SOL`);
     return null;
   }
 
-  const openCount = getOpenTradeCount();
+  const openCount = await getOpenTradeCount();
   if (openCount >= CONFIG.maxOpenTrades) {
     console.warn(`[wallet] max open trades (${CONFIG.maxOpenTrades}) reached, skipping ${mint}`);
     return null;
   }
 
   /* ---- execute ---- */
-  deductWalletBalance(CONFIG.positionSize);
+  await deductWalletBalance(CONFIG.positionSize);
 
   const tokenAmount =
     priceSol !== null && priceSol > 0
       ? CONFIG.positionSize / priceSol
       : 0;
 
-  const trade = insertTrade(
+  const trade = await insertTrade(
     mint,
     pair,
     priceSol,
@@ -78,8 +88,12 @@ export async function openPaperTrade(
     tokenAmount,
     CONFIG.ttlSeconds,
     rawJson,
-    marketCap,
+    entryMarketCap,
+    entryLiquidity,
   );
+
+  /* equity = cash + open position value (at cost until first price) */
+  await recalculateWalletEquity();
 
   console.log(
     `[wallet] BUY  ${mint.slice(0, 8)}..  ${CONFIG.positionSize} SOL` +
@@ -101,7 +115,7 @@ export async function updateTrade(
   currentPriceSol: number | null,
   currentPriceUsd: number | null,
 ): Promise<void> {
-  updateTradePnL(tradeId, currentPriceSol, currentPriceUsd);
+  await updateTradePnL(tradeId, currentPriceSol, currentPriceUsd);
 }
 
 /**
@@ -118,10 +132,10 @@ export async function closeTrade(
   tradeId: number,
   reason: ExitReason,
 ): Promise<TradeRow | null> {
-  const trade = getTradeById(tradeId);
+  const trade = await getTradeById(tradeId);
   if (!trade) return null;
 
-  const snap = getLatestSnapshot(trade.mint);
+  const snap = await getLatestSnapshot(trade.mint);
   const exitPriceSol = snap?.price_sol ?? null;
   const exitPriceUsd = snap?.price_usd ?? null;
 
@@ -129,11 +143,15 @@ export async function closeTrade(
    * `dbCloseTrade` now handles the full PnL including
    * any partial-fill proceeds already banked.
    */
-  const updated = dbCloseTrade(tradeId, exitPriceSol, exitPriceUsd, reason);
+  const updated = await dbCloseTrade(tradeId, exitPriceSol, exitPriceUsd, reason);
 
   if (updated) {
     const proceeds = updated.amount_sol + (updated.pnl_sol ?? 0);
-    addWalletBalance(proceeds);
+    await addWalletBalance(proceeds);
+
+    /* dbCloseTrade already recalculated equity before addWalletBalance;
+     * recalculate again now that cash has been credited. */
+    await recalculateWalletEquity();
 
     console.log(
       `[wallet] SELL ${updated.mint.slice(0, 8)}..  ` +

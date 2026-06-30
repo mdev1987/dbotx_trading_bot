@@ -86,7 +86,7 @@ async function handleNewPairInfo(msg: DbotxNewPairInfo): Promise<void> {
 
   if (!mint || !pair) {
     console.warn("[ws] newPairInfo missing mint/pair, skipping");
-    saveRawEvent(Date.now(), "newPairInfo", mint ?? null, pair ?? null, msg);
+    await saveRawEvent(Date.now(), "newPairInfo", mint ?? null, pair ?? null, msg);
     return;
   }
 
@@ -96,9 +96,9 @@ async function handleNewPairInfo(msg: DbotxNewPairInfo): Promise<void> {
 
   const rawJson = JSON.stringify(msg);
 
-  saveRawEvent(Date.now(), "newPairInfo", mint, pair, msg);
+  await saveRawEvent(Date.now(), "newPairInfo", mint, pair, msg);
 
-  upsertToken(
+  await upsertToken(
     mint,
     pair,
     null,
@@ -111,11 +111,43 @@ async function handleNewPairInfo(msg: DbotxNewPairInfo): Promise<void> {
   if (!subscribedMints.includes(mint)) {
     subscribedMints.push(mint);
     pairToMint.set(pair, mint);
-    sendSubscribe("pairInfo", { pair, token: mint });
+    /*
+     * Include an `id` field matching the mint so that if DBotX
+     * echoes subscription metadata, `identifyMintFromResult` can
+     * match it without round-robin.
+     */
+    sendSubscribe("pairInfo", { pair, token: mint, subId: mint });
   }
 
   /* open a paper trade at the first available price */
   await openPaperTrade(mint, pair, null, null, msg);
+}
+
+/**
+ * Try to extract a stable identifier (mint or pair address) from a
+ * `pairInfo` result object. DBotX may include `m` (mint) or `p` (pair)
+ * in the payload. Falls back to round-robin if neither is found.
+ */
+function identifyMintFromResult(
+  result: Record<string, unknown>,
+  pairMap: Map<string, string>,
+): string | null {
+  /* direct mint match */
+  for (const key of ["m", "mint", "token"] as const) {
+    const val = result[key];
+    if (typeof val === "string" && val.length > 0) return val;
+  }
+
+  /* pair → mint lookup */
+  for (const key of ["p", "pair"] as const) {
+    const val = result[key];
+    if (typeof val === "string" && val.length > 0) {
+      const mint = pairMap.get(val);
+      if (mint) return mint;
+    }
+  }
+
+  return null;
 }
 
 async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
@@ -124,36 +156,36 @@ async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
   const result = msg.result as Record<string, unknown>;
 
   /*
-   * DBotX `pairInfo` result does NOT include a pair or mint identifier.
-   * We match messages to subscriptions by round-robin order, cycling
-   * through the subscribed mints on every incoming update.
-   *
-   * This assumes the server sends updates in subscription FIFO order.
-   * While not perfectly accurate per-message, it distributes updates
-   * fairly across all tracked tokens, which is sufficient for a
-   * research-grade paper trader.
+   * DBotX `pairInfo` messages may include the mint (m) or pair (p)
+   * address in the result payload. Try to extract it first.
    */
-  if (subscribedMints.length === 0) return;
-  const mint = subscribedMints[subIndex % subscribedMints.length]!;
-  subIndex++;
+  let mint: string | null = identifyMintFromResult(result, pairToMint);
 
-  saveRawEvent(now, "pairInfo", mint, null, msg);
-  saveSnapshot(null, mint, result, rawJson);
+  /* fallback: round-robin over subscribed mints */
+  if (!mint) {
+    if (subscribedMints.length === 0) return;
+    mint = subscribedMints[subIndex % subscribedMints.length]!;
+    subIndex++;
+    console.warn(
+      `[ws] pairInfo without identifier – using round-robin to ${mint.slice(0, 8)}..`,
+    );
+  }
+
+  await saveRawEvent(now, "pairInfo", mint, null, msg);
+  await saveSnapshot(null, mint, result, rawJson);
 
   const priceSol = (result.tp as number) ?? null;
   const priceUsd = (result.tpu as number) ?? null;
 
-  upsertToken(mint, null, priceUsd, result.mp as number ?? null, result.cr as number ?? null, rawJson);
+  await upsertToken(mint, null, priceUsd, result.mp as number ?? null, result.cr as number ?? null, rawJson);
 
   /* update the open trade PnL */
   const { db } = await import("./db");
-  const tradeRow = db
-    .query(
-      `SELECT id FROM trades
-       WHERE mint = ? AND open = 1
-       ORDER BY entry_ts DESC LIMIT 1`,
-    )
-    .get(mint) as { id: number } | null;
+  const [tradeRow] = await db`
+    SELECT id FROM trades
+    WHERE mint = ${mint} AND open = 1
+    ORDER BY entry_ts DESC LIMIT 1
+  ` as { id: number }[];
 
   if (tradeRow) {
     await updateTrade(tradeRow.id, priceSol, priceUsd);
@@ -183,7 +215,7 @@ async function onMessage(raw: string): Promise<void> {
       return;
     }
 
-    saveRawEvent(Date.now(), "unknown", null, null, msg);
+    await saveRawEvent(Date.now(), "unknown", null, null, msg);
   } catch (err) {
     console.error("[ws] message error:", err);
   }
@@ -196,7 +228,7 @@ function onOpen(): void {
 
   for (const mint of subscribedMints) {
     /* we lost the pair address on reconnect, re-sub by mint only */
-    sendSubscribe("pairInfo", { token: mint });
+    sendSubscribe("pairInfo", { token: mint, subId: mint });
   }
 
   if (pingTimer) clearInterval(pingTimer);

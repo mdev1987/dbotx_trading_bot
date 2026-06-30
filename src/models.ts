@@ -59,9 +59,18 @@ export interface DbotxNewPairInfo {
 /**
  * Per-pair real-time snapshot delivered by the `pairInfo` subscription.
  *
+ * Some DBotX responses include the mint (`m`) or pair (`p`) address in
+ * the result object, which allows safe assignment without round-robin.
+ *
  * @see https://docs.dbotx.com for field definitions.
  */
 export interface PairInfoResult {
+  /** Token mint address (may be present on some DBotX endpoints). */
+  m?: string;
+
+  /** Pair address (may be present on some DBotX endpoints). */
+  p?: string;
+
   t10: number;
   fa: boolean;
   ma: boolean;
@@ -167,6 +176,8 @@ export interface TradeRow {
   exit_reason: string | null;
   open: number;
   entry_snapshot_id: number | null;
+  entry_market_cap: number | null;
+  entry_liquidity: number | null;
   raw_entry_json: string | null;
   raw_exit_json: string | null;
 }

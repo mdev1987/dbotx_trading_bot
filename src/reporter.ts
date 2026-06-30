@@ -8,7 +8,7 @@
  */
 
 import { Bot } from "grammy";
-import { db, getWalletBalance, getOpenTradeCount } from "./db";
+import { db, getWalletBalance } from "./db";
 import { CONFIG } from "./config";
 import { summary, bestSignalParameters, worstSignalParameters } from "./analytics";
 import type { SummaryReport, SignalProfile } from "./analytics";
@@ -30,17 +30,19 @@ interface ExitCounts {
   partialFills: number;
 }
 
-function getExitCounts(): ExitCounts {
-  const rows = db
-    .query(
-      `SELECT exit_reason, COUNT(*) AS cnt
-       FROM trades
-       WHERE open = 0 AND exit_reason IS NOT NULL
-       GROUP BY exit_reason`,
-    )
-    .all() as { exit_reason: string; cnt: number }[];
+async function getExitCounts(): Promise<ExitCounts> {
+  const rows = await db`
+    SELECT exit_reason, COUNT(*) AS cnt
+    FROM trades
+    WHERE open = 0 AND exit_reason IS NOT NULL
+    GROUP BY exit_reason
+  ` as { exit_reason: string; cnt: number }[];
 
   const map = new Map(rows.map((r) => [r.exit_reason, r.cnt]));
+
+  const [partialRow] = await db`
+    SELECT COUNT(*) AS c FROM partial_fills
+  ` as { c: number }[];
 
   return {
     ttl: map.get("TTL") ?? 0,
@@ -49,9 +51,7 @@ function getExitCounts(): ExitCounts {
     trailing: map.get("TRAILING_STOP") ?? 0,
     slippage: map.get("SLIPPAGE") ?? 0,
     manual: map.get("MANUAL") ?? 0,
-    partialFills: (db
-      .query("SELECT COUNT(*) AS c FROM partial_fills")
-      .get() as { c: number } | null)?.c ?? 0,
+    partialFills: partialRow?.c ?? 0,
   };
 }
 
@@ -82,8 +82,8 @@ function profileLine(label: string, profile: SignalProfile | null): string {
 
 async function buildReport(): Promise<string> {
   const s: SummaryReport = await summary();
-  const exitCounts = getExitCounts();
-  const balance = getWalletBalance();
+  const exitCounts = await getExitCounts();
+  const balance = await getWalletBalance();
   const best = await bestSignalParameters();
   const worst = await worstSignalParameters();
 

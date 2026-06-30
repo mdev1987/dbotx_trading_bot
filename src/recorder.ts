@@ -18,16 +18,16 @@ import type { PairInfoResult } from "./models";
  * Call this for **every** message before any processing so the
  * original wire data is always available for later re-analysis.
  */
-export function saveRawEvent(
+export async function saveRawEvent(
   eventTs: number,
   eventType: string | null,
   mint: string | null,
   pair: string | null,
   payload: unknown,
-): void {
+): Promise<void> {
   if (!CONFIG.saveRawJson) return;
 
-  insertRawEvent(
+  await insertRawEvent(
     eventTs,
     eventType,
     mint,
@@ -46,11 +46,11 @@ export function saveRawEvent(
  *                 cause a crash.
  * @param rawJson  The complete original message serialised.
  */
-export function saveSnapshot(
+export async function saveSnapshot(
   tradeId: number | null,
   mint: string,
   data: Record<string, unknown>,
   rawJson: string,
-): void {
-  insertSnapshot(tradeId, mint, Date.now(), data, rawJson);
+): Promise<void> {
+  await insertSnapshot(tradeId, mint, Date.now(), data, rawJson);
 }

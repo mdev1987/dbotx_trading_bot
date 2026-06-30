@@ -1,12 +1,4 @@
-/**
- * SQLite persistence layer backed by bun:sqlite.
- *
- * Schema is designed for research-grade paper trading:
- * every event is saved as raw JSON alongside normalised columns
- * so no information is ever lost.
- */
-
-import { Database } from "bun:sqlite";
+import { SQL } from "bun";
 import { mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { CONFIG } from "./config";
@@ -24,28 +16,26 @@ if (!existsSync(dbDir)) {
   mkdirSync(dbDir, { recursive: true });
 }
 
-export const db = new Database(CONFIG.sqlitePath, { create: true });
+export const db = new SQL({
+  adapter: "sqlite",
+  filename: CONFIG.sqlitePath,
+  create: true,
+});
 
-/**
- * Create all tables and indexes if they do not exist.
- * Idempotent – safe to call on every startup.
- * Runs ALTER TABLE ADD COLUMN for any schema additions
- * that may have been added after the initial creation.
- */
-export function initializeDatabase(): void {
-  db.run("PRAGMA journal_mode = WAL;");
-  db.run("PRAGMA busy_timeout = 5000;");
+export async function initializeDatabase(): Promise<void> {
+  await db`PRAGMA journal_mode = WAL;`;
+  await db`PRAGMA busy_timeout = 5000;`;
 
-  db.run(`
+  await db`
     CREATE TABLE IF NOT EXISTS wallet(
       id INTEGER PRIMARY KEY,
       balance_sol REAL NOT NULL,
       equity_sol REAL NOT NULL,
       updated_at INTEGER NOT NULL
     )
-  `);
+  `;
 
-  db.run(`
+  await db`
     CREATE TABLE IF NOT EXISTS tokens(
       mint TEXT PRIMARY KEY,
       pair TEXT,
@@ -56,9 +46,9 @@ export function initializeDatabase(): void {
       first_liquidity REAL,
       raw_json TEXT NOT NULL
     )
-  `);
+  `;
 
-  db.run(`
+  await db`
     CREATE TABLE IF NOT EXISTS trades(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mint TEXT NOT NULL,
@@ -85,9 +75,9 @@ export function initializeDatabase(): void {
       raw_entry_json TEXT,
       raw_exit_json TEXT
     )
-  `);
+  `;
 
-  db.run(`
+  await db`
     CREATE TABLE IF NOT EXISTS snapshots(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       trade_id INTEGER,
@@ -119,9 +109,9 @@ export function initializeDatabase(): void {
       mint_authority INTEGER,
       raw_json TEXT NOT NULL
     )
-  `);
+  `;
 
-  db.run(`
+  await db`
     CREATE TABLE IF NOT EXISTS raw_events(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       event_ts INTEGER NOT NULL,
@@ -130,9 +120,9 @@ export function initializeDatabase(): void {
       pair TEXT,
       payload TEXT NOT NULL
     )
-  `);
+  `;
 
-  db.run(`
+  await db`
     CREATE TABLE IF NOT EXISTS partial_fills(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       trade_id INTEGER NOT NULL,
@@ -146,67 +136,73 @@ export function initializeDatabase(): void {
       price_usd REAL,
       FOREIGN KEY(trade_id) REFERENCES trades(id)
     )
-  `);
+  `;
 
-  db.run(`
+  await db`
     CREATE INDEX IF NOT EXISTS idx_trade_mint
     ON trades(mint)
-  `);
+  `;
 
-  db.run(`
+  await db`
     CREATE INDEX IF NOT EXISTS idx_trade_open
     ON trades(open)
-  `);
+  `;
 
-  db.run(`
+  await db`
     CREATE INDEX IF NOT EXISTS idx_snapshot_mint
     ON snapshots(mint)
-  `);
+  `;
 
-  db.run(`
+  await db`
     CREATE INDEX IF NOT EXISTS idx_snapshot_ts
     ON snapshots(ts)
-  `);
+  `;
 
-  db.run(`
+  await db`
     CREATE INDEX IF NOT EXISTS idx_snapshot_trade_id
     ON snapshots(trade_id)
-  `);
+  `;
 
-  db.run(`
+  await db`
     CREATE INDEX IF NOT EXISTS idx_raw_events_mint
     ON raw_events(mint)
-  `);
+  `;
 
-  db.run(`
+  await db`
     CREATE INDEX IF NOT EXISTS idx_raw_events_ts
     ON raw_events(event_ts)
-  `);
+  `;
 
-  db.run(`
+  await db`
     CREATE INDEX IF NOT EXISTS idx_partial_fills_trade
     ON partial_fills(trade_id)
-  `);
+  `;
 
   /* ---- migrate legacy tables that may lack new columns ---- */
-  for (const col of ["filled_token_amount", "filled_sol_proceeds"]) {
+  const legacyCols: { name: string; def: string }[] = [
+    { name: "filled_token_amount", def: "REAL NOT NULL DEFAULT 0" },
+    { name: "filled_sol_proceeds", def: "REAL NOT NULL DEFAULT 0" },
+    { name: "entry_market_cap", def: "REAL" },
+    { name: "entry_liquidity", def: "REAL" },
+  ];
+
+  for (const col of legacyCols) {
     try {
-      db.run(`ALTER TABLE trades ADD COLUMN ${col} REAL NOT NULL DEFAULT 0`);
+      await db.unsafe(`ALTER TABLE trades ADD COLUMN ${col.name} ${col.def}`);
     } catch {
       /* column already exists – ignore */
     }
   }
 
-  const existing = db
-    .query("SELECT COUNT(*) AS c FROM wallet")
-    .get() as { c: number };
+  const [existing] = await db`SELECT COUNT(*) AS c FROM wallet` as { c: number }[];
 
-  if (existing.c === 0) {
+  /* aggregate COUNT always returns a row */
+  if (existing!.c === 0) {
     const now = Date.now();
-    db.query(
-      `INSERT INTO wallet(id, balance_sol, equity_sol, updated_at)
-       VALUES (1, ?, ?, ?)`,
-    ).run(CONFIG.startingBalance, CONFIG.startingBalance, now);
+    await db`
+      INSERT INTO wallet(id, balance_sol, equity_sol, updated_at)
+      VALUES (1, ${CONFIG.startingBalance}, ${CONFIG.startingBalance}, ${now})
+    `;
 
     console.log(`[db] wallet initialised: ${CONFIG.startingBalance} SOL`);
   }
@@ -216,47 +212,36 @@ export function initializeDatabase(): void {
 // Tokens
 // ---------------------------------------------------------------------------
 
-/**
- * Upsert a token record – insert on first sight, update `last_seen`
- * and price fields on subsequent appearances.
- */
-export function upsertToken(
+export async function upsertToken(
   mint: string,
   pair: string | null,
   priceUsd: number | null,
   marketCap: number | null,
   liquidity: number | null,
   rawJson: string,
-): void {
+): Promise<void> {
   const now = Date.now();
 
-  const existing = db
-    .query("SELECT first_price_usd FROM tokens WHERE mint = ?")
-    .get(mint) as { first_price_usd: number | null } | null;
+  const [existing] = await db`
+    SELECT first_price_usd FROM tokens WHERE mint = ${mint}
+  ` as { first_price_usd: number | null }[];
 
   if (existing) {
-    db.query(
-      `UPDATE tokens
-         SET last_seen = ?,
-             raw_json = ?
-       WHERE mint = ?`,
-    ).run(now, rawJson, mint);
+    await db`
+      UPDATE tokens
+      SET last_seen = ${now},
+          raw_json = ${rawJson}
+      WHERE mint = ${mint}
+    `;
   } else {
-    db.query(
-      `INSERT INTO tokens(mint, pair, first_seen, last_seen,
+    await db`
+      INSERT INTO tokens(mint, pair, first_seen, last_seen,
                           first_price_usd, first_market_cap,
                           first_liquidity, raw_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      mint,
-      pair,
-      now,
-      now,
-      priceUsd,
-      marketCap,
-      liquidity,
-      rawJson,
-    );
+      VALUES (${mint}, ${pair}, ${now}, ${now},
+              ${priceUsd}, ${marketCap},
+              ${liquidity}, ${rawJson})
+    `;
   }
 }
 
@@ -264,7 +249,7 @@ export function upsertToken(
 // Trades
 // ---------------------------------------------------------------------------
 
-export function insertTrade(
+export async function insertTrade(
   mint: string,
   pair: string | null,
   priceSol: number | null,
@@ -273,62 +258,56 @@ export function insertTrade(
   tokenAmount: number,
   ttlSeconds: number,
   rawJson: string,
-  marketCap: number | null,
-): TradeRow {
+  entryMarketCap: number | null,
+  entryLiquidity: number | null,
+): Promise<TradeRow> {
   const now = Date.now();
 
-  const info = db
-    .query(
-      `INSERT INTO trades(
-          mint, pair, entry_ts, ttl_seconds,
-          entry_price_sol, entry_price_usd,
-          amount_sol, token_amount,
-          filled_token_amount, filled_sol_proceeds,
-          open, raw_entry_json
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?)
-        RETURNING *`,
-    )
-    .get(
-      mint,
-      pair,
-      now,
-      ttlSeconds,
-      priceSol,
-      priceUsd,
-      amountSol,
-      tokenAmount,
-      rawJson,
-    ) as TradeRow;
+  const [info] = await db`
+    INSERT INTO trades(
+        mint, pair, entry_ts, ttl_seconds,
+        entry_price_sol, entry_price_usd,
+        amount_sol, token_amount,
+        filled_token_amount, filled_sol_proceeds,
+        entry_market_cap, entry_liquidity,
+        open, raw_entry_json
+      )
+      VALUES (${mint}, ${pair}, ${now}, ${ttlSeconds},
+              ${priceSol}, ${priceUsd},
+              ${amountSol}, ${tokenAmount},
+              0, 0,
+              ${entryMarketCap}, ${entryLiquidity},
+              1, ${rawJson})
+      RETURNING *
+  ` as TradeRow[];
 
-  return info;
+  /* RETURNING * always returns the inserted row */
+  return info!;
 }
 
-export function getOpenTrades(): TradeRow[] {
-  return db
-    .query(
-      `SELECT * FROM trades
-       WHERE open = 1
-       ORDER BY entry_ts ASC`,
-    )
-    .all() as TradeRow[];
+export async function getOpenTrades(): Promise<TradeRow[]> {
+  return await db`
+    SELECT * FROM trades
+    WHERE open = 1
+    ORDER BY entry_ts ASC
+  ` as TradeRow[];
 }
 
-export function getTradeById(id: number): TradeRow | null {
-  return db
-    .query("SELECT * FROM trades WHERE id = ?")
-    .get(id) as TradeRow | null;
+export async function getTradeById(id: number): Promise<TradeRow | null> {
+  const [trade] = await db`
+    SELECT * FROM trades WHERE id = ${id}
+  ` as TradeRow[];
+  return trade ?? null;
 }
 
-export function getLatestSnapshot(mint: string): SnapshotRow | null {
-  return db
-    .query(
-      `SELECT * FROM snapshots
-       WHERE mint = ?
-       ORDER BY ts DESC
-       LIMIT 1`,
-    )
-    .get(mint) as SnapshotRow | null;
+export async function getLatestSnapshot(mint: string): Promise<SnapshotRow | null> {
+  const [snap] = await db`
+    SELECT * FROM snapshots
+    WHERE mint = ${mint}
+    ORDER BY ts DESC
+    LIMIT 1
+  ` as SnapshotRow[];
+  return snap ?? null;
 }
 
 /**
@@ -356,19 +335,33 @@ function computePnL(
   return { pnlSol, pnlPercent };
 }
 
-export function updateTradePnL(
+export async function updateTradePnL(
   id: number,
   priceSol: number | null,
   priceUsd: number | null,
-): void {
-  const trade = getTradeById(id);
+): Promise<void> {
+  const trade = await getTradeById(id);
   if (!trade) return;
 
+  const isFirstPrice = trade.token_amount === 0 && priceSol !== null && priceSol > 0;
+
   /* initialise token_amount when the first price arrives */
-  if (trade.token_amount === 0 && priceSol !== null && priceSol > 0) {
+  if (isFirstPrice) {
     const newTokenAmount = trade.amount_sol / priceSol;
-    db.query("UPDATE trades SET token_amount = ? WHERE id = ?").run(newTokenAmount, id);
+    await db`UPDATE trades SET token_amount = ${newTokenAmount} WHERE id = ${id}`;
     trade.token_amount = newTokenAmount;
+
+    /* capture entry snapshot data – market cap and liquidity at first price */
+    const snap = await getLatestSnapshot(trade.mint);
+    if (snap) {
+      await db`
+        UPDATE trades
+        SET entry_snapshot_id = ${snap.id},
+            entry_market_cap = ${snap.market_cap},
+            entry_liquidity = ${snap.liquidity}
+        WHERE id = ${id}
+      `;
+    }
   }
 
   let highestPrice = trade.highest_price ?? priceSol;
@@ -385,24 +378,19 @@ export function updateTradePnL(
 
   const { pnlSol, pnlPercent } = computePnL(trade, priceSol);
 
-  db.query(
-    `UPDATE trades
-     SET entry_price_sol    = COALESCE(entry_price_sol, ?),
-         entry_price_usd    = COALESCE(entry_price_usd, ?),
-         pnl_sol            = ?,
-         pnl_percent        = ?,
-         highest_price      = ?,
-         lowest_price       = ?
-     WHERE id = ?`,
-  ).run(
-    priceSol,
-    priceUsd,
-    pnlSol,
-    pnlPercent,
-    highestPrice,
-    lowestPrice,
-    id,
-  );
+  await db`
+    UPDATE trades
+    SET entry_price_sol    = COALESCE(entry_price_sol, ${priceSol}),
+        entry_price_usd    = COALESCE(entry_price_usd, ${priceUsd}),
+        pnl_sol            = ${pnlSol},
+        pnl_percent        = ${pnlPercent},
+        highest_price      = ${highestPrice},
+        lowest_price       = ${lowestPrice}
+    WHERE id = ${id}
+  `;
+
+  /* keep wallet equity in sync with latest market prices */
+  await recalculateWalletEquity();
 }
 
 /**
@@ -412,13 +400,13 @@ export function updateTradePnL(
  * `priceSol` and records the final PnL including all
  * prior partial-fill proceeds.
  */
-export function closeTrade(
+export async function closeTrade(
   id: number,
   priceSol: number | null,
   priceUsd: number | null,
   reason: ExitReason,
-): TradeRow | null {
-  const trade = getTradeById(id);
+): Promise<TradeRow | null> {
+  const trade = await getTradeById(id);
   if (!trade || !trade.open) return null;
 
   const now = Date.now();
@@ -432,7 +420,7 @@ export function closeTrade(
 
   /* if we lacked a live price, fall back to last snapshot */
   if (exitPriceSol === null) {
-    const snap = getLatestSnapshot(trade.mint);
+    const snap = await getLatestSnapshot(trade.mint);
     exitPriceSol = snap?.price_sol ?? null;
     exitPriceUsd = snap?.price_usd ?? null;
     /* recompute PnL with the found price */
@@ -453,33 +441,27 @@ export function closeTrade(
     }
   }
 
-  db.query(
-    `UPDATE trades
-     SET exit_ts          = ?,
-         exit_price_sol   = ?,
-         exit_price_usd   = ?,
-         pnl_sol          = ?,
-         pnl_percent      = ?,
-         highest_price    = ?,
-         lowest_price     = ?,
-         hold_seconds     = ?,
-         exit_reason      = ?,
-         open             = 0
-     WHERE id = ?`,
-  ).run(
-    now,
-    exitPriceSol,
-    exitPriceUsd,
-    pnlSol,
-    pnlPercent,
-    highestPrice,
-    lowestPrice,
-    holdSeconds,
-    reason,
-    id,
-  );
+  await db`
+    UPDATE trades
+    SET exit_ts          = ${now},
+        exit_price_sol   = ${exitPriceSol},
+        exit_price_usd   = ${exitPriceUsd},
+        pnl_sol          = ${pnlSol},
+        pnl_percent      = ${pnlPercent},
+        highest_price    = ${highestPrice},
+        lowest_price     = ${lowestPrice},
+        hold_seconds     = ${holdSeconds},
+        exit_reason      = ${reason},
+        open             = 0
+    WHERE id = ${id}
+  `;
 
-  return getTradeById(id);
+  const closed = await getTradeById(id);
+
+  /* wallet equity is only cash after close (no open positions) */
+  await recalculateWalletEquity();
+
+  return closed;
 }
 
 /**
@@ -489,7 +471,7 @@ export function closeTrade(
  * `filled_sol_proceeds` on the trade row so future PnL
  * computations account for proceeds already banked.
  */
-export function insertPartialFill(
+export async function insertPartialFill(
   tradeId: number,
   tierIndex: number,
   tierPct: number,
@@ -498,40 +480,31 @@ export function insertPartialFill(
   solProceeds: number,
   priceSol: number | null,
   priceUsd: number | null,
-): void {
-  db.query(
-    `INSERT INTO partial_fills(
+): Promise<void> {
+  await db`
+    INSERT INTO partial_fills(
         trade_id, ts, tier_index, tier_pct, tier_target_pct,
         token_amount, sol_proceeds, price_sol, price_usd
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    tradeId,
-    Date.now(),
-    tierIndex,
-    tierPct,
-    tierTargetPct,
-    tokenAmount,
-    solProceeds,
-    priceSol,
-    priceUsd,
-  );
+      VALUES (${tradeId}, ${Date.now()}, ${tierIndex}, ${tierPct}, ${tierTargetPct},
+              ${tokenAmount}, ${solProceeds}, ${priceSol}, ${priceUsd})
+  `;
 
-  db.query(
-    `UPDATE trades
-     SET filled_token_amount  = filled_token_amount + ?,
-         filled_sol_proceeds  = filled_sol_proceeds + ?
-     WHERE id = ?`,
-  ).run(tokenAmount, solProceeds, tradeId);
+  await db`
+    UPDATE trades
+    SET filled_token_amount  = filled_token_amount + ${tokenAmount},
+        filled_sol_proceeds  = filled_sol_proceeds + ${solProceeds}
+    WHERE id = ${tradeId}
+  `;
 }
 
 /**
  * Returns the set of tier indices already filled for a trade.
  */
-export function getFilledTierIndices(tradeId: number): Set<number> {
-  const rows = db
-    .query("SELECT DISTINCT tier_index FROM partial_fills WHERE trade_id = ?")
-    .all(tradeId) as { tier_index: number }[];
+export async function getFilledTierIndices(tradeId: number): Promise<Set<number>> {
+  const rows = await db`
+    SELECT DISTINCT tier_index FROM partial_fills WHERE trade_id = ${tradeId}
+  ` as { tier_index: number }[];
 
   return new Set(rows.map((r) => r.tier_index));
 }
@@ -540,40 +513,104 @@ export function getFilledTierIndices(tradeId: number): Set<number> {
 // Wallet
 // ---------------------------------------------------------------------------
 
-export function deductWalletBalance(amountSol: number): void {
+export async function deductWalletBalance(amountSol: number): Promise<void> {
   const now = Date.now();
-  db.query(
-    `UPDATE wallet
-     SET balance_sol = balance_sol - ?,
-         equity_sol  = equity_sol - ?,
-         updated_at  = ?
-     WHERE id = 1`,
-  ).run(amountSol, amountSol, now);
+  await db`
+    UPDATE wallet
+    SET balance_sol = balance_sol - ${amountSol},
+        updated_at  = ${now}
+    WHERE id = 1
+  `;
 }
 
-export function addWalletBalance(amountSol: number): void {
+export async function addWalletBalance(amountSol: number): Promise<void> {
   const now = Date.now();
-  db.query(
-    `UPDATE wallet
-     SET balance_sol = balance_sol + ?,
-         equity_sol  = equity_sol + ?,
-         updated_at  = ?
-     WHERE id = 1`,
-  ).run(amountSol, amountSol, now);
+  await db`
+    UPDATE wallet
+    SET balance_sol = balance_sol + ${amountSol},
+        updated_at  = ${now}
+    WHERE id = 1
+  `;
 }
 
-export function getWalletBalance(): number {
-  const row = db
-    .query("SELECT balance_sol FROM wallet WHERE id = 1")
-    .get() as { balance_sol: number } | null;
+/**
+ * Recompute wallet equity as cash balance + current market value
+ * of all open positions. Called after every price update or trade
+ * lifecycle event so the equity column always reflects real
+ * mark-to-market value.
+ */
+export async function recalculateWalletEquity(): Promise<void> {
+  const [wallet] = await db`
+    SELECT balance_sol FROM wallet WHERE id = 1
+  ` as { balance_sol: number }[];
+
+  if (!wallet) return;
+
+  /*
+   * Fetch all open trades with their latest snapshot price
+   * in a single query to avoid N+1.
+   */
+  const openTrades = await db`
+    SELECT
+       t.id,
+       t.amount_sol,
+       t.token_amount,
+       t.filled_token_amount,
+       t.filled_sol_proceeds,
+       t.entry_price_sol,
+       COALESCE(s.price_sol, t.entry_price_sol) AS current_price
+     FROM trades t
+     LEFT JOIN (
+       SELECT mint, MAX(ts) AS max_ts
+       FROM snapshots
+       GROUP BY mint
+     ) latest ON latest.mint = t.mint
+     LEFT JOIN snapshots s
+       ON s.mint = t.mint AND s.ts = latest.max_ts
+     WHERE t.open = 1
+  ` as {
+    id: number;
+    amount_sol: number;
+    token_amount: number;
+    filled_token_amount: number;
+    filled_sol_proceeds: number;
+    entry_price_sol: number | null;
+    current_price: number | null;
+  }[];
+
+  let openValue = 0;
+
+  for (const trade of openTrades) {
+    const remaining = trade.token_amount - trade.filled_token_amount;
+    if (remaining <= 0) continue;
+
+    if (trade.current_price !== null && trade.current_price > 0 && trade.token_amount > 0) {
+      openValue += remaining * trade.current_price + trade.filled_sol_proceeds;
+    } else if (trade.entry_price_sol !== null && trade.entry_price_sol > 0) {
+      openValue += remaining * trade.entry_price_sol + trade.filled_sol_proceeds;
+    } else {
+      openValue += trade.amount_sol;
+    }
+  }
+
+  const equity = wallet.balance_sol + openValue;
+  await db`
+    UPDATE wallet SET equity_sol = ${equity}, updated_at = ${Date.now()} WHERE id = 1
+  `;
+}
+
+export async function getWalletBalance(): Promise<number> {
+  const [row] = await db`
+    SELECT balance_sol FROM wallet WHERE id = 1
+  ` as { balance_sol: number }[];
 
   return row?.balance_sol ?? 0;
 }
 
-export function getOpenTradeCount(): number {
-  const row = db
-    .query("SELECT COUNT(*) AS c FROM trades WHERE open = 1")
-    .get() as { c: number };
+export async function getOpenTradeCount(): Promise<number> {
+  const [row] = await db`
+    SELECT COUNT(*) AS c FROM trades WHERE open = 1
+  ` as { c: number }[];
 
   return row?.c ?? 0;
 }
@@ -582,20 +619,20 @@ export function getOpenTradeCount(): number {
 // Snapshots & raw events
 // ---------------------------------------------------------------------------
 
-export function insertSnapshot(
+export async function insertSnapshot(
   tradeId: number | null,
   mint: string,
   ts: number,
   data: Record<string, unknown>,
   rawJson: string,
-): void {
+): Promise<void> {
   const n = (v: unknown): number | null =>
     v != null && typeof v === "number" ? v : null;
   const b = (v: unknown): number | null =>
     v != null && typeof v === "boolean" ? (v ? 1 : 0) : null;
 
-  db.query(
-    `INSERT INTO snapshots(
+  await db`
+    INSERT INTO snapshots(
         trade_id, mint, ts,
         price_sol, price_usd, market_cap, holders,
         liquidity,
@@ -610,72 +647,33 @@ export function insertSnapshot(
         freeze_authority, mint_authority,
         raw_json
       )
-      VALUES (?, ?, ?,
-              ?, ?, ?, ?,
-              ?,
-              ?, ?,
-              ?, ?,
-              ?, ?,
-              ?, ?,
-              ?, ?,
-              ?, ?,
-              ?, ?, ?,
-              ?, ?,
-              ?, ?,
-              ?)`,
-  ).run(
-    tradeId,
-    mint,
-    ts,
-
-    n(data.tp),
-    n(data.tpu),
-    n(data.mp),
-    n(data.h),
-
-    n(data.cr),
-
-    n(data.bt1m),
-    n(data.st1m),
-
-    n(data.bv1m),
-    n(data.sv1m),
-
-    n(data.bt5m),
-    n(data.st5m),
-
-    n(data.bv5m),
-    n(data.sv5m),
-
-    n(data.bt1h),
-    n(data.st1h),
-
-    n(data.bv1h),
-    n(data.sv1h),
-
-    n(data.pc1m),
-    n(data.pc5m),
-    n(data.pc1h),
-
-    n(data.t10),
-    n(data.dhp),
-
-    b(data.fa),
-    b(data.ma),
-
-    rawJson,
-  );
+      VALUES (
+        ${tradeId}, ${mint}, ${ts},
+        ${n(data.tp)}, ${n(data.tpu)}, ${n(data.mp)}, ${n(data.h)},
+        ${n(data.cr)},
+        ${n(data.bt1m)}, ${n(data.st1m)},
+        ${n(data.bv1m)}, ${n(data.sv1m)},
+        ${n(data.bt5m)}, ${n(data.st5m)},
+        ${n(data.bv5m)}, ${n(data.sv5m)},
+        ${n(data.bt1h)}, ${n(data.st1h)},
+        ${n(data.bv1h)}, ${n(data.sv1h)},
+        ${n(data.pc1m)}, ${n(data.pc5m)}, ${n(data.pc1h)},
+        ${n(data.t10)}, ${n(data.dhp)},
+        ${b(data.fa)}, ${b(data.ma)},
+        ${rawJson}
+      )
+  `;
 }
 
-export function insertRawEvent(
+export async function insertRawEvent(
   eventTs: number,
   eventType: string | null,
   mint: string | null,
   pair: string | null,
   payload: string,
-): void {
-  db.query(
-    `INSERT INTO raw_events(event_ts, event_type, mint, pair, payload)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(eventTs, eventType, mint, pair, payload);
+): Promise<void> {
+  await db`
+    INSERT INTO raw_events(event_ts, event_type, mint, pair, payload)
+    VALUES (${eventTs}, ${eventType}, ${mint}, ${pair}, ${payload})
+  `;
 }

@@ -12,7 +12,7 @@ import { startTtlEngine, stopTtlEngine } from "./ttl_engine";
 import { startReporter, stopReporter } from "./reporter";
 import { CONFIG } from "./config";
 
-function handleShutdown(): void {
+async function handleShutdown(): Promise<void> {
   console.log("\n[main] shutting down...");
   stopTtlEngine();
   stopReporter();
@@ -22,8 +22,8 @@ function handleShutdown(): void {
    * WAL checkpoints are flushed automatically on close.
    * Explicit checkpoint for safety.
    */
-  db.run("PRAGMA wal_checkpoint(TRUNCATE);");
-  db.close();
+  await db`PRAGMA wal_checkpoint(TRUNCATE);`;
+  await db.close();
 
   console.log("[main] goodbye");
   process.exit(0);
@@ -48,7 +48,7 @@ async function main(): Promise<void> {
   console.log("=".repeat(50));
 
   /* initialise persistence */
-  initializeDatabase();
+  await initializeDatabase();
   console.log("[main] database ready");
 
   /* start the exit-condition checker */
@@ -61,8 +61,8 @@ async function main(): Promise<void> {
   startReporter();
 
   /* graceful shutdown handlers */
-  process.on("SIGINT", handleShutdown);
-  process.on("SIGTERM", handleShutdown);
+  process.on("SIGINT", () => handleShutdown().catch((err) => console.error("[main] shutdown error:", err)));
+  process.on("SIGTERM", () => handleShutdown().catch((err) => console.error("[main] shutdown error:", err)));
 }
 
 main().catch((err) => {

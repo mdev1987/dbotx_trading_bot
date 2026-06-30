@@ -54,12 +54,15 @@ interface ExitAction {
  * Returns an action describing what to do (close remaining,
  * fill a partial tier, or nothing).
  */
-function evaluateExit(trade: TradeRow): ExitAction | null {
+async function evaluateExit(trade: TradeRow): Promise<ExitAction | null> {
   const now = Date.now();
   const ageSeconds = (now - trade.entry_ts) / 1_000;
+
   /* use the latest market price; fall back to entry price */
+  const snap = await getLatestSnapshot(trade.mint);
+  const snapPrice = snap?.price_sol ?? null;
   const priceSol = trade.exit_price_sol
-    ?? getLatestSnapshot(trade.mint)?.price_sol
+    ?? snapPrice
     ?? trade.entry_price_sol
     ?? null;
 
@@ -70,7 +73,7 @@ function evaluateExit(trade: TradeRow): ExitAction | null {
   if (trade.token_amount <= 0) return null;
 
   const remaining = trade.token_amount - trade.filled_token_amount;
-  if (remaining <= 0) {
+  if (remaining < 1e-9) {
     /* all tokens already sold via partial TPs – close the empty trade */
     return { close: "TAKE_PROFIT" };
   }
@@ -98,7 +101,7 @@ function evaluateExit(trade: TradeRow): ExitAction | null {
   // 2. PARTIAL TAKE-PROFIT TIERS
   // ---------------------------------------------------------------
   if (CONFIG.partialTpTiers.length > 0) {
-    const filledTiers = getFilledTierIndices(trade.id);
+    const filledTiers = await getFilledTierIndices(trade.id);
 
     for (let i = 0; i < CONFIG.partialTpTiers.length; i++) {
       const tier = CONFIG.partialTpTiers[i]!;
@@ -146,7 +149,11 @@ function evaluateExit(trade: TradeRow): ExitAction | null {
   // ---------------------------------------------------------------
   // 6. STOP LOSS
   // ---------------------------------------------------------------
-  if (CONFIG.stopLossPct < 0 && pnlPercent <= CONFIG.stopLossPct) {
+  /*
+   * Accept both negative (e.g. -0.15) and positive (e.g. 0.15)
+   * config values. Always treat as a loss threshold.
+   */
+  if (CONFIG.stopLossPct !== 0 && pnlPercent <= -Math.abs(CONFIG.stopLossPct)) {
     return { close: "STOP_LOSS" };
   }
 
@@ -158,18 +165,18 @@ function evaluateExit(trade: TradeRow): ExitAction | null {
 // ---------------------------------------------------------------------------
 
 async function tick(): Promise<void> {
-  const trades = getOpenTrades();
+  const trades = await getOpenTrades();
 
   for (const trade of trades) {
     try {
-      const action = evaluateExit(trade);
+      const action = await evaluateExit(trade);
       if (!action) continue;
 
       // --- partial tier fill ---
       if (action.partialTier) {
         const tier = action.partialTier;
-        const priceSol =
-          getLatestSnapshot(trade.mint)?.price_sol
+        const snap = await getLatestSnapshot(trade.mint);
+        const priceSol = snap?.price_sol
           ?? trade.entry_price_sol
           ?? null;
 
@@ -194,7 +201,7 @@ async function tick(): Promise<void> {
 
         const solProceeds = tierTokenAmount * priceSol;
 
-        insertPartialFill(
+        await insertPartialFill(
           trade.id,
           tier.index,
           tier.pct,
@@ -202,7 +209,7 @@ async function tick(): Promise<void> {
           tierTokenAmount,
           solProceeds,
           priceSol,
-          getLatestSnapshot(trade.mint)?.price_usd ?? null,
+          snap?.price_usd ?? null,
         );
 
         console.log(
