@@ -29,10 +29,12 @@ const subscribedMints: string[] = [];
 const pendingFirstPrice: string[] = [];
 
 /**
- * Last known price per mint (SOL). Used for consistency-based matching
- * when no explicit identifier is available.
+ * Last known price per mint (SOL) with timestamp. Used for
+ * consistency-based matching when no explicit identifier is available.
+ * Entries older than STALE_MS are skipped during matching.
  */
-const lastPrice = new Map<string, number>();
+const lastPrice = new Map<string, { price: number; ts: number }>();
+const STALE_MS = 10 * 60 * 1_000;
 
 /** Round-robin index for absolute fallback. */
 let subIndex = 0;
@@ -98,6 +100,7 @@ function identifyMint(
   msg: Record<string, unknown>,
   result: Record<string, unknown>,
   pairMap: Map<string, string>,
+  subscribed: string[],
 ): { mint: string; source: string } | null {
   /* 1. Check message envelope for direct mint identifiers */
   for (const key of MINT_FIELDS) {
@@ -138,8 +141,8 @@ function identifyMint(
     const val = result[key] ?? msg[key];
     if (typeof val === "string" && val.length > 0) {
       if (pairMap.has(val)) return { mint: val, source: `${key}→map` };
-      /* base58 mint pattern (Solana address) */
-      if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(val)) {
+      /* base58 inference — only accept if it matches a known subscription */
+      if (subscribed.includes(val) && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(val)) {
         return { mint: val, source: `${key}→infer` };
       }
     }
@@ -151,19 +154,22 @@ function identifyMint(
 /**
  * Match an incoming pairInfo to a mint by comparing the incoming token
  * price against each tracked token's last known price. The closest
- * relative match within a 50 % band is selected.
+ * relative match within a narrow band is selected.  Stale entries
+ * (older than STALE_MS) are skipped.
  */
 function matchByPrice(
   incomingPrice: number,
-  priceMap: Map<string, number>,
+  priceMap: Map<string, { price: number; ts: number }>,
+  now: number,
 ): string | null {
   let best: string | null = null;
   let bestRelDiff = Infinity;
 
-  for (const [mint, known] of priceMap) {
-    if (known <= 0) continue;
-    const relDiff = Math.abs(incomingPrice - known) / known;
-    if (relDiff < 0.5 && relDiff < bestRelDiff) {
+  for (const [mint, entry] of priceMap) {
+    if (entry.price <= 0) continue;
+    if (now - entry.ts > STALE_MS) continue;
+    const relDiff = Math.abs(incomingPrice - entry.price) / entry.price;
+    if (relDiff < 0.1 && relDiff < bestRelDiff) {
       bestRelDiff = relDiff;
       best = mint;
     }
@@ -242,14 +248,21 @@ async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
 
   const incomingPrice = (result.tp as number) ?? 0;
 
-  /*
-   * Step 1 – Try to extract a stable identifier (deterministic).
-   */
-  let identified = identifyMint(msgObj, result, pairToMint);
   let mint: string | null = null;
+  let isFirstPrice = false;
 
+  /*
+   * Step 1 – Try deterministic identification.
+   * If the identified mint is waiting for its first price, claim it.
+   */
+  const identified = identifyMint(msgObj, result, pairToMint, subscribedMints);
   if (identified) {
     mint = identified.mint;
+    const idx = pendingFirstPrice.indexOf(mint);
+    if (idx !== -1) {
+      pendingFirstPrice.splice(idx, 1);
+      isFirstPrice = true;
+    }
   }
 
   /*
@@ -259,6 +272,7 @@ async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
    */
   if (!mint && pendingFirstPrice.length > 0) {
     mint = pendingFirstPrice.shift()!;
+    isFirstPrice = true;
   }
 
   /*
@@ -266,7 +280,7 @@ async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
    * Compare the incoming price against each token's last known price.
    */
   if (!mint && incomingPrice > 0 && lastPrice.size > 0) {
-    mint = matchByPrice(incomingPrice, lastPrice);
+    mint = matchByPrice(incomingPrice, lastPrice, now);
   }
 
   /*
@@ -279,9 +293,9 @@ async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
     logUnidentifiedKeys(msgObj, result);
   }
 
-  /* update last known price for future matching */
+  /* update last known price with timestamp for future matching */
   if (incomingPrice > 0) {
-    lastPrice.set(mint, incomingPrice);
+    lastPrice.set(mint, { price: incomingPrice, ts: now });
   }
 
   await saveRawEvent(now, "pairInfo", mint, null, msg);
@@ -297,17 +311,8 @@ async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
     rawJson,
   );
 
-  /*
-   * Deferred trade open – if this mint just received its first price,
-   * open the paper trade now at the first observable price.
-   */
-  if (pendingFirstPrice.includes(mint)) {
-    /* remove from pending list */
-    const idx = pendingFirstPrice.indexOf(mint);
-    if (idx !== -1) pendingFirstPrice.splice(idx, 1);
-
+  if (isFirstPrice) {
     const pair = mintToPair.get(mint) ?? "";
-
     await openPaperTrade(mint, pair, priceSol, priceUsd, msg);
 
     /* first price also triggers an immediate PnL update */

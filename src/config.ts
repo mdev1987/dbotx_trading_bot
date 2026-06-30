@@ -14,8 +14,9 @@ function parsePartialTpTiers(raw: string | undefined): PartialTpTier[] {
     const at = Number(atStr) / 100;
 
     if (!Number.isFinite(pct) || !Number.isFinite(at) || pct <= 0 || at <= 0) {
-      console.warn(`[config] ignoring invalid partial TP tier: "${part}"`);
-      return [];
+      throw new Error(
+        `[config] invalid partial TP tier: "${part}" – expected format "pct%@at%", got pct="${pctStr}" at="${atStr}"`,
+      );
     }
 
     return [{ pct, at }];
