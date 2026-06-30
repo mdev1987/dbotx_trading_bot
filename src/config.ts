@@ -8,11 +8,17 @@ export interface PartialTpTier {
 function parsePartialTpTiers(raw: string | undefined): PartialTpTier[] {
   if (!raw) return [];
 
-  return raw.split(",").map((part) => {
+  return raw.split(",").flatMap((part) => {
     const [pctStr, atStr] = part.split("@");
     const pct = Number(pctStr) / 100;
     const at = Number(atStr) / 100;
-    return { pct, at };
+
+    if (!Number.isFinite(pct) || !Number.isFinite(at) || pct <= 0 || at <= 0) {
+      console.warn(`[config] ignoring invalid partial TP tier: "${part}"`);
+      return [];
+    }
+
+    return [{ pct, at }];
   });
 }
 

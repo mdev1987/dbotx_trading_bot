@@ -1,20 +1,6 @@
-/**
- * DBotX WebSocket client.
- *
- * Maintains two subscription tiers:
- * 1. Global `newPairInfo` – discovers every freshly created trading pair.
- * 2. Per-pair `pairInfo`   – subscribes on discovery for continuous updates.
- *
- * On reconnect every active subscription is re-issued automatically.
- *
- * A `pair → mint` reverse map is kept so that incoming `pairInfo`
- * messages (which lack the mint address) can be linked back to
- * their token for trade updates and snapshot recording.
- */
-
 import { CONFIG } from "./config";
 import { saveRawEvent, saveSnapshot } from "./recorder";
-import { openPaperTrade, updateTrade, closeTrade } from "./paper_wallet";
+import { openPaperTrade, updateTrade } from "./paper_wallet";
 import { upsertToken, getLatestSnapshot } from "./db";
 import type {
   DbotxMessage,
@@ -29,20 +15,34 @@ const PING_INTERVAL_MS = 30_000;
 /** Reverse lookup: pair address → token mint. */
 const pairToMint = new Map<string, string>();
 
-/**
- * Ordered list of mints with active `pairInfo` subscriptions.
- *
- * DBotX `pairInfo` messages do NOT include a pair or mint identifier,
- * so we match them by subscription order (round-robin). Every incoming
- * `pairInfo` is assigned to the next mint in this array, wrapping
- * around when we reach the end.
- */
+/** Forward lookup: token mint → pair address (survives reconnect). */
+const mintToPair = new Map<string, string>();
+
+/** Ordered list of mints subscribed for `pairInfo` updates. */
 const subscribedMints: string[] = [];
-/** Round-robin index into `subscribedMints`. */
+
+/**
+ * FIFO queue of mints that have received `newPairInfo` but have not yet
+ * received their first identifiable `pairInfo` update. Drained in order
+ * as the first unidentifiable updates arrive.
+ */
+const pendingFirstPrice: string[] = [];
+
+/**
+ * Last known price per mint (SOL). Used for consistency-based matching
+ * when no explicit identifier is available.
+ */
+const lastPrice = new Map<string, number>();
+
+/** Round-robin index for absolute fallback. */
 let subIndex = 0;
 
 let ws: WebSocket | null = null;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
+
+// ---------------------------------------------------------------------------
+// Message type guards
+// ---------------------------------------------------------------------------
 
 function isAck(msg: unknown): msg is DbotxSubscribeAck {
   return (
@@ -76,6 +76,119 @@ function sendSubscribe(type: string, args: Record<string, unknown> = {}): void {
   ws.send(JSON.stringify({ method: "subscribe", type, args }));
 }
 
+function sendUnsubscribe(type: string, args: Record<string, unknown> = {}): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ method: "unsubscribe", type, args }));
+}
+
+// ---------------------------------------------------------------------------
+// Identifier extraction
+// ---------------------------------------------------------------------------
+
+const MINT_FIELDS = [
+  "m", "mint", "token", "token_mint", "mint_address",
+  "base", "base_mint", "baseMint",
+] as const;
+
+const PAIR_FIELDS = [
+  "p", "pair", "pair_address", "pairAddress", "symbol", "pool", "poolId",
+] as const;
+
+function identifyMint(
+  msg: Record<string, unknown>,
+  result: Record<string, unknown>,
+  pairMap: Map<string, string>,
+): { mint: string; source: string } | null {
+  /* 1. Check message envelope for direct mint identifiers */
+  for (const key of MINT_FIELDS) {
+    const val = msg[key];
+    if (typeof val === "string" && val.length > 0) {
+      return { mint: val, source: `msg.${key}` };
+    }
+  }
+
+  /* 2. Check message envelope for pair → mint lookup */
+  for (const key of PAIR_FIELDS) {
+    const val = msg[key];
+    if (typeof val === "string" && val.length > 0) {
+      const mint = pairMap.get(val);
+      if (mint) return { mint, source: `msg.${key}` };
+    }
+  }
+
+  /* 3. Check result for direct mint identifiers */
+  for (const key of MINT_FIELDS) {
+    const val = result[key];
+    if (typeof val === "string" && val.length > 0) {
+      return { mint: val, source: `result.${key}` };
+    }
+  }
+
+  /* 4. Check result for pair → mint lookup */
+  for (const key of PAIR_FIELDS) {
+    const val = result[key];
+    if (typeof val === "string" && val.length > 0) {
+      const mint = pairMap.get(val);
+      if (mint) return { mint, source: `result.${key}` };
+    }
+  }
+
+  /* 5. Channel/subscription/topic fields */
+  for (const key of ["channel", "subscription", "topic", "stream", "sub", "sid", "id"] as const) {
+    const val = result[key] ?? msg[key];
+    if (typeof val === "string" && val.length > 0) {
+      if (pairMap.has(val)) return { mint: val, source: `${key}→map` };
+      /* base58 mint pattern (Solana address) */
+      if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(val)) {
+        return { mint: val, source: `${key}→infer` };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Match an incoming pairInfo to a mint by comparing the incoming token
+ * price against each tracked token's last known price. The closest
+ * relative match within a 50 % band is selected.
+ */
+function matchByPrice(
+  incomingPrice: number,
+  priceMap: Map<string, number>,
+): string | null {
+  let best: string | null = null;
+  let bestRelDiff = Infinity;
+
+  for (const [mint, known] of priceMap) {
+    if (known <= 0) continue;
+    const relDiff = Math.abs(incomingPrice - known) / known;
+    if (relDiff < 0.5 && relDiff < bestRelDiff) {
+      bestRelDiff = relDiff;
+      best = mint;
+    }
+  }
+
+  return best;
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+
+let unidentifiedCount = 0;
+
+function logUnidentifiedKeys(msg: Record<string, unknown>, result: Record<string, unknown>): void {
+  if (unidentifiedCount >= 5) return;
+  unidentifiedCount++;
+
+  const msgKeys = Object.keys(msg).filter((k) => k !== "result");
+  const resultKeys = Object.keys(result);
+  console.warn(
+    `[ws] unidentified pairInfo #${unidentifiedCount} – msg keys: [${msgKeys.join(", ")}], result keys: [${resultKeys.join(", ")}]`,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -98,86 +211,118 @@ async function handleNewPairInfo(msg: DbotxNewPairInfo): Promise<void> {
 
   await saveRawEvent(Date.now(), "newPairInfo", mint, pair, msg);
 
-  await upsertToken(
-    mint,
-    pair,
-    null,
-    null,
-    initialLiquiditySol,
-    rawJson,
-  );
+  await upsertToken(mint, pair, null, null, initialLiquiditySol, rawJson);
 
-  /* subscribe to per-pair updates if not already tracking */
   if (!subscribedMints.includes(mint)) {
     subscribedMints.push(mint);
     pairToMint.set(pair, mint);
+    mintToPair.set(mint, pair);
+
     /*
-     * Include an `id` field matching the mint so that if DBotX
-     * echoes subscription metadata, `identifyMintFromResult` can
-     * match it without round-robin.
+     * Subscribe with multiple potential identifier fields.
+     * If DBotX echoes any of them back, we can match deterministically.
      */
-    sendSubscribe("pairInfo", { pair, token: mint, subId: mint });
+    sendSubscribe("pairInfo", {
+      pair,
+      token: mint,
+      channel: mint,
+      subId: mint,
+    });
   }
 
-  /* open a paper trade at the first available price */
-  await openPaperTrade(mint, pair, null, null, msg);
-}
-
-/**
- * Try to extract a stable identifier (mint or pair address) from a
- * `pairInfo` result object. DBotX may include `m` (mint) or `p` (pair)
- * in the payload. Falls back to round-robin if neither is found.
- */
-function identifyMintFromResult(
-  result: Record<string, unknown>,
-  pairMap: Map<string, string>,
-): string | null {
-  /* direct mint match */
-  for (const key of ["m", "mint", "token"] as const) {
-    const val = result[key];
-    if (typeof val === "string" && val.length > 0) return val;
-  }
-
-  /* pair → mint lookup */
-  for (const key of ["p", "pair"] as const) {
-    const val = result[key];
-    if (typeof val === "string" && val.length > 0) {
-      const mint = pairMap.get(val);
-      if (mint) return mint;
-    }
-  }
-
-  return null;
+  /* defer trade opening – wait for first observable price */
+  pendingFirstPrice.push(mint);
 }
 
 async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
   const now = Date.now();
   const rawJson = JSON.stringify(msg);
   const result = msg.result as Record<string, unknown>;
+  const msgObj = msg as unknown as Record<string, unknown>;
+
+  const incomingPrice = (result.tp as number) ?? 0;
 
   /*
-   * DBotX `pairInfo` messages may include the mint (m) or pair (p)
-   * address in the result payload. Try to extract it first.
+   * Step 1 – Try to extract a stable identifier (deterministic).
    */
-  let mint: string | null = identifyMintFromResult(result, pairToMint);
+  let identified = identifyMint(msgObj, result, pairToMint);
+  let mint: string | null = null;
 
-  /* fallback: round-robin over subscribed mints */
+  if (identified) {
+    mint = identified.mint;
+  }
+
+  /*
+   * Step 2 – First-update FIFO queue.
+   * Each pending mint just subscribed; the first update for any
+   * subscription is likely to arrive in subscription order.
+   */
+  if (!mint && pendingFirstPrice.length > 0) {
+    mint = pendingFirstPrice.shift()!;
+  }
+
+  /*
+   * Step 3 – Price consistency matching.
+   * Compare the incoming price against each token's last known price.
+   */
+  if (!mint && incomingPrice > 0 && lastPrice.size > 0) {
+    mint = matchByPrice(incomingPrice, lastPrice);
+  }
+
+  /*
+   * Step 4 – Absolute fallback: round-robin.
+   */
   if (!mint) {
     if (subscribedMints.length === 0) return;
     mint = subscribedMints[subIndex % subscribedMints.length]!;
     subIndex++;
-    console.warn(
-      `[ws] pairInfo without identifier – using round-robin to ${mint.slice(0, 8)}..`,
-    );
+    logUnidentifiedKeys(msgObj, result);
+  }
+
+  /* update last known price for future matching */
+  if (incomingPrice > 0) {
+    lastPrice.set(mint, incomingPrice);
   }
 
   await saveRawEvent(now, "pairInfo", mint, null, msg);
   await saveSnapshot(null, mint, result, rawJson);
 
-  const priceSol = (result.tp as number) ?? null;
+  const priceSol = incomingPrice > 0 ? incomingPrice : null;
   const priceUsd = (result.tpu as number) ?? null;
 
-  await upsertToken(mint, null, priceUsd, result.mp as number ?? null, result.cr as number ?? null, rawJson);
+  await upsertToken(
+    mint, null, priceUsd,
+    result.mp as number ?? null,
+    result.cr as number ?? null,
+    rawJson,
+  );
+
+  /*
+   * Deferred trade open – if this mint just received its first price,
+   * open the paper trade now at the first observable price.
+   */
+  if (pendingFirstPrice.includes(mint)) {
+    /* remove from pending list */
+    const idx = pendingFirstPrice.indexOf(mint);
+    if (idx !== -1) pendingFirstPrice.splice(idx, 1);
+
+    const pair = mintToPair.get(mint) ?? "";
+
+    await openPaperTrade(mint, pair, priceSol, priceUsd, msg);
+
+    /* first price also triggers an immediate PnL update */
+    const { db } = await import("./db");
+    const [tradeRow] = await db`
+      SELECT id FROM trades
+      WHERE mint = ${mint} AND open = 1
+      ORDER BY entry_ts DESC LIMIT 1
+    ` as { id: number }[];
+
+    if (tradeRow) {
+      await updateTrade(tradeRow.id, priceSol, priceUsd);
+    }
+    return;
+  }
 
   /* update the open trade PnL */
   const { db } = await import("./db");
@@ -190,6 +335,34 @@ async function handlePairInfo(msg: DbotxPairInfo): Promise<void> {
   if (tradeRow) {
     await updateTrade(tradeRow.id, priceSol, priceUsd);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Subscription lifecycle
+// ---------------------------------------------------------------------------
+
+export function unsubscribeMint(mint: string): void {
+  const idx = subscribedMints.indexOf(mint);
+  if (idx !== -1) {
+    subscribedMints.splice(idx, 1);
+  }
+
+  const pendingIdx = pendingFirstPrice.indexOf(mint);
+  if (pendingIdx !== -1) {
+    pendingFirstPrice.splice(pendingIdx, 1);
+  }
+
+  for (const [pair, m] of pairToMint) {
+    if (m === mint) {
+      pairToMint.delete(pair);
+      mintToPair.delete(mint);
+      break;
+    }
+  }
+
+  lastPrice.delete(mint);
+
+  sendUnsubscribe("pairInfo", { token: mint });
 }
 
 // ---------------------------------------------------------------------------
@@ -227,8 +400,12 @@ function onOpen(): void {
   sendSubscribe("newPairInfo", {});
 
   for (const mint of subscribedMints) {
-    /* we lost the pair address on reconnect, re-sub by mint only */
-    sendSubscribe("pairInfo", { token: mint, subId: mint });
+    const pair = mintToPair.get(mint);
+    if (pair) {
+      sendSubscribe("pairInfo", { pair, token: mint, channel: mint, subId: mint });
+    } else {
+      sendSubscribe("pairInfo", { token: mint, channel: mint, subId: mint });
+    }
   }
 
   if (pingTimer) clearInterval(pingTimer);

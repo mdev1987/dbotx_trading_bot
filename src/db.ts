@@ -178,6 +178,15 @@ export async function initializeDatabase(): Promise<void> {
     ON partial_fills(trade_id)
   `;
 
+  /*
+   * Composite index used by `recalculateWalletEquity` to find the
+   * latest snapshot per mint efficiently, even with millions of rows.
+   */
+  await db`
+    CREATE INDEX IF NOT EXISTS idx_snapshots_mint_ts
+    ON snapshots(mint, ts DESC)
+  `;
+
   /* ---- migrate legacy tables that may lack new columns ---- */
   const legacyCols: { name: string; def: string }[] = [
     { name: "filled_token_amount", def: "REAL NOT NULL DEFAULT 0" },

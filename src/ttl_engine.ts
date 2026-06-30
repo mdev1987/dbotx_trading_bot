@@ -31,6 +31,7 @@ import {
   getFilledTierIndices,
 } from "./db";
 import { closeTrade as walletCloseTrade } from "./paper_wallet";
+import { unsubscribeMint } from "./dbotx_client";
 import type { TradeRow, ExitReason } from "./models";
 
 const TICK_INTERVAL_MS = 1_000;
@@ -230,6 +231,8 @@ async function tick(): Promise<void> {
             `PnL: ${updated.pnl_percent !== null ? (updated.pnl_percent * 100).toFixed(2) : "?"}%  ` +
             `reason: ${action.close}`,
         );
+        /* stop listening for pairInfo updates for this mint */
+        unsubscribeMint(updated.mint);
       }
     } catch (err) {
       console.error(`[ttl] error processing trade ${trade.id}:`, err);
