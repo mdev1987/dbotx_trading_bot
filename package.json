@@ -11,6 +11,9 @@
   },
   "dependencies": {
     "@dotenvx/dotenvx": "^1.75.1",
-    "grammy": "^1.44.0"
+    "grammy": "^1.44.0",
+    "remove-markdown": "^0.6.4",
+    "telegram": "^2.26.22",
+    "telegram-markdown-v2": "^0.0.5"
   }
 }

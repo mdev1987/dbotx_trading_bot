@@ -37,23 +37,27 @@ export const CONFIG = {
   trailingActivationPct:
     Number(process.env.PAPER_TRAILING_ACTIVATION_PERCENT) / 100,
 
-  trailingDistancePct:
-    Number(process.env.PAPER_TRAILING_STOP_PERCENT) / 100,
+  trailingDistancePct: Number(process.env.PAPER_TRAILING_STOP_PERCENT) / 100,
 
   partialTpTiers: parsePartialTpTiers(process.env.PARTIAL_TP_TIERS),
 
   backstopTpPct:
     Number(
-      process.env.PAPER_BACKSTOP_TP_PERCENT
-        ?? process.env.PAPER_TAKE_PROFIT_PERCENT,
+      process.env.PAPER_BACKSTOP_TP_PERCENT ??
+        process.env.PAPER_TAKE_PROFIT_PERCENT,
     ) / 100,
 
-  maxSlippageExitPct:
-    Number(process.env.PAPER_MAX_SLIPPAGE_EXIT_PERCENT) / 100,
+  maxSlippageExitPct: Number(process.env.PAPER_MAX_SLIPPAGE_EXIT_PERCENT) / 100,
 
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
   telegramChatId: process.env.TELEGRAM_CHAT_ID,
-  reportIntervalMinutes: Number(process.env.TELEGRAM_REPORT_INTERVAL_MINUTES ?? "5"),
+  reportIntervalMinutes: Number(
+    process.env.TELEGRAM_REPORT_INTERVAL_MINUTES ?? "5",
+  ),
+
+  telegram_api_id: process.env.TELEGRAM_API_ID,
+  telegram_api_hash: process.env.TELEGRAM_API_HASH,
+  telegram_channel_username: process.env.TELEGRAM_CHANNEL_USERNAME,
 
   sqlitePath: process.env.SQLITE_PATH!,
 
@@ -61,4 +65,4 @@ export const CONFIG = {
   saveRawJson: process.env.SAVE_RAW_JSON === "true",
 
   logLevel: process.env.LOG_LEVEL ?? "info",
-} as const;
+};

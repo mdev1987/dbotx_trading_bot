@@ -38,3 +38,4 @@ data/
 .vscode
 
 merge/
+telegram_session/
