@@ -1,68 +1,83 @@
+import { startTelegramListener } from "./telegram/telegram_listener";
+import { pairUpdate$ } from "./market/dbotx_data_ws";
+import { concat, from, ignoreElements, merge, tap } from "rxjs";
+import { simulatorAccount$ } from "./simulator/account";
+import { simFastBuy } from "./simulator/fast_buy_sell";
 /**
- * Paper trader – entry point.
- *
- * Initialises the database, connects to DBotX, and
- * starts the TTL engine. The process runs indefinitely
- * collecting market data and executing paper trades.
+ * Start Telegram client.
  */
+// const startup$ = from(startTelegramListener()).pipe(
+//   tap(() => {
+//     console.log("[main] Telegram listener started");
+//   }),
+//   ignoreElements(),
+// );
 
-import { initializeDatabase, db } from "./db";
-import { connect, disconnect } from "./dbotx_client";
-import { startTtlEngine, stopTtlEngine } from "./ttl_engine";
-import { startReporter, stopReporter } from "./reporter";
-import { CONFIG } from "./config";
-import { startTelegramListener } from "./telegram_client/telegram_listener";
+/**
+ * Live pair updates from DBotX websocket.
+ */
+// const pairConsumer$ = pairUpdate$.pipe(
+//   tap((update) => {
+//     console.log(`[PRICE] ${update.pair} $${update.priceUsd}`);
+//   }),
+// );
 
-async function handleShutdown(): Promise<void> {
-  console.log("\n[main] shutting down...");
-  stopTtlEngine();
-  stopReporter();
-  disconnect();
+/**
+ * Application event bus.
+ */
+// concat(startup$, pairConsumer$).subscribe({
+//   error(error) {
+//     console.error("[main] fatal error:", error);
 
-  /*
-   * WAL checkpoints are flushed automatically on close.
-   * Explicit checkpoint for safety.
-   */
-  await db`PRAGMA wal_checkpoint(TRUNCATE);`;
-  await db.close();
+//     process.exit(1);
+//   },
+// });
 
-  console.log("[main] goodbye");
-  process.exit(0);
+// Example Usage
+
+async function main() {
+  // simulatorAccount$.subscribe((account) => {
+  //   console.log(
+  //     `[SIM] Balance=${account.balance} SOL ` +
+  //       `PnL=${account.changeAll * 100}% ` +
+  //       `Tokens=${account.holdTokens}`,
+  //   );
+  // });
+
+  const response = await simFastBuy({
+    pair: "Fux28yJDBubYqSJcz3ZJtPZrY5MYVHHFxfZhUoKy9n5r",
+
+    amountOrPercent: 0.1,
+
+    stopEarnGroup: [
+      {
+        pricePercent: 0.2,
+        amountPercent: 0.5,
+      },
+      {
+        pricePercent: 0.8,
+        amountPercent: 1,
+      },
+    ],
+
+    stopLossGroup: [
+      {
+        pricePercent: 0.2,
+        amountPercent: 0.5,
+      },
+      {
+        pricePercent: 0.8,
+        amountPercent: 1,
+      },
+    ],
+
+    priorityFee: "",
+    slippage: 0.1,
+  });
+
+  console.log("[SIM] simFastBuy response:", response);
+  //   [SIM BUY] Fux28yJDBubYqSJcz3ZJtPZrY5MYVHHFxfZhUoKy9n5r -> mr2qpc810wzhxy
+  //   [SIM] simFastBuy response: mr2qpc810wzhxy
 }
 
-async function main(): Promise<void> {
-  await startTelegramListener();
-  // console.log("=".repeat(50));
-  // console.log("  DBotX Paper Trader (research edition)");
-  // console.log("=".repeat(50));
-  // console.log(`  Wallet:     ${CONFIG.startingBalance} SOL`);
-  // console.log(`  Position:   ${CONFIG.positionSize} SOL`);
-  // console.log(`  Max trades: ${CONFIG.maxOpenTrades}`);
-  // console.log(`  TTL:        ${CONFIG.ttlSeconds}s`);
-  // console.log(`  TP:         ${(CONFIG.backstopTpPct * 100).toFixed(0)}%`);
-  // console.log(`  SL:         ${(CONFIG.stopLossPct * 100).toFixed(0)}%`);
-  // console.log(`  Trail dist: ${(CONFIG.trailingDistancePct * 100).toFixed(0)}%`);
-  // console.log(`  Trail act:  ${(CONFIG.trailingActivationPct * 100).toFixed(0)}%`);
-  // console.log(`  Partial TP: ${CONFIG.partialTpTiers.length > 0 ? CONFIG.partialTpTiers.map(t => `${(t.pct * 100).toFixed(0)}%@${(t.at * 100).toFixed(0)}%`).join(", ") : "none"}`);
-  // console.log(`  Max slip:   ${(CONFIG.maxSlippageExitPct * 100).toFixed(0)}%`);
-  // console.log(`  Telegram:   ${CONFIG.telegramBotToken ? "enabled" : "disabled"}`);
-  // console.log(`  DB:         ${CONFIG.sqlitePath}`);
-  // console.log("=".repeat(50));
-  // /* initialise persistence */
-  // await initializeDatabase();
-  // console.log("[main] database ready");
-  // /* start the exit-condition checker */
-  // startTtlEngine();
-  // /* connect to DBotX websocket */
-  // connect();
-  // /* start Telegram reporter */
-  // startReporter();
-  // /* graceful shutdown handlers */
-  // process.on("SIGINT", () => handleShutdown().catch((err) => console.error("[main] shutdown error:", err)));
-  // process.on("SIGTERM", () => handleShutdown().catch((err) => console.error("[main] shutdown error:", err)));
-}
-
-main().catch((err) => {
-  console.error("[main] fatal error:", err);
-  process.exit(1);
-});
+main().catch((e) => console.error(`[main] fatal error: `, e));

@@ -26,12 +26,15 @@ function parsePartialTpTiers(raw: string | undefined): PartialTpTier[] {
 export const CONFIG = {
   dbotxApiKey: process.env.DBOTX_API_KEY!,
   wsUrl: process.env.DBOTX_WS_URL!,
+  baseUrl: process.env.DBOTX_BASE_URL!,
+  // time to live (TTL) in seconds for signals
+  ttlSignalSeconds: Number(process.env.TTL_SIGNAL_SECONDS ?? "600"), // 10 minutes = 10*60s
+  maxPositions: Number(process.env.MAX_POSITIONS ?? "5"),
+  // time to live (TTL) in seconds for open positions
+  ttlPositionSeconds: Number(process.env.TTL_POSITION_SECONDS ?? "600"), // 10 minutes = 10*60s
+  startingBalance: Number(process.env.SIMULATE_SOL_BALANCE ?? "5"), // 5 SOL
+  positionSize: Number(process.env.POSITION_SIZE_SOL ?? "0.1"), // 0.1 SOL
 
-  startingBalance: Number(process.env.PAPER_STARTING_BALANCE_SOL),
-  positionSize: Number(process.env.PAPER_POSITION_SIZE_SOL),
-  maxOpenTrades: Number(process.env.PAPER_MAX_OPEN_TRADES),
-
-  ttlSeconds: Number(process.env.PAPER_TTL_SECONDS),
   stopLossPct: Number(process.env.PAPER_STOP_LOSS_PERCENT) / 100,
 
   trailingActivationPct:
@@ -55,9 +58,10 @@ export const CONFIG = {
     process.env.TELEGRAM_REPORT_INTERVAL_MINUTES ?? "5",
   ),
 
-  telegram_api_id: process.env.TELEGRAM_API_ID,
-  telegram_api_hash: process.env.TELEGRAM_API_HASH,
-  telegram_channel_username: process.env.TELEGRAM_CHANNEL_USERNAME,
+  telegramApiId: process.env.TELEGRAM_API_ID,
+  telegramApiHash: process.env.TELEGRAM_API_HASH,
+  telegramChannelUserName: process.env.TELEGRAM_CHANNEL_USERNAME,
+  telegramChannelId: process.env.TELEGRAM_CHANNEL_ID,
 
   sqlitePath: process.env.SQLITE_PATH!,
 

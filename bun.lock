@@ -8,6 +8,7 @@
         "@dotenvx/dotenvx": "^1.75.1",
         "grammy": "^1.44.0",
         "remove-markdown": "^0.6.4",
+        "rxjs": "^7.8.2",
         "telegram": "^2.26.22",
         "telegram-markdown-v2": "^0.0.5",
       },
@@ -315,6 +316,8 @@
     "remove-markdown": ["remove-markdown@0.6.4", "", {}, "sha512-BompiLClzjfh46irZmzv+1Q61jZYlKN3iq/hzae9EOUwf7ctr/5wpD4qwgn/FWDAYE18RORO7z/yr+HXZJCY8Q=="],
 
     "require-from-string": ["require-from-string@2.0.2", "", {}, "sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw=="],
+
+    "rxjs": ["rxjs@7.8.2", "", { "dependencies": { "tslib": "^2.1.0" } }, "sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA=="],
 
     "semver": ["semver@7.8.5", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA=="],
 
