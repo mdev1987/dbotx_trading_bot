@@ -1,27 +1,21 @@
-/* ============================================================
+/**
  * simulator/account.ts
  *
- * DBotX simulator account module.
+ * DBotX simulator account stream.
  *
- * Responsibilities:
+ * Exposes:
+ *  - refreshAccount$  — manual refresh trigger (Subject)
+ *  - simulatorAccount$ — live account observable (auto-polls every 60s)
+ *  - fetchSimulatorAccount() — raw fetch function
  *
- * - Fetch simulator account information
- * - Expose refresh trigger
- * - Expose account observable
- *
- * ============================================================
+ * Errors are caught inside each switchMap so the stream never
+ * dies. On error the tick is silently dropped; the shareReplay
+ * retains the last known good value for late subscribers.
  */
 
-import { Subject, from, merge, timer } from "rxjs";
-
-import { switchMap, shareReplay } from "rxjs/operators";
-
+import { Subject, from, merge, timer, EMPTY } from "rxjs";
+import { switchMap, shareReplay, catchError, tap } from "rxjs/operators";
 import { CONFIG } from "../config";
-
-/* ============================================================
- * Types
- * ============================================================
- */
 
 export interface SimulatorAccount {
   balance: number;
@@ -32,7 +26,6 @@ export interface SimulatorAccount {
 
 interface AccountResponse {
   err: boolean;
-
   res: {
     balance: string;
     change24h: number;
@@ -41,72 +34,61 @@ interface AccountResponse {
   };
 }
 
-/* ============================================================
- * Refresh trigger
- * ============================================================
- */
-
 export const refreshAccount$ = new Subject<void>();
 
-/* ============================================================
- * Fetch account
- * ============================================================
- */
 const { baseUrl } = CONFIG;
+
 export async function fetchSimulatorAccount(): Promise<SimulatorAccount> {
   const response = await fetch(`${baseUrl}/simulator/sim_account`, {
-    headers: {
-      "x-api-key": CONFIG.dbotxApiKey,
-    },
+    headers: { "x-api-key": CONFIG.dbotxApiKey },
   });
 
   if (!response.ok) {
-    console.error(
-      `[simulator] HTTP error ${response.status}:`,
-      response.statusText,
-    );
-    throw new Error(`Simulator account request failed (${response.status})`);
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
   }
 
-  const simulateAccountResponse: AccountResponse =
-    (await response.json()) as AccountResponse;
+  const body = (await response.json()) as AccountResponse;
 
-  if (simulateAccountResponse.err) {
-    throw new Error("DBotX returned an error");
+  if (body.err) {
+    throw new Error("API returned err: true");
   }
 
   return {
-    ...simulateAccountResponse.res,
-    balance: parseFloat(simulateAccountResponse.res.balance),
+    balance: parseFloat(body.res.balance),
+    change24h: body.res.change24h,
+    changeAll: body.res.changeAll,
+    holdTokens: body.res.holdTokens,
   };
 }
 
-/* ============================================================
- * Manual refresh stream
- * ============================================================
- */
+export let latestAccount: SimulatorAccount | null = null;
 
+/* Manual refresh — triggerd by refreshAccount$.next() */
 const manualRefresh$ = refreshAccount$.pipe(
-  switchMap(() => from(fetchSimulatorAccount())),
+  switchMap(() =>
+    from(fetchSimulatorAccount()).pipe(
+      tap((a) => { latestAccount = a; }),
+      catchError((err) => {
+        console.error("[simulator] Account fetch failed:", err);
+        return EMPTY;
+      }),
+    ),
+  ),
 );
 
-/* ============================================================
- * Automatic refresh every 60 seconds
- * ============================================================
- */
-
-const polling$ = timer(0, 60_000).pipe(
-  switchMap(() => from(fetchSimulatorAccount())),
+/* Auto-poll every 60s (first tick delayed so it doesn't fire on cold load) */
+const polling$ = timer(60_000, 60_000).pipe(
+  switchMap(() =>
+    from(fetchSimulatorAccount()).pipe(
+      tap((a) => { latestAccount = a; }),
+      catchError((err) => {
+        console.error("[simulator] Account fetch failed:", err);
+        return EMPTY;
+      }),
+    ),
+  ),
 );
-
-/* ============================================================
- * Account stream
- * ============================================================
- */
 
 export const simulatorAccount$ = merge(manualRefresh$, polling$).pipe(
-  shareReplay({
-    bufferSize: 1, // Share the latest value
-    refCount: true, // Share the latest value with all subscribers
-  }),
+  shareReplay({ bufferSize: 1, refCount: true }),
 );

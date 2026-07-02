@@ -85,9 +85,25 @@ const rl = readLine.createInterface({
   output: process.stdout,
 });
 
+/**
+ * Prompt the user for input with a 5-minute timeout.
+ *
+ * Rejects if the user does not respond in time, preventing
+ * the process from hanging indefinitely.
+ */
 function ask(question: string): Promise<string> {
-  return new Promise((resolve) => {
-    rl.question(question, resolve);
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      rl.removeAllListeners("line");
+
+      reject(new Error("Input timed out after 5 minutes"));
+    }, 5 * 60 * 1_000);
+
+    rl.question(question, (answer) => {
+      clearTimeout(timeout);
+
+      resolve(answer);
+    });
   });
 }
 
@@ -161,35 +177,48 @@ export const connected$ = connectedInput$.pipe(share());
  */
 let channelId: number = Number(telegramChannelId ?? undefined);
 export async function startTelegramListener(): Promise<void> {
-  await telegramClient.start({
-    phoneNumber: async () => ask("Phone number: "),
+  try {
+    await telegramClient.start({
+      phoneNumber: async () => ask("Phone number: "),
 
-    phoneCode: async () => ask("Telegram code: "),
+      phoneCode: async () => ask("Telegram code: "),
 
-    password: async () => ask("2FA password: "),
+      password: async () => ask("2FA password: "),
 
-    onError: console.error,
-  });
+      onError: console.error,
+    });
 
-  /*
-   * Save session for both StoreSession
-   * and MemorySession compatibility.
-   */
-  telegramClient.session.save();
+    /*
+     * Save session for both StoreSession
+     * and MemorySession compatibility.
+     */
+    telegramClient.session.save();
 
-  rl.close();
+    rl.close();
 
-  connectedInput$.next(true);
+    connectedInput$.next(true);
 
-  console.log("[Telegram] Client connected");
+    console.log("[Telegram] Client connected");
+  } catch (err) {
+    rl.close();
+    console.error("[Telegram] Login failed:", err);
+    throw err;
+  }
 
   if (!channelId) {
-    const channel = await telegramClient.getEntity(telegramChannelUserName!);
-    channelId = Number(channel.id);
-    console.log(`Listening to ${telegramChannelUserName} (${channelId})`);
-  } else {
-    console.log(`Listening to ${telegramChannelUserName} (${channelId})`);
+    try {
+      const channel = await telegramClient.getEntity(telegramChannelUserName!);
+      channelId = Number(channel.id);
+    } catch (err) {
+      console.error(
+        `[Telegram] Failed to resolve channel "${telegramChannelUserName}":`,
+        err,
+      );
+      throw err;
+    }
   }
+
+  console.log(`[Telegram] Listening to ${telegramChannelUserName} (${channelId})`);
 
   telegramClient.addEventHandler(
     (event: NewMessageEvent) => {

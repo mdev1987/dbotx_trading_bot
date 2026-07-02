@@ -1,144 +1,54 @@
-// src/simulator/fast_buy_sell.ts
+/**
+ * simulator/fast_buy_sell.ts
+ *
+ * Thin wrappers around the DBotX simulator's sim_swap_order
+ * endpoint for buy and sell operations.
+ *
+ * simFastBuy(payload)  → creates a buy order, returns order ID
+ * simFastSell(payload) → creates a sell order, returns order ID
+ *
+ * Both accept the same fields (type is set internally).
+ * TP/SL groups can be passed at creation time; the server
+ * generates individual PnL tasks per tier.
+ */
 
 import { CONFIG } from "../config";
-
-/* ============================================================
- * Types
- * ============================================================
- */
 
 export type SimulatorTradeType = "buy" | "sell";
 
 export interface ProfitLossGroup {
-  /**
-   * Trigger percentage.
-   *
-   * Example:
-   * 0.2 = 20%
-   * 1.0 = 100%
-   */
+  /** Trigger price as a decimal (0.2 = 20%). */
   pricePercent: number;
-
-  /**
-   * Amount to sell.
-   *
-   * 0.5 = 50%
-   * 1.0 = 100%
-   */
+  /** Position fraction to sell (0.5 = 50%). */
   amountPercent: number;
 }
 
 export interface SimulatorFastSwapRequest {
-  /**
-   * Blockchain.
-   */
   chain?: "solana";
-
-  /**
-   * Pair address.
-   */
   pair: string;
-
-  /**
-   * Empty string means simulator wallet.
-   */
   walletId?: string;
-
-  /**
-   * buy or sell
-   */
   type: SimulatorTradeType;
-
-  /**
-   * BUY:
-   * Amount in SOL.
-   *
-   * SELL:
-   * Percentage of holdings.
-   */
+  /** BUY: SOL amount.  SELL: fraction of holdings (1 = all). */
   amountOrPercent: number;
-
-  /* --------------------------------------------------------
-   * Simple TP/SL
-   * -------------------------------------------------------- */
-
-  /**
-   * Sell all after profit target.
-   *
-   * Example:
-   * 0.5 = +50%
-   */
+  /** Sell all after profit target (overridden by stopEarnGroup). */
   stopEarnPercent?: number;
-
-  /**
-   * Sell all after loss target.
-   *
-   * Example:
-   * 0.5 = -50%
-   */
+  /** Sell all after loss target (overridden by stopLossGroup). */
   stopLossPercent?: number;
-
-  /* --------------------------------------------------------
-   * Partial TP/SL
-   * -------------------------------------------------------- */
-
-  /**
-   * Partial take profit ladder.
-   *
-   * Overrides stopEarnPercent.
-   */
+  /** Partial take-profit ladder. */
   stopEarnGroup?: ProfitLossGroup[];
-
-  /**
-   * Partial stop loss ladder.
-   *
-   * Overrides stopLossPercent.
-   */
+  /** Partial stop-loss ladder. */
   stopLossGroup?: ProfitLossGroup[];
-
-  /* --------------------------------------------------------
-   * Execution settings
-   * -------------------------------------------------------- */
-
-  /**
-   * Solana priority fee.
-   *
-   * Empty string = automatic.
-   */
   priorityFee?: number | "";
-
-  /**
-   * EVM only.
-   */
   gasFeeDelta?: number;
-
-  /**
-   * EVM only.
-   */
   maxFeePerGas?: number;
-
-  /**
-   * Maximum slippage.
-   *
-   * 0.1 = 10%
-   */
   slippage?: number;
 }
 
 export interface SimulatorOrderResponse {
   err: boolean;
-
-  res: {
-    id: string;
-  };
-
+  res: { id: string };
   docs?: string;
 }
-
-/* ============================================================
- * Default settings
- * ============================================================
- */
 
 const DEFAULT_SETTINGS = {
   chain: "solana" as const,
@@ -149,75 +59,60 @@ const DEFAULT_SETTINGS = {
   slippage: 0.1,
 };
 
-/* ============================================================
- * Internal request helper
- * ============================================================
- */
+/** Request timeout in milliseconds. */
+const FETCH_TIMEOUT_MS = 30_000;
 
 async function createSimulatorOrder(
   request: SimulatorFastSwapRequest,
 ): Promise<string> {
-  const response = await fetch(
-    "https://api-bot-v1.dbotx.com/simulator/sim_swap_order",
-    {
-      method: "POST",
-      headers: {
-        "x-api-key": CONFIG.dbotxApiKey!,
-        "Content-Type": "application/json",
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(
+      "https://api-bot-v1.dbotx.com/simulator/sim_swap_order",
+      {
+        signal: controller.signal,
+        method: "POST",
+        headers: {
+          "x-api-key": CONFIG.dbotxApiKey!,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...DEFAULT_SETTINGS,
+          ...request,
+        }),
       },
-      body: JSON.stringify({
-        ...DEFAULT_SETTINGS,
-        ...request,
-      }),
-    },
-  );
+    );
 
-  if (!response.ok) {
-    throw new Error(`DBotX HTTP ${response.status}: ${response.statusText}`);
+    if (!response.ok) {
+      throw new Error(`DBotX HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const json = (await response.json()) as SimulatorOrderResponse;
+
+    if (json.err) {
+      throw new Error("DBotX simulator rejected order");
+    }
+
+    return json.res.id;
+  } finally {
+    clearTimeout(timer);
   }
-
-  const json = (await response.json()) as SimulatorOrderResponse;
-
-  if (json.err) {
-    throw new Error(`DBotX simulator rejected order`);
-  }
-
-  return json.res.id;
 }
 
-/* ============================================================
- * Public API
- * ============================================================
- */
-
-/**
- * Simulated BUY.
- */
 export async function simFastBuy(
   request: Omit<SimulatorFastSwapRequest, "type">,
 ): Promise<string> {
-  const orderId = await createSimulatorOrder({
-    ...request,
-    type: "buy",
-  });
-
+  const orderId = await createSimulatorOrder({ ...request, type: "buy" });
   console.log(`[SIM BUY] ${request.pair} -> ${orderId}`);
-
   return orderId;
 }
 
-/**
- * Simulated SELL.
- */
 export async function simFastSell(
   request: Omit<SimulatorFastSwapRequest, "type">,
 ): Promise<string> {
-  const orderId = await createSimulatorOrder({
-    ...request,
-    type: "sell",
-  });
-
+  const orderId = await createSimulatorOrder({ ...request, type: "sell" });
   console.log(`[SIM SELL] ${request.pair} -> ${orderId}`);
-
   return orderId;
 }

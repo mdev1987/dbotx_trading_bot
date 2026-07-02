@@ -87,103 +87,63 @@ export interface SignalState {
  * ============================================================
  */
 
+/**
+ * Latest signal state snapshot, updated synchronously inside the scan
+ * reducer.  Exported so that other modules (e.g. dbotx_data_ws) can
+ * read the current active pairs without creating a new subscription
+ * that would restart the scan from scratch.
+ */
+export let latestSignalState: SignalState = { active: new Map(), expired: [] };
+
 export const signalState$ = events$.pipe(
   scan<EngineEvent, SignalState>(
     (state, event) => {
       const now = event.now;
 
+      const active = new Map(state.active);
+
       const expired: string[] = [];
 
-      /*
-       * ------------------------------------------
-       * TTL cleanup
-       * ------------------------------------------
-       */
-
-      for (const [lp, expiresAt] of state.active) {
+      for (const [lp, expiresAt] of active) {
         if (expiresAt <= now) {
-          state.active.delete(lp);
-
+          active.delete(lp);
           expired.push(lp);
-
           console.log(`[TTL] Removed ${lp}`);
         }
       }
 
-      /*
-       * Tick events only perform cleanup.
-       */
-
       if (event.type === "tick") {
-        return {
-          ...state,
-          accepted: undefined,
-          expired,
-        };
+        latestSignalState = { active, accepted: undefined, expired };
+        return latestSignalState;
       }
 
       const signal = event.signal;
 
-      /*
-       * ------------------------------------------
-       * Dedup
-       * ------------------------------------------
-       */
-
-      if (state.active.has(signal.lpAddress)) {
+      if (active.has(signal.lpAddress)) {
         console.log(`[DEDUP] ${signal.tokenName}`);
-
-        return {
-          ...state,
-          accepted: undefined,
-          expired,
-        };
+        latestSignalState = { active, accepted: undefined, expired };
+        return latestSignalState;
       }
 
-      /*
-       * ------------------------------------------
-       * FIFO eviction
-       * ------------------------------------------
-       */
-
-      if (state.active.size >= MAX_POSITIONS) {
-        const oldest = state.active.keys().next().value;
-
+      if (active.size >= MAX_POSITIONS) {
+        const oldest = active.keys().next().value;
         if (oldest) {
-          state.active.delete(oldest);
-
+          active.delete(oldest);
           expired.push(oldest);
-
           console.log(`[FIFO] Removed ${oldest}`);
         }
       }
 
-      /*
-       * ------------------------------------------
-       * Accept signal
-       * ------------------------------------------
-       */
-
-      state.active.set(signal.lpAddress, now + TTL_SECONDS);
-
+      active.set(signal.lpAddress, now + TTL_SECONDS);
       console.log(`[ACCEPTED] ${signal.tokenName}`);
 
-      return {
-        active: state.active,
-        accepted: signal,
-        expired,
-      };
+      latestSignalState = { active, accepted: signal, expired };
+      return latestSignalState;
     },
-    {
-      active: new Map<string, number>(),
-      expired: [],
-    },
+    { active: new Map<string, number>(), expired: [] },
   ),
 
-  shareReplay({
-    bufferSize: 1,
-    refCount: true,
-  }),
+  shareReplay({ bufferSize: 1, refCount: false }),
 );
 
 /* ============================================================

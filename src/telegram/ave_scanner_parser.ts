@@ -298,9 +298,14 @@ export function parseSolanaPoolSignal(text: string): SolanaPoolSignal {
       "security",
     );
 
+    /*
+     * [^|]* matches any character except the pipe separator,
+     * which is safer than .*? because .*? can cross pipe
+     * boundaries when optional content is missing.
+     */
     const securityFlags = requireMatch(
       text.match(
-        /Ownership Renounced:(.*?)\|Top10 holdings<30%:\s*(.*?)\|Stop mint:(.*?)\|No Blacklist:(.*?)$/m,
+        /Ownership Renounced:([^|]*)\|Top10 holdings<30%:\s*([^|]*)\|Stop mint:([^|]*)\|No Blacklist:([^|]*)$/m,
       ),
       "security flags",
     );

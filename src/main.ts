@@ -1,83 +1,108 @@
+import "./simulator/position_manager";
+import { startPersistence, stopPersistence } from "./analytics/trades_repository";
+import { startReporter, stopReporter } from "./telegram/telegram_bot_reporter";
+
 import { startTelegramListener } from "./telegram/telegram_listener";
 import { pairUpdate$ } from "./market/dbotx_data_ws";
-import { concat, from, ignoreElements, merge, tap } from "rxjs";
 import { simulatorAccount$ } from "./simulator/account";
-import { simFastBuy } from "./simulator/fast_buy_sell";
-/**
- * Start Telegram client.
- */
-// const startup$ = from(startTelegramListener()).pipe(
-//   tap(() => {
-//     console.log("[main] Telegram listener started");
-//   }),
-//   ignoreElements(),
-// );
+import { positionEvent$ } from "./simulator/position_manager";
+import { tap } from "rxjs";
 
-/**
- * Live pair updates from DBotX websocket.
- */
-// const pairConsumer$ = pairUpdate$.pipe(
-//   tap((update) => {
-//     console.log(`[PRICE] ${update.pair} $${update.priceUsd}`);
-//   }),
-// );
+async function start(): Promise<void> {
+  /*
+   * Start analytics persistence.
+   */
+  startPersistence();
 
-/**
- * Application event bus.
- */
-// concat(startup$, pairConsumer$).subscribe({
-//   error(error) {
-//     console.error("[main] fatal error:", error);
+  /*
+   * Start Telegram reporter (real-time alerts + periodic summaries).
+   */
+  startReporter();
 
-//     process.exit(1);
-//   },
-// });
+  /*
+   * Start Telegram listener (login prompt via stdin).
+   */
+  await startTelegramListener();
 
-// Example Usage
+  /*
+   * Log live WS price updates.
+   */
+  pairUpdate$
+    .pipe(
+      tap((u) => {
+        if (u.priceUsd) {
+          console.log(`[PRICE] ${u.pair} $${u.priceUsd.toFixed(8)}`);
+        }
+      }),
+    )
+    .subscribe();
 
-async function main() {
-  // simulatorAccount$.subscribe((account) => {
-  //   console.log(
-  //     `[SIM] Balance=${account.balance} SOL ` +
-  //       `PnL=${account.changeAll * 100}% ` +
-  //       `Tokens=${account.holdTokens}`,
-  //   );
-  // });
+  /*
+   * Log position lifecycle events.
+   */
+  positionEvent$
+    .pipe(
+      tap((ev) => {
+        const p = ev.position;
+        if (ev.type === "opened") {
+          console.log(
+            `[POS] Opened ${p.tokenName} @ ${p.pair} with ${p.sizeSol} SOL`,
+          );
+        } else if (ev.type === "closed") {
+          console.log(
+            `[POS] Closed ${p.tokenName}: ${ev.closeReason ?? "?"}` +
+              ` | PnL: ${p.currentProfitPercent?.toFixed(2) ?? "?"}%` +
+              ` ($${p.currentProfitUsd?.toFixed(2) ?? "?"})`,
+          );
+        }
+      }),
+    )
+    .subscribe();
 
-  const response = await simFastBuy({
-    pair: "Fux28yJDBubYqSJcz3ZJtPZrY5MYVHHFxfZhUoKy9n5r",
-
-    amountOrPercent: 0.1,
-
-    stopEarnGroup: [
-      {
-        pricePercent: 0.2,
-        amountPercent: 0.5,
-      },
-      {
-        pricePercent: 0.8,
-        amountPercent: 1,
-      },
-    ],
-
-    stopLossGroup: [
-      {
-        pricePercent: 0.2,
-        amountPercent: 0.5,
-      },
-      {
-        pricePercent: 0.8,
-        amountPercent: 1,
-      },
-    ],
-
-    priorityFee: "",
-    slippage: 0.1,
-  });
-
-  console.log("[SIM] simFastBuy response:", response);
-  //   [SIM BUY] Fux28yJDBubYqSJcz3ZJtPZrY5MYVHHFxfZhUoKy9n5r -> mr2qpc810wzhxy
-  //   [SIM] simFastBuy response: mr2qpc810wzhxy
+  /*
+   * Log periodic account snapshots.
+   */
+  simulatorAccount$
+    .pipe(
+      tap((acct) => {
+        console.log(
+          `[ACCT] Balance=${acct.balance.toFixed(3)} SOL` +
+            ` | PnL=${(acct.changeAll * 100).toFixed(2)}%` +
+            ` | Tokens=${acct.holdTokens}`,
+        );
+      }),
+    )
+    .subscribe();
 }
 
-main().catch((e) => console.error(`[main] fatal error: `, e));
+start().catch((err) => {
+  console.error("[main] Startup failed:", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[main] Unhandled rejection:", reason);
+});
+
+/*
+ * Graceful shutdown — print final report on SIGINT.
+ */
+let _shuttingDown = false;
+
+process.on("SIGINT", async () => {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+
+  console.log("\n[main] Shutting down...");
+  stopReporter();
+  stopPersistence();
+
+  try {
+    const { generateReport, printReport } = await import("./analytics/reports");
+    printReport(generateReport());
+  } catch {
+    /* Report generation is best-effort during shutdown */
+  }
+
+  process.exit(0);
+});
