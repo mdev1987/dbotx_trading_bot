@@ -1,17 +1,3 @@
-/**
- * telegram/telegram_bot_reporter.ts
- *
- * RxJS-driven Telegram reporter via grammY.
- *
- * Messages are written in clean standard Markdown and converted to
- * Telegram MarkdownV2 via the `telegram-markdown-v2` library — no
- * manual character escaping needed.
- *
- * Subscribes to position lifecycle events and account snapshots,
- * sending real-time alerts and periodic performance reports to
- * a configured Telegram chat.
- */
-
 import { Bot } from "grammy";
 import { Subscription, timer } from "rxjs";
 import { tap } from "rxjs/operators";
@@ -23,16 +9,8 @@ import { latestAccount } from "../simulator/account";
 import { generateReport } from "../analytics/reports";
 import type { PerformanceReport } from "../analytics/reports";
 
-/* ------------------------------------------------------------------ */
-/*  Bot initialisation                                                 */
-/* ------------------------------------------------------------------ */
-
 const bot = new Bot(CONFIG.telegramBotToken!);
 const CHAT_ID = CONFIG.telegramChatId!;
-
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
-/* ------------------------------------------------------------------ */
 
 function fmtPnL(value: number, suffix = ""): string {
   const sign = value >= 0 ? "+" : "";
@@ -47,10 +25,11 @@ function fmtDuration(ms: number): string {
 }
 
 function closeIcon(reason: string): string {
-  if (reason === "take_profit") return "\u{1F7E2}";     // 🟢
-  if (reason === "stop_loss") return "\u{1F534}";        // 🔴
-  if (reason === "trailing_stop") return "\u{1F536}";    // 🔶
-  return "\u{26A0}\uFE0F";                                // ⚠️
+  if (reason === "take_profit") return "\u{1F7E2}";
+  if (reason === "stop_loss") return "\u{1F534}";
+  if (reason === "trailing_stop") return "\u{1F7E1}";
+  if (reason === "expired") return "\u{23F0}";
+  return "\u{26A0}\uFE0F";
 }
 
 function reasonLabel(reason: string): string {
@@ -64,20 +43,43 @@ function reasonLabel(reason: string): string {
   return labels[reason] ?? reason;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Message builders (standard Markdown — convert() handles escaping)  */
-/* ------------------------------------------------------------------ */
+function balanceStr(): string {
+  if (!latestAccount) return "";
+  const bal = latestAccount.balance;
+  const change = latestAccount.changeAll;
+  const icon = change >= 0 ? "\u{1F7E2}" : "\u{1F534}";
+  const sign = change >= 0 ? "+" : "";
+  return `${icon} \u{1F4B0} Balance: \`${bal.toFixed(2)}\` SOL (\`${sign}${(change * 100).toFixed(2)}%\`)`;
+}
+
+function openPositionsCount(): number {
+  if (!latestAccount) return 0;
+  return latestAccount.holdTokens;
+}
+
+function winsTotalWinrate(): string {
+  const r = generateReport();
+  const winIcon = r.winRate >= 50 ? "\u{1F3C6}" : "\u{26A0}\uFE0F";
+  return `${winIcon} Wins: \`${r.winningTrades}\` / \`${r.closedPositions}\` (\`${r.winRate.toFixed(1)}%\`)`;
+}
 
 function openedMessage(ev: PositionEvent): string {
   const p = ev.position;
+  const total = generateReport();
+  const open = openPositionsCount();
+
   return convert(
     [
-      `🟢 **Position Opened**`,
+      "\u{1F7E2} **Position Opened**",
       "",
       `Token: \`${p.tokenName}\``,
       `Size: **${p.sizeSol.toFixed(2)} SOL**`,
       `Pair: \`${p.pair.slice(0, 12)}...\``,
       `Time: \`${new Date(p.openedAt).toLocaleTimeString()}\``,
+      "",
+      balanceStr(),
+      `\u{1F4CA} Positions: **${open}** open / **${total.totalPositions}** total`,
+      winsTotalWinrate(),
     ].join("\n"),
   );
 }
@@ -89,73 +91,88 @@ function closedMessage(ev: PositionEvent): string {
   const isProfit = profit >= 0;
   const reason = p.closeReason ?? "?";
 
-  const icon = isProfit ? "✅" : "❌";
-  const headerIcon = isProfit ? "🟢" : "🔴";
+  const resultIcon = isProfit ? "\u{2705}" : "\u{274C}";
+  const headerIcon = isProfit ? "\u{1F7E2}" : "\u{1F534}";
+  const chartIcon = isProfit ? "\u{1F4C8}" : "\u{1F4C9}";
+
   const pnlLine = isProfit
-    ? `PnL: **+${profit.toFixed(2)}%** ($+${profitUsd.toFixed(2)})`
-    : `PnL: **${profit.toFixed(2)}%** ($${profitUsd.toFixed(2)})`;
+    ? `${chartIcon} PnL: **+${profit.toFixed(2)}%** (\u0024+${profitUsd.toFixed(2)})`
+    : `${chartIcon} PnL: **${profit.toFixed(2)}%** (\u0024${profitUsd.toFixed(2)})`;
 
   const duration = fmtDuration(p.lastUpdateAt - p.openedAt);
+  const total = generateReport();
+  const open = openPositionsCount();
+
+  let exitPriceStr = "";
+  if (p.entryPriceUsd !== null) {
+    const exitPrice = p.entryPriceUsd * (1 + profit / 100);
+    exitPriceStr = `\u{1F4B4} Exit: \`$${exitPrice.toFixed(8)}\``;
+  }
 
   return convert(
     [
-      `${headerIcon} **Position Closed** ${icon}`,
+      `${headerIcon} **Position Closed** ${resultIcon}`,
       "",
       `Token: \`${p.tokenName}\``,
+      p.entryPriceUsd !== null
+        ? `\u{1F4B5} Entry: \`$${p.entryPriceUsd.toFixed(8)}\``
+        : "",
+      exitPriceStr,
       pnlLine,
-      `Reason: ${closeIcon(reason)} **${reasonLabel(reason)}**`,
-      `Duration: \`${duration}\``,
-    ].join("\n"),
+      `\u{1F517} Reason: ${closeIcon(reason)} **${reasonLabel(reason)}**`,
+      `\u{23F1}\uFE0F Duration: \`${duration}\``,
+      "",
+      balanceStr(),
+      `\u{1F4CA} Positions: **${open}** open / **${total.totalPositions}** total`,
+      winsTotalWinrate(),
+    ]
+      .filter(Boolean)
+      .join("\n"),
   );
 }
 
 function summaryMessage(): string {
   const report: PerformanceReport = generateReport();
-  const winRateIcon = report.winRate >= 50 ? "✅" : "⚠️";
-  const pnlIcon = report.totalProfitUsd >= 0 ? "🟢" : "🔴";
+  const winRateIcon = report.winRate >= 50 ? "\u{1F3C6}" : "\u{26A0}\uFE0F";
+  const pnlIcon = report.totalProfitUsd >= 0 ? "\u{1F7E2}" : "\u{1F534}";
 
   const lines: string[] = [
-    "📊 **Performance Report**",
+    "\u{1F4CA} **Performance Report**",
     "",
-    `Mode: 🧪 \`Simulate\``,
+    `Mode: \u{1F9EA} \`Simulate\``,
     "",
     "---",
     "",
   ];
 
-  /* Balance */
-  const balLine = balanceLine();
-  if (balLine) lines.push(`${balLine}\n`);
+  const bal = balanceStr();
+  if (bal) lines.push(`${bal}\n`);
 
-  /* Overview */
   lines.push(
     "**Overview**",
-    `Open Positions: \`${report.openPositions}\``,
-    `Closed Positions: \`${report.closedPositions}\``,
-    `Total Positions: \`${report.totalPositions}\``,
+    `\u{1F4CC} Open Positions: \`${report.openPositions}\``,
+    `\u{2705} Closed Positions: \`${report.closedPositions}\``,
+    `\u{1F4CB} Total Positions: \`${report.totalPositions}\``,
     "",
   );
 
-  /* Wins / Losses */
   lines.push(
     `**Results** ${winRateIcon}`,
-    `✅ Wins: \`${report.winningTrades}\``,
-    `❌ Losses: \`${report.losingTrades}\``,
-    `Win Rate: **${report.winRate.toFixed(1)}%**`,
+    `\u{2705} Wins: \`${report.winningTrades}\``,
+    `\u{274C} Losses: \`${report.losingTrades}\``,
+    `\u{1F3AF} Win Rate: **${report.winRate.toFixed(1)}%**`,
     "",
   );
 
-  /* PnL */
   lines.push(
     `${pnlIcon} **PnL Summary**`,
-    `Total PnL: **${fmtPnL(report.totalProfitPct)}%** (${fmtPnL(report.totalProfitUsd, "$")})`,
-    `Avg PnL: **${fmtPnL(report.avgProfitPct)}%** (${fmtPnL(report.avgProfitUsd, "$")})`,
-    `Best: **${fmtPnL(report.bestTradePct)}%**`,
-    `Worst: **${fmtPnL(report.worstTradePct)}%**`,
+    `\u{1F4B0} Total PnL: **${fmtPnL(report.totalProfitPct)}%** (${fmtPnL(report.totalProfitUsd, "$")})`,
+    `\u{1F4C8} Avg PnL: **${fmtPnL(report.avgProfitPct)}%** (${fmtPnL(report.avgProfitUsd, "$")})`,
+    `\u{1F3C6} Best: **${fmtPnL(report.bestTradePct)}%**`,
+    `\u{1F4A9} Worst: **${fmtPnL(report.worstTradePct)}%**`,
     "",
   );
 
-  /* Close reasons */
   if (Object.keys(report.reasons).length > 0) {
     lines.push("**Close Reasons**");
     for (const [r, count] of Object.entries(report.reasons)) {
@@ -166,26 +183,6 @@ function summaryMessage(): string {
   return convert(lines.join("\n"));
 }
 
-function balanceLine(): string | null {
-  if (!latestAccount) return null;
-
-  const bal = latestAccount.balance;
-  const change = latestAccount.changeAll;
-  const changeIcon = change >= 0 ? "🟢" : "🔴";
-  const changeStr = change >= 0
-    ? `+${(change * 100).toFixed(2)}`
-    : `${(change * 100).toFixed(2)}`;
-
-  return (
-    `${changeIcon} **Balance**: \`${bal.toFixed(2)}\` SOL` +
-    ` (\`${changeStr}%\`)`
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Send helper                                                        */
-/* ------------------------------------------------------------------ */
-
 async function send(text: string): Promise<void> {
   try {
     await bot.api.sendMessage(CHAT_ID, text, {
@@ -195,10 +192,6 @@ async function send(text: string): Promise<void> {
     console.error("[reporter] Failed to send message:", err);
   }
 }
-
-/* ------------------------------------------------------------------ */
-/*  Subscriptions                                                      */
-/* ------------------------------------------------------------------ */
 
 let subs: Subscription[] = [];
 

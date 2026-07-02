@@ -120,7 +120,9 @@ export const signalState$ = events$.pipe(
       const signal = event.signal;
 
       if (active.has(signal.lpAddress)) {
-        console.log(`[DEDUP] ${signal.tokenName}`);
+
+
+
         latestSignalState = { active, accepted: undefined, expired };
         return latestSignalState;
       }

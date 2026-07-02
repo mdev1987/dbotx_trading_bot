@@ -412,10 +412,12 @@ export const positionClosed$: Observable<PositionEvent> = positionEvent$.pipe(
 );
 
 function emitEvent(event: PositionEvent): void {
-  console.log(
-    `[POSITION] ${event.position.tokenName}: ${event.type}` +
-      (event.detail ? ` - ${event.detail}` : ""),
-  );
+  if (event.type !== "task_update") {
+    console.log(
+      `[POSITION] ${event.position.tokenName}: ${event.type}` +
+        (event.detail ? ` - ${event.detail}` : ""),
+    );
+  }
   positionEventInput$.next(event);
 }
 
@@ -424,16 +426,23 @@ function emitEvent(event: PositionEvent): void {
  *
  * Polls /simulator/pnl_orders_from_swap_order for every open
  * position and updates task state in the store.
+ *
+ * Emits task_update only when the aggregate state changes to
+ * keep console and Telegram noise low.
  * ============================================================
  */
 
 const PNL_TASK_POLL_MS = 5_000;
+
+/** Tracks last-seen done count per orderId to suppress redundant events. */
+const _lastDoneCount = new Map<string, number>();
 
 const pnlTaskPoll$ = timer(PNL_TASK_POLL_MS, PNL_TASK_POLL_MS).pipe(
   withLatestFrom(openPositions$),
   filter(([, open]) => open.length > 0),
   concatMap(async ([, open]) => {
     for (const pos of open) {
+      if (!pos.orderId) continue;
       try {
         const tasks = await fetchPnLTasks(pos.orderId);
         if (tasks.length === 0) continue;
@@ -459,11 +468,18 @@ const pnlTaskPoll$ = timer(PNL_TASK_POLL_MS, PNL_TASK_POLL_MS).pipe(
           entryPriceUsd: pos.entryPriceUsd ?? tasks[0]?.basePriceUsd ?? null,
         });
 
-        emitEvent({
-          type: "task_update",
-          position: { ...pos, tasks: taskMap },
-          detail: `${tasks.filter((t) => t.state === "done").length}/${tasks.length} tasks done`,
-        });
+        const doneCount = tasks.filter((t) => t.state === "done").length;
+        const prevDone = _lastDoneCount.get(pos.orderId) ?? -1;
+
+        if (doneCount !== prevDone) {
+          _lastDoneCount.set(pos.orderId, doneCount);
+
+          emitEvent({
+            type: "task_update",
+            position: { ...pos, tasks: taskMap },
+            detail: `${doneCount}/${tasks.length} tasks done`,
+          });
+        }
 
         if (allDone && tasks.length > 0) {
           const reason: CloseReason = tasks.some((t) => t.state === "done")
