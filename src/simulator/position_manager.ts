@@ -711,92 +711,83 @@ async function closePosition(pair: string, reason: CloseReason): Promise<void> {
 
 acceptedSignal$
   .pipe(
-    withLatestFrom(positions$),
-    filter(([signal, positions]) => !positions.has(signal.lpAddress)),
-    map(([signal]) => signal),
-    filter((signal) => {
-      if (isPendingBuy(signal.lpAddress)) {
-        console.log(
-          `[position_manager] Skipping ${signal.tokenName} — pending buy already in flight`,
-        );
-        return false;
+    concatMap(async (signal) => {
+      if (_latestPositions.has(signal.lpAddress) || isPendingBuy(signal.lpAddress)) {
+        return;
       }
-      return true;
-    }),
-    filter((signal) => {
-      if (!CONFIG.dailyLossLimitUsd) return true;
-      const todayPnl = getDailyPnlUsd();
-      if (todayPnl <= -CONFIG.dailyLossLimitUsd) {
-        console.log(
-          `[position_manager] Daily loss limit reached ` +
-            `(${todayPnl.toFixed(2)}) — skipping ${signal.tokenName}`,
-        );
-        return false;
+      if (CONFIG.dailyLossLimitUsd) {
+        const todayPnl = getDailyPnlUsd();
+        if (todayPnl <= -CONFIG.dailyLossLimitUsd) {
+          console.log(
+            `[position_manager] Daily loss limit reached ` +
+              `(${todayPnl.toFixed(2)}) — skipping ${signal.tokenName}`,
+          );
+          return;
+        }
       }
-      return true;
+
+      const { positionSize } = CONFIG;
+      const stopEarnGroup = buildStopEarnGroup();
+      const stopLossPercent = buildStopLossPercent();
+
+      markPendingBuy(signal.lpAddress);
+
+      console.log(
+        `[position_manager] Opening position for ${signal.tokenName} ` +
+          `(${signal.lpAddress}) with ${positionSize} SOL`,
+      );
+
+      let orderId: string;
+
+      try {
+        orderId = await simFastBuy({
+          pair: signal.lpAddress,
+          amountOrPercent: positionSize,
+          stopEarnGroup,
+          stopLossPercent,
+          ...EXEC_DEFAULTS,
+        });
+      } catch (err) {
+        console.error(`[position_manager] Failed to buy ${signal.tokenName}:`, err);
+        return;
+      }
+
+      const now = Date.now();
+
+      const position: PositionState = {
+        orderId,
+        pair: signal.lpAddress,
+        token: signal.contractAddress,
+        tokenName: signal.tokenName,
+        entryPriceUsd: null,
+        entryCostUsd: null,
+        sizeSol: positionSize,
+        peakPriceUsd: 0,
+        trailingActive: false,
+        tasks: new Map(),
+        currentProfitPercent: 0,
+        currentProfitUsd: 0,
+        remainingBalance: "0",
+        openedAt: now,
+        lastUpdateAt: now,
+        status: "open",
+        closeReason: null,
+        signal,
+      };
+
+      upsertPosition(position);
+
+      emitEvent({
+        type: "opened",
+        position,
+        detail: `${signal.tokenName} @ ${positionSize} SOL`,
+      });
+
+      captureEntryPrice(orderId, signal.lpAddress);
+      refreshAccount$.next();
     }),
   )
-  .subscribe(async (signal) => {
-    const { positionSize } = CONFIG;
-    const stopEarnGroup = buildStopEarnGroup();
-    const stopLossPercent = buildStopLossPercent();
-
-    markPendingBuy(signal.lpAddress);
-
-    console.log(
-      `[position_manager] Opening position for ${signal.tokenName} ` +
-        `(${signal.lpAddress}) with ${positionSize} SOL`,
-    );
-
-    let orderId: string;
-
-    try {
-      orderId = await simFastBuy({
-        pair: signal.lpAddress,
-        amountOrPercent: positionSize,
-        stopEarnGroup,
-        stopLossPercent,
-        ...EXEC_DEFAULTS,
-      });
-    } catch (err) {
-      console.error(`[position_manager] Failed to buy ${signal.tokenName}:`, err);
-      return;
-    }
-
-    const now = Date.now();
-
-    const position: PositionState = {
-      orderId,
-      pair: signal.lpAddress,
-      token: signal.contractAddress,
-      tokenName: signal.tokenName,
-      entryPriceUsd: null,
-      entryCostUsd: null,
-      sizeSol: positionSize,
-      peakPriceUsd: 0,
-      trailingActive: false,
-      tasks: new Map(),
-      currentProfitPercent: 0,
-      currentProfitUsd: 0,
-      remainingBalance: "0",
-      openedAt: now,
-      lastUpdateAt: now,
-      status: "open",
-      closeReason: null,
-      signal,
-    };
-
-    upsertPosition(position);
-
-    emitEvent({
-      type: "opened",
-      position,
-      detail: `${signal.tokenName} @ ${positionSize} SOL`,
-    });
-
-    captureEntryPrice(orderId, signal.lpAddress);
-    refreshAccount$.next();
-  });
+  .subscribe();
 
 /* ============================================================
  * Section 13: Position Expiry
