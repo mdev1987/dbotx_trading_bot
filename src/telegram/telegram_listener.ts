@@ -68,10 +68,9 @@ export const telegramClient = new TelegramClient(
   telegramApiHash,
   {
     connectionRetries: 5,
-    //autoReconnect: true,
-    //reconnectRetries: 5, default infinity
-    //retryDelay: 1000,
-    //requestRetries: 5,
+    autoReconnect: true,
+    reconnectRetries: Infinity,
+    retryDelay: 5_000,
   },
 );
 

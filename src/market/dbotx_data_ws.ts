@@ -44,6 +44,7 @@ export interface PairUpdate {
 const RECONNECT_DELAY_MS = 5_000;
 const wsSubject = new BehaviorSubject<WebSocket | null>(null);
 let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let _lastDisconnectLog = 0;
 
 function connect(): void {
   const ws = new WebSocket(CONFIG.wsUrl!, {
@@ -56,19 +57,19 @@ function connect(): void {
   });
 
   ws.addEventListener("close", () => {
-    console.log(
-      `[DBotX] Disconnected — reconnecting in ${RECONNECT_DELAY_MS}ms`,
-    );
+    const now = Date.now();
+    if (now - _lastDisconnectLog > 30_000) {
+      console.log(
+        `[DBotX] Disconnected — reconnecting in ${RECONNECT_DELAY_MS}ms`,
+      );
+      _lastDisconnectLog = now;
+    }
 
-    /* Debounce reconnect: clear any previously scheduled attempt so
-       multiple close events (e.g. rapid reconnect cycles) only produce
-       one setTimeout. */
     if (_reconnectTimer !== null) clearTimeout(_reconnectTimer);
     _reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
   });
 
   ws.addEventListener("error", () => {
-    console.error("[DBotX] WebSocket error");
     /* close always fires after error — reconnect handled there */
   });
 }
@@ -87,7 +88,6 @@ const ws$ = wsSubject.pipe(
 
 export const connected$ = ws$.pipe(
   switchMap((ws) => fromEvent(ws, "open")),
-  tap(() => console.log("[DBotX] Connected")),
   share(),
 );
 

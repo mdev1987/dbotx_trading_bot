@@ -49,7 +49,7 @@ function balanceStr(): string {
   const change = latestAccount.changeAll;
   const icon = change >= 0 ? "\u{1F7E2}" : "\u{1F534}";
   const sign = change >= 0 ? "+" : "";
-  return `${icon} \u{1F4B0} Balance: \`${bal.toFixed(2)}\` SOL (\`${sign}${(change * 100).toFixed(2)}%\`)`;
+  return `${icon} \u{1F4B0} Balance: \`$${bal.toFixed(2)}\` (\`${sign}${(change * 100).toFixed(2)}%\`)`;
 }
 
 let _openCount = 0;
@@ -205,6 +205,7 @@ async function send(text: string): Promise<void> {
   }
 }
 
+let _lastReport: string | null = null;
 let subs: Subscription[] = [];
 
 export function startReporter(): void {
@@ -241,7 +242,12 @@ export function startReporter(): void {
     subs.push(
       timer(intervalMs, intervalMs)
         .pipe(
-          tap(() => send(summaryMessage())),
+          tap(() => {
+            const msg = summaryMessage();
+            if (msg === _lastReport) return;
+            _lastReport = msg;
+            send(msg);
+          }),
         )
         .subscribe(),
     );
