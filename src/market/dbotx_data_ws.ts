@@ -87,13 +87,9 @@ const ws$ = wsSubject.pipe(
  * ------------------------------------------------------------ */
 
 export const connected$ = ws$.pipe(
-  switchMap((ws) => fromEvent(ws, "open")),
-  share(),
-);
-
-export const disconnected$ = ws$.pipe(
-  switchMap((ws) => fromEvent(ws, "close")),
-  tap(() => console.log("[DBotX] Disconnected")),
+  /* ws$ only emits inside the WebSocket `open` handler, so every
+     emission is already a connected event. */
+  map(() => undefined as void),
   share(),
 );
 

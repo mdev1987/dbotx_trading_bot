@@ -31,15 +31,15 @@ export function generateReport(): PerformanceReport {
 
   const closed = db.query(`
     SELECT
-      COUNT(*)                                            AS total_closed,
-      COALESCE(SUM(CASE WHEN profit_usd > 0 THEN 1 ELSE 0 END), 0)  AS wins,
+      COUNT(*)                                                      AS total_closed,
+      COALESCE(SUM(CASE WHEN profit_usd > 0 THEN 1 ELSE 0 END), 0) AS wins,
       COALESCE(SUM(CASE WHEN profit_usd <= 0 THEN 1 ELSE 0 END), 0) AS losses,
-      COALESCE(SUM(profit_usd), 0)                        AS total_profit_usd,
-      COALESCE(SUM(profit_pct), 0)                        AS total_profit_pct,
-      COALESCE(AVG(profit_pct), 0)                        AS avg_profit_pct,
-      COALESCE(AVG(profit_usd), 0)                        AS avg_profit_usd,
-      COALESCE(MAX(profit_pct), 0)                        AS best_trade_pct,
-      COALESCE(MIN(profit_pct), 0)                        AS worst_trade_pct
+      COALESCE(SUM(profit_usd), 0)                                  AS total_profit_usd,
+      COALESCE(AVG(profit_pct), 0)                                  AS avg_profit_pct,
+      COALESCE(AVG(profit_usd), 0)                                  AS avg_profit_usd,
+      COALESCE(MAX(profit_pct), 0)                                  AS best_trade_pct,
+      COALESCE(MIN(profit_pct), 0)                                  AS worst_trade_pct,
+      COALESCE(SUM(entry_cost), 0)                                  AS total_cost
     FROM positions
     WHERE closed_at IS NOT NULL
   `).get() as {
@@ -47,20 +47,20 @@ export function generateReport(): PerformanceReport {
     wins: number;
     losses: number;
     total_profit_usd: number;
-    total_profit_pct: number;
     avg_profit_pct: number;
     avg_profit_usd: number;
     best_trade_pct: number;
     worst_trade_pct: number;
+    total_cost: number;
   };
 
-  const openCount = db.query(`
-    SELECT COUNT(*) AS cnt FROM positions WHERE closed_at IS NULL
-  `).get() as { cnt: number };
+  const openCount = db.query(
+    `SELECT COUNT(*) AS cnt FROM positions WHERE closed_at IS NULL`,
+  ).get() as { cnt: number };
 
-  const totalCount = db.query(`
-    SELECT COUNT(*) AS cnt FROM positions
-  `).get() as { cnt: number };
+  const totalCount = db.query(
+    `SELECT COUNT(*) AS cnt FROM positions`,
+  ).get() as { cnt: number };
 
   const reasons = db.query(`
     SELECT close_reason, COUNT(*) AS cnt
@@ -70,6 +70,10 @@ export function generateReport(): PerformanceReport {
   `).all() as { close_reason: string; cnt: number }[];
 
   const totalClosed = closed.total_closed;
+  const totalProfitPct =
+    closed.total_cost > 0
+      ? (closed.total_profit_usd / closed.total_cost) * 100
+      : 0;
 
   return {
     totalPositions: totalCount.cnt,
@@ -79,7 +83,7 @@ export function generateReport(): PerformanceReport {
     losingTrades: closed.losses,
     winRate: totalClosed > 0 ? (closed.wins / totalClosed) * 100 : 0,
     totalProfitUsd: closed.total_profit_usd,
-    totalProfitPct: closed.total_profit_pct,
+    totalProfitPct,
     avgProfitPct: closed.avg_profit_pct,
     avgProfitUsd: closed.avg_profit_usd,
     bestTradePct: closed.best_trade_pct,

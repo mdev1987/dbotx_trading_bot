@@ -1,21 +1,10 @@
 import { Subject, Observable, interval, merge } from "rxjs";
 import { filter, map, scan, shareReplay } from "rxjs/operators";
 import { signal$ as telegramSignal$ } from "./telegram_listener";
-import { CONFIG } from "../config";
 import type { SolanaPoolSignal } from "./ave_scanner_parser";
 
-/* ============================================================
- * Configuration
- * ============================================================
- */
-
-const TTL_SECONDS = CONFIG.ttlSignalSeconds;
-const MAX_POSITIONS = CONFIG.maxPositions;
-
-/* ============================================================
- * Internal event types
- * ============================================================
- */
+/** Hardcoded cleanup TTL for dedup cache (1 hour). */
+const CLEANUP_TTL_SECONDS = 3600;
 
 interface SignalEvent {
   type: "signal";
@@ -29,11 +18,6 @@ interface TickEvent {
 }
 
 type EngineEvent = SignalEvent | TickEvent;
-
-/* ============================================================
- * Internal engine streams
- * ============================================================
- */
 
 const signalEvent$ = telegramSignal$.pipe(
   map<SolanaPoolSignal, SignalEvent>((signal) => ({
@@ -52,63 +36,30 @@ const tick$ = interval(5_000).pipe(
 
 const events$: Observable<EngineEvent> = merge(signalEvent$, tick$);
 
-/* ============================================================
- * State
- * ============================================================
- */
-
 export interface SignalState {
-  /*
-   * Active LP addresses.
-   *
-   * key   -> LP address
-   * value -> expiration timestamp in seconds
-   */
+  /** Active LP addresses keyed by LP → insertion timestamp (seconds). */
   active: Map<string, number>;
-
-  /*
-   * Newly accepted signal.
-   */
+  /** Newly accepted signal emitted from the reducer. */
   accepted?: SolanaPoolSignal;
-
-  /*
-   * LP addresses removed during this reducer cycle.
-   *
-   * Can happen because of:
-   *
-   * - TTL expiration
-   * - FIFO eviction
-   */
+  /** LP addresses removed during this reducer cycle (cleanup). */
   expired: string[];
 }
 
-/* ============================================================
- * Main reducer
- * ============================================================
- */
-
-/**
- * Latest signal state snapshot, updated synchronously inside the scan
- * reducer.  Exported so that other modules (e.g. dbotx_data_ws) can
- * read the current active pairs without creating a new subscription
- * that would restart the scan from scratch.
- */
 export let latestSignalState: SignalState = { active: new Map(), expired: [] };
 
 export const signalState$ = events$.pipe(
   scan<EngineEvent, SignalState>(
     (state, event) => {
       const now = event.now;
-
       const active = new Map(state.active);
-
       const expired: string[] = [];
 
-      for (const [lp, expiresAt] of active) {
-        if (expiresAt <= now) {
+      /* Cleanup: remove entries older than CLEANUP_TTL_SECONDS to
+         prevent unbounded memory growth. */
+      for (const [lp, ts] of active) {
+        if (now - ts > CLEANUP_TTL_SECONDS) {
           active.delete(lp);
           expired.push(lp);
-          console.log(`[TTL] Removed ${lp}`);
         }
       }
 
@@ -119,24 +70,13 @@ export const signalState$ = events$.pipe(
 
       const signal = event.signal;
 
+      /* Dedup: skip if already seen. */
       if (active.has(signal.lpAddress)) {
-
-
-
         latestSignalState = { active, accepted: undefined, expired };
         return latestSignalState;
       }
 
-      if (active.size >= MAX_POSITIONS) {
-        const oldest = active.keys().next().value;
-        if (oldest) {
-          active.delete(oldest);
-          expired.push(oldest);
-          console.log(`[FIFO] Removed ${oldest}`);
-        }
-      }
-
-      active.set(signal.lpAddress, now + TTL_SECONDS);
+      active.set(signal.lpAddress, now);
       console.log(`[ACCEPTED] ${signal.tokenName}`);
 
       latestSignalState = { active, accepted: signal, expired };
@@ -144,34 +84,18 @@ export const signalState$ = events$.pipe(
     },
     { active: new Map<string, number>(), expired: [] },
   ),
-
   shareReplay({ bufferSize: 1, refCount: false }),
 );
 
-/* ============================================================
- * Accepted signals
- * ============================================================
- */
-
 export const acceptedSignal$ = signalState$.pipe(
   filter(
-    (
-      state,
-    ): state is SignalState & {
-      accepted: SolanaPoolSignal;
-    } => state.accepted !== undefined,
+    (state): state is SignalState & { accepted: SolanaPoolSignal } =>
+      state.accepted !== undefined,
   ),
-
   map((state) => state.accepted),
 );
 
-/* ============================================================
- * Expired LP addresses
- * ============================================================
- */
-
 export const expiredPair$ = signalState$.pipe(
   filter((state) => state.expired.length > 0),
-
   map((state) => state.expired),
 );

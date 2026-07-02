@@ -22,9 +22,9 @@
 import readLine from "readline";
 import removeMarkdown from "remove-markdown";
 
-import { TelegramClient } from "telegram";
-import { StoreSession } from "telegram/sessions";
-import { NewMessage, NewMessageEvent } from "telegram/events";
+import { TelegramClient } from "teleproto";
+import { StoreSession } from "teleproto/sessions";
+import { NewMessage, NewMessageEvent } from "teleproto/events";
 
 import { Observable, Subject, from, EMPTY } from "rxjs";
 

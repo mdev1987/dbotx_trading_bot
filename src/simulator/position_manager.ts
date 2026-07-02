@@ -265,6 +265,43 @@ function isPendingBuy(pair: string): boolean {
   return _pendingBuys.has(pair);
 }
 
+/* ---------------------------------------------------------------
+ * Signal queue — FIFO queue for signals that arrive while at
+ * max positions.  When a position closes the oldest queued signal
+ * is dequeued and processed.
+ * ------------------------------------------------------------ */
+
+const _signalQueue = new Map<string, SolanaPoolSignal>();
+
+function enqueueSignal(signal: SolanaPoolSignal): void {
+  _signalQueue.set(signal.lpAddress, signal);
+
+  /* Evict oldest if over capacity. */
+  if (_signalQueue.size > CONFIG.signalQueueSize) {
+    const oldest = _signalQueue.keys().next().value;
+    if (oldest) {
+      _signalQueue.delete(oldest);
+      console.log(
+        `[position_manager] Queue full — dropped oldest signal ${oldest}`,
+      );
+    }
+  }
+
+  console.log(
+    `[position_manager] Queued ${signal.tokenName} ` +
+      `(queue size: ${_signalQueue.size})`,
+  );
+}
+
+/** Dequeue the oldest signal from the queue. */
+function dequeueSignal(): SolanaPoolSignal | undefined {
+  const first = _signalQueue.keys().next().value;
+  if (!first) return undefined;
+  const signal = _signalQueue.get(first);
+  _signalQueue.delete(first);
+  return signal;
+}
+
 /* ============================================================
  * Section 4: API Fetch Functions
  * ============================================================
@@ -698,106 +735,140 @@ async function closePosition(pair: string, reason: CloseReason): Promise<void> {
   });
 
   refreshAccount$.next();
+
+  /* Process next queued signal if a slot just freed up. */
+  processQueuedSignal();
 }
 
 /* ============================================================
  * Section 12: Signal Consumer
  *
- * Listens to acceptedSignal$ and executes simFastBuy for each
- * new signal.  De-duplicates against existing positions and
- * pending-buy set.  Checks daily loss limit before opening.
+ * Listens to acceptedSignal$ and routes each signal:
+ *   - If at max positions → enqueue for later
+ *   - Otherwise → open position immediately
  * ============================================================
  */
+
+/**
+ * Core buy logic — shared between direct signal processing and
+ * dequeued signals.
+ */
+async function openPosition(signal: SolanaPoolSignal): Promise<void> {
+  if (_latestPositions.has(signal.lpAddress) || isPendingBuy(signal.lpAddress)) {
+    return;
+  }
+  if (CONFIG.dailyLossLimitUsd) {
+    const todayPnl = getDailyPnlUsd();
+    if (todayPnl <= -CONFIG.dailyLossLimitUsd) {
+      console.log(
+        `[position_manager] Daily loss limit reached ` +
+          `(${todayPnl.toFixed(2)}) — skipping ${signal.tokenName}`,
+      );
+      return;
+    }
+  }
+
+  const { positionSize } = CONFIG;
+  const stopEarnGroup = buildStopEarnGroup();
+  const stopLossPercent = buildStopLossPercent();
+
+  markPendingBuy(signal.lpAddress);
+
+  console.log(
+    `[position_manager] Opening position for ${signal.tokenName} ` +
+      `(${signal.lpAddress}) with ${positionSize} SOL`,
+  );
+
+  let orderId: string;
+
+  try {
+    orderId = await simFastBuy({
+      pair: signal.lpAddress,
+      amountOrPercent: positionSize,
+      stopEarnGroup,
+      stopLossPercent,
+      ...EXEC_DEFAULTS,
+    });
+  } catch (err) {
+    console.error(`[position_manager] Failed to buy ${signal.tokenName}:`, err);
+    return;
+  }
+
+  const now = Date.now();
+
+  const position: PositionState = {
+    orderId,
+    pair: signal.lpAddress,
+    token: signal.contractAddress,
+    tokenName: signal.tokenName,
+    entryPriceUsd: null,
+    entryCostUsd: null,
+    sizeSol: positionSize,
+    peakPriceUsd: 0,
+    trailingActive: false,
+    tasks: new Map(),
+    currentProfitPercent: 0,
+    currentProfitUsd: 0,
+    remainingBalance: "0",
+    openedAt: now,
+    lastUpdateAt: now,
+    status: "open",
+    closeReason: null,
+    signal,
+  };
+
+  upsertPosition(position);
+
+  emitEvent({
+    type: "opened",
+    position,
+    detail: `${signal.tokenName} @ ${positionSize} SOL`,
+  });
+
+  captureEntryPrice(orderId, signal.lpAddress);
+  refreshAccount$.next();
+}
+
+/** Try to dequeue and process the next queued signal. */
+async function processQueuedSignal(): Promise<void> {
+  const signal = dequeueSignal();
+  if (!signal) return;
+
+  console.log(
+    `[position_manager] Dequeued ${signal.tokenName} — opening position`,
+  );
+  await openPosition(signal);
+}
 
 acceptedSignal$
   .pipe(
     concatMap(async (signal) => {
-      if (_latestPositions.has(signal.lpAddress) || isPendingBuy(signal.lpAddress)) {
-        return;
-      }
-      if (CONFIG.dailyLossLimitUsd) {
-        const todayPnl = getDailyPnlUsd();
-        if (todayPnl <= -CONFIG.dailyLossLimitUsd) {
-          console.log(
-            `[position_manager] Daily loss limit reached ` +
-              `(${todayPnl.toFixed(2)}) — skipping ${signal.tokenName}`,
-          );
-          return;
-        }
+      let openCount = 0;
+      for (const pos of _latestPositions.values()) {
+        if (pos.status === "open" || pos.status === "closing") openCount++;
       }
 
-      const { positionSize } = CONFIG;
-      const stopEarnGroup = buildStopEarnGroup();
-      const stopLossPercent = buildStopLossPercent();
-
-      markPendingBuy(signal.lpAddress);
-
-      console.log(
-        `[position_manager] Opening position for ${signal.tokenName} ` +
-          `(${signal.lpAddress}) with ${positionSize} SOL`,
-      );
-
-      let orderId: string;
-
-      try {
-        orderId = await simFastBuy({
-          pair: signal.lpAddress,
-          amountOrPercent: positionSize,
-          stopEarnGroup,
-          stopLossPercent,
-          ...EXEC_DEFAULTS,
-        });
-      } catch (err) {
-        console.error(`[position_manager] Failed to buy ${signal.tokenName}:`, err);
+      if (openCount >= CONFIG.maxPositions) {
+        enqueueSignal(signal);
         return;
       }
 
-      const now = Date.now();
-
-      const position: PositionState = {
-        orderId,
-        pair: signal.lpAddress,
-        token: signal.contractAddress,
-        tokenName: signal.tokenName,
-        entryPriceUsd: null,
-        entryCostUsd: null,
-        sizeSol: positionSize,
-        peakPriceUsd: 0,
-        trailingActive: false,
-        tasks: new Map(),
-        currentProfitPercent: 0,
-        currentProfitUsd: 0,
-        remainingBalance: "0",
-        openedAt: now,
-        lastUpdateAt: now,
-        status: "open",
-        closeReason: null,
-        signal,
-      };
-
-      upsertPosition(position);
-
-      emitEvent({
-        type: "opened",
-        position,
-        detail: `${signal.tokenName} @ ${positionSize} SOL`,
-      });
-
-      captureEntryPrice(orderId, signal.lpAddress);
-      refreshAccount$.next();
+      await openPosition(signal);
     }),
   )
   .subscribe();
 
 /* ============================================================
- * Section 13: Position Expiry
+ * Section 13: Position Expiry & TTL Renewal
  *
- * Closes positions that exceed their configured TTL.
+ * Closes positions that exceed their configured TTL, unless the
+ * current profit is above TTL_RENEWAL_PROFIT_PERCENT — in that
+ * case the TTL timer is reset by updating openedAt.
  * ============================================================
  */
 
 const EXPIRY_CHECK_MS = 15_000;
-const { ttlPositionSeconds } = CONFIG;
+const { ttlPositionSeconds, ttlRenewalProfitPct } = CONFIG;
 
 timer(EXPIRY_CHECK_MS, EXPIRY_CHECK_MS)
   .pipe(
@@ -809,13 +880,27 @@ timer(EXPIRY_CHECK_MS, EXPIRY_CHECK_MS)
     const maxAge = ttlPositionSeconds * 1_000;
 
     for (const pos of open) {
-      if (now - pos.openedAt >= maxAge) {
+      if (now - pos.openedAt < maxAge) continue;
+
+      /* TTL renewal: if profit exceeds threshold, reset the clock. */
+      if (
+        ttlRenewalProfitPct > 0 &&
+        pos.currentProfitPercent >= ttlRenewalProfitPct
+      ) {
+        patchPosition(pos.pair, { openedAt: now });
         console.log(
-          `[position_manager] Position ${pos.tokenName} expired ` +
-            `(age ${((now - pos.openedAt) / 1_000).toFixed(0)}s > ${ttlPositionSeconds}s)`,
+          `[position_manager] Renewed TTL for ${pos.tokenName} ` +
+            `(profit ${(pos.currentProfitPercent * 100).toFixed(2)}% >= ` +
+            `${(ttlRenewalProfitPct * 100).toFixed(2)}%)`,
         );
-        closePosition(pos.pair, "expired");
+        continue;
       }
+
+      console.log(
+        `[position_manager] Position ${pos.tokenName} expired ` +
+          `(age ${((now - pos.openedAt) / 1_000).toFixed(0)}s > ${ttlPositionSeconds}s)`,
+      );
+      closePosition(pos.pair, "expired");
     }
   });
 

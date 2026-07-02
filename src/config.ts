@@ -60,9 +60,10 @@ export const CONFIG = {
   baseUrl: required("DBOTX_BASE_URL"),
   servapiBaseUrl: process.env.SERVAPI_BASE_URL ?? "https://servapi.dbotx.com",
 
-  ttlSignalSeconds: number("TTL_SIGNAL_SECONDS", 600),
   maxPositions: number("MAX_POSITIONS", 5),
   ttlPositionSeconds: number("TTL_POSITION_SECONDS", 600),
+  ttlRenewalProfitPct: number("TTL_RENEWAL_PROFIT_PERCENT", 0) / 100,
+  signalQueueSize: number("SIGNAL_QUEUE_SIZE", 20),
   positionSize: number("POSITION_SIZE_SOL", 0.1),
 
   stopLossPct: number("PAPER_STOP_LOSS_PERCENT") / 100,
@@ -71,11 +72,13 @@ export const CONFIG = {
 
   partialTpTiers: parsePartialTpTiers(process.env.PARTIAL_TP_TIERS),
 
-  backstopTpPct:
-    Number(
+  backstopTpPct: (() => {
+    const raw =
       process.env.PAPER_BACKSTOP_TP_PERCENT ??
-        process.env.PAPER_TAKE_PROFIT_PERCENT,
-    ) / 100,
+      process.env.PAPER_TAKE_PROFIT_PERCENT;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n / 100 : 0;
+  })(),
 
   maxSlippageExitPct: number("PAPER_MAX_SLIPPAGE_EXIT_PERCENT") / 100,
 

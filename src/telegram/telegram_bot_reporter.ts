@@ -62,12 +62,8 @@ let _totalCount = 0;
   _totalCount = r.totalPositions;
 }
 
-function openPositionsCount(): number {
-  return _openCount;
-}
-
-function totalPositionsCount(): number {
-  return _totalCount;
+function openLabel(): string {
+  return `\u{1F4CC} Positions: \`${_openCount} / ${CONFIG.maxPositions}\``;
 }
 
 function winsTotalWinrate(): string {
@@ -86,13 +82,12 @@ function openedMessage(ev: PositionEvent): string {
     [
       "\u{1F7E2} **Position Opened**",
       "",
-      `Token: \`${p.tokenName}\``,
-      `Size: **${p.sizeSol.toFixed(2)} SOL**`,
-      `Pair: \`${p.pair.slice(0, 12)}...\``,
-      `Time: \`${new Date(p.openedAt).toLocaleTimeString()}\``,
+      `\u{1F512} Token: \`${p.tokenName}\``,
+      `\u{1F4B0} Size: **${p.sizeSol.toFixed(2)} SOL**`,
+      `\u{23F0} Time: \`${new Date(p.openedAt).toLocaleTimeString()}\``,
       "",
       balanceStr(),
-      `\u{1F4CA} Positions: **${openPositionsCount()}** open / **${totalPositionsCount()}** total`,
+      openLabel(),
       winsTotalWinrate(),
     ].join("\n"),
   );
@@ -125,7 +120,7 @@ function closedMessage(ev: PositionEvent): string {
     [
       `${headerIcon} **Position Closed** ${resultIcon}`,
       "",
-      `Token: \`${p.tokenName}\``,
+      `\u{1F512} Token: \`${p.tokenName}\``,
       p.entryPriceUsd !== null
         ? `\u{1F4B5} Entry: \`$${p.entryPriceUsd.toFixed(8)}\``
         : "",
@@ -135,7 +130,7 @@ function closedMessage(ev: PositionEvent): string {
       `\u{23F1}\uFE0F Duration: \`${duration}\``,
       "",
       balanceStr(),
-      `\u{1F4CA} Positions: **${openPositionsCount()}** open / **${totalPositionsCount()}** total`,
+      openLabel(),
       winsTotalWinrate(),
     ]
       .filter(Boolean)
@@ -162,9 +157,9 @@ function summaryMessage(): string {
 
   lines.push(
     "**Overview**",
-    `\u{1F4CC} Open Positions: \`${report.openPositions}\``,
-    `\u{2705} Closed Positions: \`${report.closedPositions}\``,
-    `\u{1F4CB} Total Positions: \`${report.totalPositions}\``,
+    openLabel(),
+    `\u{2705} Closed: \`${report.closedPositions}\``,
+    `\u{1F4CB} Total: \`${report.totalPositions}\``,
     "",
   );
 
@@ -203,6 +198,10 @@ async function send(text: string): Promise<void> {
   } catch (err) {
     console.error("[reporter] Failed to send message:", err);
   }
+}
+
+export function sendMessage(text: string): Promise<void> {
+  return send(text);
 }
 
 let _lastReport: string | null = null;
