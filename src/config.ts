@@ -94,5 +94,7 @@ export const CONFIG = {
   snapshotIntervalSeconds: number("SNAPSHOT_INTERVAL_SECONDS"),
   saveRawJson: process.env.SAVE_RAW_JSON === "true",
 
+  dailyLossLimitUsd: number("DAILY_LOSS_LIMIT_USD", 0),
+
   logLevel: process.env.LOG_LEVEL ?? "info",
 };

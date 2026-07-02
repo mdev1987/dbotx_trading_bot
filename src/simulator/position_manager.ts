@@ -35,6 +35,8 @@ import { simFastBuy, simFastSell } from "./fast_buy_sell";
 import type { ProfitLossGroup } from "./fast_buy_sell";
 import { pairUpdate$ } from "../market/dbotx_data_ws";
 import { refreshAccount$ } from "./account";
+import { fetchWithRetry } from "./http";
+import { getDailyPnlUsd } from "../analytics/reports";
 
 /* ============================================================
  * Section 1: API Response Types
@@ -243,6 +245,26 @@ function buildStopLossPercent(): number | undefined {
   return pct > 0 ? pct : undefined;
 }
 
+/* ---------------------------------------------------------------
+ * Dedup guard for pending buy orders
+ *
+ * Prevents double-buying when a request times out but the DBotX
+ * server already created the order.  Pairs are kept in this set
+ * for 60 seconds after the buy attempt begins.
+ * ------------------------------------------------------------ */
+
+const _pendingBuys = new Set<string>();
+const PENDING_BUY_TTL_MS = 60_000;
+
+function markPendingBuy(pair: string): void {
+  _pendingBuys.add(pair);
+  setTimeout(() => _pendingBuys.delete(pair), PENDING_BUY_TTL_MS);
+}
+
+function isPendingBuy(pair: string): boolean {
+  return _pendingBuys.has(pair);
+}
+
 /* ============================================================
  * Section 4: API Fetch Functions
  * ============================================================
@@ -269,15 +291,9 @@ async function simGet<T>(
   path: string,
   params?: Record<string, string | number>,
 ): Promise<T> {
-  const response = await fetch(url(`${base}${path}`, params), {
+  const response = await fetchWithRetry(url(`${base}${path}`, params), {
     headers: API_HEADERS,
   });
-
-  if (!response.ok) {
-    throw new Error(
-      `[position_manager] HTTP ${response.status}: ${response.statusText}`,
-    );
-  }
 
   const json = (await response.json()) as SimApiResponse<T>;
 
@@ -672,7 +688,8 @@ async function closePosition(pair: string, reason: CloseReason): Promise<void> {
  * Section 12: Signal Consumer
  *
  * Listens to acceptedSignal$ and executes simFastBuy for each
- * new signal. De-duplicates against existing positions.
+ * new signal.  De-duplicates against existing positions and
+ * pending-buy set.  Checks daily loss limit before opening.
  * ============================================================
  */
 
@@ -681,11 +698,34 @@ acceptedSignal$
     withLatestFrom(positions$),
     filter(([signal, positions]) => !positions.has(signal.lpAddress)),
     map(([signal]) => signal),
+    filter((signal) => {
+      if (isPendingBuy(signal.lpAddress)) {
+        console.log(
+          `[position_manager] Skipping ${signal.tokenName} — pending buy already in flight`,
+        );
+        return false;
+      }
+      return true;
+    }),
+    filter((signal) => {
+      if (!CONFIG.dailyLossLimitUsd) return true;
+      const todayPnl = getDailyPnlUsd();
+      if (todayPnl <= -CONFIG.dailyLossLimitUsd) {
+        console.log(
+          `[position_manager] Daily loss limit reached ` +
+            `(${todayPnl.toFixed(2)}) — skipping ${signal.tokenName}`,
+        );
+        return false;
+      }
+      return true;
+    }),
   )
   .subscribe(async (signal) => {
     const { positionSize } = CONFIG;
     const stopEarnGroup = buildStopEarnGroup();
     const stopLossPercent = buildStopLossPercent();
+
+    markPendingBuy(signal.lpAddress);
 
     console.log(
       `[position_manager] Opening position for ${signal.tokenName} ` +
@@ -771,3 +811,66 @@ timer(EXPIRY_CHECK_MS, EXPIRY_CHECK_MS)
       }
     }
   });
+
+/* ---------------------------------------------------------------
+ * Startup state recovery
+ *
+ * On boot, fetch open trade pairs from the server and insert them
+ * into the position store so polling loops pick them up.
+ * ------------------------------------------------------------ */
+
+async function recoverOpenPositions(): Promise<void> {
+  try {
+    const pairs = await fetchTradePairs(true);
+    const now = Date.now();
+
+    for (const p of pairs) {
+      const entryPriceUsd = p.costUsd > 0 && Number(p.buyTokenAmount) > 0
+        ? p.costUsd / Number(p.buyTokenAmount)
+        : null;
+
+      const pos: PositionState = {
+        orderId: p._id,
+        pair: p._id,
+        token: p.tokenInfo0.contract,
+        tokenName: p.tokenInfo0.name ?? p.tokenInfo0.symbol ?? "unknown",
+        entryPriceUsd,
+        entryCostUsd: p.costUsd,
+        sizeSol: Number(p.buyTokenAmount) || 0,
+        peakPriceUsd: 0,
+        trailingActive: false,
+        tasks: new Map(),
+        currentProfitPercent: p.fullProfitPercent ?? 0,
+        currentProfitUsd: p.fullProfitUsd ?? 0,
+        remainingBalance: String(Number(p.buyTokenAmount) || 0),
+        openedAt: now,
+        lastUpdateAt: now,
+        status: "open",
+        closeReason: null,
+        signal: {
+          tokenName: p.tokenInfo0.name ?? p.tokenInfo0.symbol ?? "unknown",
+          contractAddress: p.tokenInfo0.contract,
+          lpAddress: p._id,
+          tokenAddress: p.tokenInfo0.contract,
+          initPriceRaw: "0",
+          initPrice: 0,
+          marketCapRaw: "0",
+          marketCapUsd: 0,
+          pairTokenAmount: 0,
+          pairTokenSymbol: p.tokenInfo1.symbol ?? "",
+          pairSolAmount: 0,
+          dex: "",
+        } as SolanaPoolSignal,
+      };
+
+      upsertPosition(pos);
+      console.log(
+        `[position_manager] Recovered open position: ${pos.tokenName} (${p._id})`,
+      );
+    }
+  } catch (err) {
+    console.error("[position_manager] Recovery failed:", err);
+  }
+}
+
+recoverOpenPositions();

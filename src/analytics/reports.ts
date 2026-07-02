@@ -90,6 +90,21 @@ export function generateReport(): PerformanceReport {
   };
 }
 
+/** sum of profit_usd for positions closed today (UTC). */
+export function getDailyPnlUsd(): number {
+  const db = getDb();
+  const startOfDay = new Date();
+  startOfDay.setUTCHours(0, 0, 0, 0);
+  const row = db
+    .query(
+      `SELECT COALESCE(SUM(profit_usd), 0) AS total
+       FROM positions
+       WHERE closed_at >= $start`,
+    )
+    .get({ $start: startOfDay.getTime() }) as { total: number };
+  return row.total;
+}
+
 export function printReport(r: PerformanceReport): void {
   console.log("=".repeat(50));
   console.log("PERFORMANCE REPORT");

@@ -13,13 +13,12 @@
  */
 
 import { CONFIG } from "../config";
+import { fetchWithRetry } from "./http";
 
 export type SimulatorTradeType = "buy" | "sell";
 
 export interface ProfitLossGroup {
-  /** Trigger price as a decimal (0.2 = 20%). */
   pricePercent: number;
-  /** Position fraction to sell (0.5 = 50%). */
   amountPercent: number;
 }
 
@@ -28,15 +27,10 @@ export interface SimulatorFastSwapRequest {
   pair: string;
   walletId?: string;
   type: SimulatorTradeType;
-  /** BUY: SOL amount.  SELL: fraction of holdings (1 = all). */
   amountOrPercent: number;
-  /** Sell all after profit target (overridden by stopEarnGroup). */
   stopEarnPercent?: number;
-  /** Sell all after loss target (overridden by stopLossGroup). */
   stopLossPercent?: number;
-  /** Partial take-profit ladder. */
   stopEarnGroup?: ProfitLossGroup[];
-  /** Partial stop-loss ladder. */
   stopLossGroup?: ProfitLossGroup[];
   priorityFee?: number | "";
   gasFeeDelta?: number;
@@ -59,46 +53,31 @@ const DEFAULT_SETTINGS = {
   slippage: 0.1,
 };
 
-/** Request timeout in milliseconds. */
-const FETCH_TIMEOUT_MS = 30_000;
-
 async function createSimulatorOrder(
   request: SimulatorFastSwapRequest,
 ): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(
-      "https://api-bot-v1.dbotx.com/simulator/sim_swap_order",
-      {
-        signal: controller.signal,
-        method: "POST",
-        headers: {
-          "x-api-key": CONFIG.dbotxApiKey!,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...DEFAULT_SETTINGS,
-          ...request,
-        }),
+  const response = await fetchWithRetry(
+    "https://api-bot-v1.dbotx.com/simulator/sim_swap_order",
+    {
+      method: "POST",
+      headers: {
+        "x-api-key": CONFIG.dbotxApiKey!,
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        ...DEFAULT_SETTINGS,
+        ...request,
+      }),
+    },
+  );
 
-    if (!response.ok) {
-      throw new Error(`DBotX HTTP ${response.status}: ${response.statusText}`);
-    }
+  const json = (await response.json()) as SimulatorOrderResponse;
 
-    const json = (await response.json()) as SimulatorOrderResponse;
-
-    if (json.err) {
-      throw new Error("DBotX simulator rejected order");
-    }
-
-    return json.res.id;
-  } finally {
-    clearTimeout(timer);
+  if (json.err) {
+    throw new Error("DBotX simulator rejected order");
   }
+
+  return json.res.id;
 }
 
 export async function simFastBuy(
