@@ -28,7 +28,7 @@ import { NewMessage, NewMessageEvent } from "telegram/events";
 
 import { Observable, Subject, from, EMPTY } from "rxjs";
 
-import { filter, map, share, tap, catchError } from "rxjs/operators";
+import { filter, map, share, catchError } from "rxjs/operators";
 
 import { CONFIG } from "../config";
 
@@ -149,12 +149,11 @@ export const cleanedTelegramText$ = telegramText$.pipe(
 export const signal$ = cleanedTelegramText$.pipe(
   map((text) => parseSolanaPoolSignal(text)),
 
-  tap((signal) => {
-    console.log(`[SIGNAL] ${signal.tokenName} (${signal.lpAddress})`);
-  }),
-
   catchError((error) => {
-    console.error("[Telegram] Failed to parse signal:", error);
+    console.error(
+      "[Telegram] Parse error:",
+      error instanceof Error ? error.message : error,
+    );
 
     return EMPTY;
   }),

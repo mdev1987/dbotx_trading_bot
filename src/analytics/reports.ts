@@ -31,9 +31,9 @@ export function generateReport(): PerformanceReport {
 
   const closed = db.query(`
     SELECT
-      COUNT(*)                                           AS total_closed,
-      SUM(CASE WHEN profit_usd > 0 THEN 1 ELSE 0 END)    AS wins,
-      SUM(CASE WHEN profit_usd <= 0 THEN 1 ELSE 0 END)   AS losses,
+      COUNT(*)                                            AS total_closed,
+      COALESCE(SUM(CASE WHEN profit_usd > 0 THEN 1 ELSE 0 END), 0)  AS wins,
+      COALESCE(SUM(CASE WHEN profit_usd <= 0 THEN 1 ELSE 0 END), 0) AS losses,
       COALESCE(SUM(profit_usd), 0)                        AS total_profit_usd,
       COALESCE(SUM(profit_pct), 0)                        AS total_profit_pct,
       COALESCE(AVG(profit_pct), 0)                        AS avg_profit_pct,

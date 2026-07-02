@@ -63,7 +63,6 @@ export const CONFIG = {
   ttlSignalSeconds: number("TTL_SIGNAL_SECONDS", 600),
   maxPositions: number("MAX_POSITIONS", 5),
   ttlPositionSeconds: number("TTL_POSITION_SECONDS", 600),
-  startingBalance: number("SIMULATE_SOL_BALANCE", 5),
   positionSize: number("POSITION_SIZE_SOL", 0.1),
 
   stopLossPct: number("PAPER_STOP_LOSS_PERCENT") / 100,
@@ -90,9 +89,6 @@ export const CONFIG = {
   telegramChannelId: process.env.TELEGRAM_CHANNEL_ID,
 
   sqlitePath: required("SQLITE_PATH"),
-
-  snapshotIntervalSeconds: number("SNAPSHOT_INTERVAL_SECONDS"),
-  saveRawJson: process.env.SAVE_RAW_JSON === "true",
 
   dailyLossLimitUsd: number("DAILY_LOSS_LIMIT_USD", 0),
 

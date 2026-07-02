@@ -9,11 +9,14 @@
 
 import { Database } from "bun:sqlite";
 import { CONFIG } from "../config";
+import { mkdirSync } from "fs";
+import { dirname } from "path";
 
 let _db: Database | null = null;
 
 export function getDb(): Database {
   if (!_db) {
+    mkdirSync(dirname(CONFIG.sqlitePath), { recursive: true });
     _db = new Database(CONFIG.sqlitePath, { create: true });
     _db.exec("PRAGMA journal_mode = WAL");
     _db.exec("PRAGMA synchronous = NORMAL");

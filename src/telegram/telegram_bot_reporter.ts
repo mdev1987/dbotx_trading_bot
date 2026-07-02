@@ -52,21 +52,35 @@ function balanceStr(): string {
   return `${icon} \u{1F4B0} Balance: \`${bal.toFixed(2)}\` SOL (\`${sign}${(change * 100).toFixed(2)}%\`)`;
 }
 
+let _openCount = 0;
+let _totalCount = 0;
+
+/* Seed counters from DB on init (catches recovered positions). */
+{
+  const r = generateReport();
+  _openCount = r.openPositions;
+  _totalCount = r.totalPositions;
+}
+
 function openPositionsCount(): number {
-  if (!latestAccount) return 0;
-  return latestAccount.holdTokens;
+  return _openCount;
+}
+
+function totalPositionsCount(): number {
+  return _totalCount;
 }
 
 function winsTotalWinrate(): string {
   const r = generateReport();
-  const winIcon = r.winRate >= 50 ? "\u{1F3C6}" : "\u{26A0}\uFE0F";
-  return `${winIcon} Wins: \`${r.winningTrades}\` / \`${r.closedPositions}\` (\`${r.winRate.toFixed(1)}%\`)`;
+  const wins = r.winningTrades ?? 0;
+  const total = r.closedPositions ?? 0;
+  const rate = total > 0 ? r.winRate : 0;
+  const winIcon = rate >= 50 ? "\u{1F3C6}" : "\u{26A0}\uFE0F";
+  return `${winIcon} Wins: \`${wins}\` / \`${total}\` (\`${rate.toFixed(1)}%\`)`;
 }
 
 function openedMessage(ev: PositionEvent): string {
   const p = ev.position;
-  const total = generateReport();
-  const open = openPositionsCount();
 
   return convert(
     [
@@ -78,7 +92,7 @@ function openedMessage(ev: PositionEvent): string {
       `Time: \`${new Date(p.openedAt).toLocaleTimeString()}\``,
       "",
       balanceStr(),
-      `\u{1F4CA} Positions: **${open}** open / **${total.totalPositions}** total`,
+      `\u{1F4CA} Positions: **${openPositionsCount()}** open / **${totalPositionsCount()}** total`,
       winsTotalWinrate(),
     ].join("\n"),
   );
@@ -100,8 +114,6 @@ function closedMessage(ev: PositionEvent): string {
     : `${chartIcon} PnL: **${profit.toFixed(2)}%** (\u0024${profitUsd.toFixed(2)})`;
 
   const duration = fmtDuration(p.lastUpdateAt - p.openedAt);
-  const total = generateReport();
-  const open = openPositionsCount();
 
   let exitPriceStr = "";
   if (p.entryPriceUsd !== null) {
@@ -123,7 +135,7 @@ function closedMessage(ev: PositionEvent): string {
       `\u{23F1}\uFE0F Duration: \`${duration}\``,
       "",
       balanceStr(),
-      `\u{1F4CA} Positions: **${open}** open / **${total.totalPositions}** total`,
+      `\u{1F4CA} Positions: **${openPositionsCount()}** open / **${totalPositionsCount()}** total`,
       winsTotalWinrate(),
     ]
       .filter(Boolean)
@@ -202,7 +214,11 @@ export function startReporter(): void {
     positionEvent$
       .pipe(
         tap((ev) => {
-          if (ev.type === "opened") send(openedMessage(ev));
+          if (ev.type === "opened") {
+            _openCount++;
+            _totalCount++;
+            send(openedMessage(ev));
+          }
         }),
       )
       .subscribe(),
@@ -211,7 +227,10 @@ export function startReporter(): void {
   subs.push(
     positionClosed$
       .pipe(
-        tap((ev) => send(closedMessage(ev))),
+        tap((ev) => {
+          _openCount = Math.max(0, _openCount - 1);
+          send(closedMessage(ev));
+        }),
       )
       .subscribe(),
   );
