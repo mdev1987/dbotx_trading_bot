@@ -35,7 +35,7 @@ async function start(): Promise<void> {
     .pipe(
       tap((acct) => {
         console.log(
-          `[ACCT] Balance=${acct.balance.toFixed(3)} SOL` +
+          `[ACCT] Balance=\$${acct.balance.toFixed(2)}` +
             ` | PnL=${(acct.changeAll * 100).toFixed(2)}%` +
             ` | Tokens=${acct.holdTokens}`,
         );

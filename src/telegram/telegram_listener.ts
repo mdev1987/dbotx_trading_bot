@@ -26,9 +26,9 @@ import { TelegramClient } from "teleproto";
 import { StoreSession } from "teleproto/sessions";
 import { NewMessage, NewMessageEvent } from "teleproto/events";
 
-import { Observable, Subject, from, EMPTY } from "rxjs";
+import { Observable, Subject } from "rxjs";
 
-import { filter, map, share, catchError } from "rxjs/operators";
+import { filter, map, share } from "rxjs/operators";
 
 import { CONFIG } from "../config";
 
@@ -146,17 +146,18 @@ export const cleanedTelegramText$ = telegramText$.pipe(
  */
 
 export const signal$ = cleanedTelegramText$.pipe(
-  map((text) => parseSolanaPoolSignal(text)),
-
-  catchError((error) => {
-    console.error(
-      "[Telegram] Parse error:",
-      error instanceof Error ? error.message : error,
-    );
-
-    return EMPTY;
+  map((text) => {
+    try {
+      return parseSolanaPoolSignal(text);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg !== "Failed to parse pair") {
+        console.warn("[Telegram] Skip non-signal message:", msg);
+      }
+      return null;
+    }
   }),
-
+  filter((s): s is SolanaPoolSignal => s !== null),
   share(),
 );
 
