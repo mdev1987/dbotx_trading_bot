@@ -163,13 +163,13 @@ export function parseAbbreviatedUsd(value: string): number {
 
   switch (suffix) {
     case "K":
-      return numberValue * 1_000;
+      return Math.round(numberValue * 1_000);
 
     case "M":
-      return numberValue * 1_000_000;
+      return Math.round(numberValue * 1_000_000);
 
     case "B":
-      return numberValue * 1_000_000_000;
+      return Math.round(numberValue * 1_000_000_000);
 
     default:
       return numberValue;
