@@ -95,9 +95,11 @@ export const CONFIG = {
   telegramChannelUserName: process.env.TELEGRAM_CHANNEL_USERNAME,
   telegramChannelId: process.env.TELEGRAM_CHANNEL_ID,
 
-  /** 'monitor' = Ave Signal Monitor (no TTL, no max pos, accept all, pump TP)
-   *  'ave'    = AVE Scanner (TTL, max positions, queue, config TP) */
-  signalSourceMode: (process.env.SIGNAL_SOURCE_MODE ?? "monitor") as "ave" | "monitor",
+  /** Auto-detected from channel name: 'monitor' for AveSignalMonitor, else 'ave'. */
+  signalSourceMode: ((): "ave" | "monitor" => {
+    const name = process.env.TELEGRAM_CHANNEL_USERNAME ?? "";
+    return name.toLowerCase().includes("avesignalmonitor") ? "monitor" : "ave";
+  })(),
 
   sqlitePath: required("SQLITE_PATH"),
 
