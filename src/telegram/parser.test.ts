@@ -77,7 +77,7 @@ test("parse BULLHOUSE signal", () => {
 
   expect(result.snipes).toBe(3);
 
-  expect(result.holders.length).toBe(5);
+  expect(result.holders!.length).toBe(5);
 });
 
 test("parse CLICK signal", () => {
@@ -98,7 +98,7 @@ test("parse CLICK signal", () => {
 
   expect(result.snipes).toBe(12);
 
-  expect(result.holders.length).toBe(5);
+  expect(result.holders!.length).toBe(5);
 });
 
 test("expand compressed decimals", () => {
@@ -486,7 +486,7 @@ test("parse CJ signal", () => {
   expect(r.insiders).toBe(1);
   expect(r.snipes).toBe(10);
   expect(r.holders!.length).toBe(5);
-  expect(r.security.score).toBe(0);
+  expect(r.security!.score).toBe(0);
   expect(r.dex).toBe("Pumpfunamm");
 });
 
@@ -521,8 +521,8 @@ test("parse OTKEN signal (MCap $0.00)", () => {
 test("parse Bwull signal (Score 55)", () => {
   const r = parseSolanaPoolSignal(bwullMessage);
   expect(r.tokenName).toBe("Bwull");
-  expect(r.security.score).toBe(55);
-  expect(r.security.risk).toBe("Low Risk");
+  expect(r.security!.score).toBe(55);
+  expect(r.security!.risk).toBe("Low Risk");
   expect(r.initPrice).toBe(0.00003369);
   expect(r.marketCapUsd).toBe(43200);
 });
@@ -572,7 +572,7 @@ test("parse Dream signal (0.0{5}6883 + 0.0{4}7038 holder%)", () => {
 test("parse SPAM signal (Score 55, 14 snipes)", () => {
   const r = parseSolanaPoolSignal(spamMessage);
   expect(r.tokenName).toBe("SPAM");
-  expect(r.security.score).toBe(55);
+  expect(r.security!.score).toBe(55);
   expect(r.snipes).toBe(14);
   expect(r.insiders).toBe(8);
   expect(r.initPrice).toBe(0.00003219);
@@ -616,5 +616,5 @@ test("parse USA250 signal (no Token Holders line)", () => {
   expect(r.snipes).toBe(3);
   expect(r.holderCount).toBeUndefined();
   expect(r.holders).toEqual([]);
-  expect(r.security.score).toBe(0);
+  expect(r.security!.score).toBe(0);
 });

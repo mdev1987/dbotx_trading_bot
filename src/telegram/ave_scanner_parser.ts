@@ -46,31 +46,31 @@ export interface SolanaPoolSignal {
   contractAddress: string;
   lpAddress: string;
 
-  initPriceRaw: string;
-  initPrice: number;
+  initPriceRaw?: string;
+  initPrice?: number;
 
-  marketCapRaw: string;
-  marketCapUsd: number;
+  marketCapRaw?: string;
+  marketCapUsd?: number;
 
-  pairTokenAmount: number;
-  pairTokenSymbol: string;
-  pairSolAmount: number;
+  pairTokenAmount?: number;
+  pairTokenSymbol?: string;
+  pairSolAmount?: number;
 
-  dex: string;
+  dex?: string;
 
-  liquidityRaw: string;
-  liquidityUsd: number;
+  liquidityRaw?: string;
+  liquidityUsd?: number;
 
-  insiders: number;
-  insiderHoldingsPercent: number;
+  insiders?: number;
+  insiderHoldingsPercent?: number;
 
-  snipes: number;
-  rushers: number;
+  snipes?: number;
+  rushers?: number;
 
   holderCount?: number;
-  holders: Holder[];
+  holders?: Holder[];
 
-  security: SecurityInfo;
+  security?: SecurityInfo;
 
   links?: ExternalLinks;
 
