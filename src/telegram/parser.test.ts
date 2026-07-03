@@ -485,7 +485,7 @@ test("parse CJ signal", () => {
   expect(r.liquidityUsd).toBe(107190);
   expect(r.insiders).toBe(1);
   expect(r.snipes).toBe(10);
-  expect(r.holders.length).toBe(5);
+  expect(r.holders!.length).toBe(5);
   expect(r.security.score).toBe(0);
   expect(r.dex).toBe("Pumpfunamm");
 });
@@ -497,7 +497,7 @@ test("parse Belmar coin signal", () => {
   expect(r.marketCapUsd).toBe(18140000);
   expect(r.liquidityUsd).toBe(24230);
   expect(r.insiders).toBe(5);
-  expect(r.holders.length).toBe(5);
+  expect(r.holders!.length).toBe(5);
 });
 
 test("parse Catchua signal", () => {
@@ -536,7 +536,7 @@ test("parse ANSEM signal (K pair, Meteoradammv2)", () => {
   expect(r.marketCapUsd).toBe(4040000);
   expect(r.insiders).toBe(101);
   expect(r.holderCount).toBe(138);
-  expect(r.holders.length).toBe(5);
+  expect(r.holders!.length).toBe(5);
 });
 
 test("parse Woman signal (2 holders, Pump.fun link)", () => {
@@ -545,7 +545,7 @@ test("parse Woman signal (2 holders, Pump.fun link)", () => {
   expect(r.dex).toBe("Pump");
   expect(r.initPrice).toBe(0.00000232);
   expect(r.holderCount).toBe(2);
-  expect(r.holders.length).toBe(2);
+  expect(r.holders!.length).toBe(2);
   expect(r.links?.twitter).toBe("https://x.com/aveaiofficial");
   expect(r.links?.website).toBe("https://ave.ai/");
 });
@@ -555,7 +555,7 @@ test("parse DATA signal", () => {
   expect(r.tokenName).toBe("DATA");
   expect(r.initPrice).toBe(0.00000692);
   expect(r.marketCapUsd).toBe(7040);
-  expect(r.holders.length).toBe(5);
+  expect(r.holders!.length).toBe(5);
 });
 
 test("parse Dream signal (0.0{5}6883 + 0.0{4}7038 holder%)", () => {
@@ -564,9 +564,9 @@ test("parse Dream signal (0.0{5}6883 + 0.0{4}7038 holder%)", () => {
   expect(r.initPrice).toBe(0.000006883);
   expect(r.marketCapUsd).toBe(0);
   expect(r.holderCount).toBe(9);
-  expect(r.holders.length).toBe(5);
-  expect(r.holders[1]!.percentage).toBe(0.00007038);
-  expect(r.holders[2]!.percentage).toBe(0.00002346);
+  expect(r.holders!.length).toBe(5);
+  expect(r.holders![1]!.percentage).toBe(0.00007038);
+  expect(r.holders![2]!.percentage).toBe(0.00002346);
 });
 
 test("parse SPAM signal (Score 55, 14 snipes)", () => {
@@ -576,4 +576,45 @@ test("parse SPAM signal (Score 55, 14 snipes)", () => {
   expect(r.snipes).toBe(14);
   expect(r.insiders).toBe(8);
   expect(r.initPrice).toBe(0.00003219);
+});
+
+/* ------------------------------------------------------------------ */
+/*  Edge case: signal with no "Token Holders" line                     */
+/* ------------------------------------------------------------------ */
+
+const usa250Message = `
+💠 New Solana Pool Launched 💠
+
+Token: USA250 (https://solscan.io/token/D49tCt3GB8Q8HYYK35ojTq3f6y1XaS6FgjJ8j3zNDwf1)
+CA: D49tCt3GB8Q8HYYK35ojTq3f6y1XaS6FgjJ8j3zNDwf1
+LP: 4hUVL83mUEziZJgwDZbFrctandUWEqtap6DvFmHYDWkw
+
+Init Price: $0.02112
+MCap: $0.00
+Pair: 22.77K USA250 / 996.02 SOL
+Dex: Meteoradammv2
+Liquidity: $176.18K
+Insiders: 1(Holdings 0%)
+SNIPES: 3  RUSHERS: 0
+Security: Score: 0(🟢Low Risk)    
+|_Ownership Renounced:❌|Top10 holdings<30%: ✅|Stop mint:✅|No Blacklist:✅
+
+Check (https://ave.ai/check/D49tCt3GB8Q8HYYK35ojTq3f6y1XaS6FgjJ8j3zNDwf1-solana?type=token) | Website (https://ave.ai/) | App (https://ave.ai/download) | Community (https://t.me/aveai_english) | Twitter (https://x.com/aveaiofficial)
+`;
+
+test("parse USA250 signal (no Token Holders line)", () => {
+  const r = parseSolanaPoolSignal(usa250Message);
+  expect(r.tokenName).toBe("USA250");
+  expect(r.contractAddress).toBe("D49tCt3GB8Q8HYYK35ojTq3f6y1XaS6FgjJ8j3zNDwf1");
+  expect(r.initPrice).toBe(0.02112);
+  expect(r.marketCapUsd).toBe(0);
+  expect(r.pairTokenAmount).toBe(22770);
+  expect(r.pairSolAmount).toBe(996.02);
+  expect(r.dex).toBe("Meteoradammv2");
+  expect(r.liquidityUsd).toBe(176180);
+  expect(r.insiders).toBe(1);
+  expect(r.snipes).toBe(3);
+  expect(r.holderCount).toBeUndefined();
+  expect(r.holders).toEqual([]);
+  expect(r.security.score).toBe(0);
 });

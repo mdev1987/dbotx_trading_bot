@@ -67,7 +67,7 @@ export interface SolanaPoolSignal {
   snipes: number;
   rushers: number;
 
-  holderCount: number;
+  holderCount?: number;
   holders: Holder[];
 
   security: SecurityInfo;
@@ -262,32 +262,29 @@ export function parseSolanaPoolSignal(text: string): SolanaPoolSignal {
 
     const rushers = Number(requiredGroup(sniperMatch, 2, "rushers"));
 
-    const holderCount = Number(
-      requiredGroup(
-        requireMatch(text.match(/^Token Holders:\s*(\d+)/m), "holder count"),
-        1,
-        "holder count",
-      ),
-    );
+    const holderMatch = text.match(/^Token Holders:\s*(\d+)/m);
+    const holderCount = holderMatch ? Number(holderMatch[1]) : undefined;
 
     const holders: Holder[] = [];
 
-    const holderRegex =
-      /^\s*\|_([^\s]+)(?:\s+\((https?:\/\/[^\)]+)\))?\s+([0-9.{}]+)%$/gm;
+    if (holderMatch) {
+      const holderRegex =
+        /^\s*\|_([^\s]+)(?:\s+\((https?:\/\/[^\)]+)\))?\s+([0-9.{}]+)%$/gm;
 
-    for (const match of text.matchAll(holderRegex)) {
-      const address = requiredGroup(match, 1, "holder address");
+      for (const match of text.matchAll(holderRegex)) {
+        const address = requiredGroup(match, 1, "holder address");
 
-      const url = match[2];
+        const url = match[2];
 
-      const percentageRaw = requiredGroup(match, 3, "holder percentage");
+        const percentageRaw = requiredGroup(match, 3, "holder percentage");
 
-      holders.push({
-        address,
-        url,
-        percentageRaw,
-        percentage: expandCompressedDecimal(percentageRaw),
-      });
+        holders.push({
+          address,
+          url,
+          percentageRaw,
+          percentage: expandCompressedDecimal(percentageRaw),
+        });
+      }
     }
 
     const securityMatch = requireMatch(
