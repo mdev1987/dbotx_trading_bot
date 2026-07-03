@@ -5,12 +5,18 @@ import { convert } from "telegram-markdown-v2";
 import { CONFIG } from "../config";
 import { positionEvent$, positionClosed$ } from "../simulator/position_manager";
 import type { PositionEvent } from "../simulator/position_manager";
-import { latestAccount } from "../simulator/account";
+import { simulatorAccount$ } from "../simulator/account";
+import type { SimulatorAccount } from "../simulator/account";
 import { generateReport } from "../analytics/reports";
 import type { PerformanceReport } from "../analytics/reports";
 
 const bot = new Bot(CONFIG.telegramBotToken!);
 const CHAT_ID = CONFIG.telegramChatId!;
+
+/* Local account snapshot — updated from the shared stream so
+   console and Telegram reports always see the same value. */
+let _account: SimulatorAccount | null = null;
+simulatorAccount$.subscribe((a) => { _account = a; });
 
 function fmtPnL(value: number, suffix = ""): string {
   const sign = value >= 0 ? "+" : "";
@@ -44,9 +50,9 @@ function reasonLabel(reason: string): string {
 }
 
 function balanceStr(): string {
-  if (!latestAccount) return "";
-  const bal = latestAccount.balance;
-  const change = latestAccount.changeAll;
+  if (!_account) return "";
+  const bal = _account.balance;
+  const change = _account.changeAll;
   const icon = change >= 0 ? "\u{1F7E2}" : "\u{1F534}";
   const sign = change >= 0 ? "+" : "";
   return `${icon} \u{1F4B0} Balance: \`$${bal.toFixed(2)}\` (\`${sign}${(change * 100).toFixed(2)}%\`)`;

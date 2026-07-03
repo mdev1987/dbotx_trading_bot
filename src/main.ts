@@ -60,7 +60,11 @@ function startedMessage(): string {
     `Mode: \u{1F9EA} \`Simulate\``,
     `\u{1F4CC} Max Positions: \`${CONFIG.maxPositions}\``,
     `\u{1F4B0} Position Size: \`${CONFIG.positionSize.toFixed(2)} SOL\``,
-    `\u{23F0} Position TTL: \`${fmtDuration(CONFIG.ttlPositionSeconds)}\``,
+    `\u{23F0} Base TTL: \`${fmtDuration(CONFIG.baseTtlSecs)}\`` +
+      (CONFIG.minProfitForTtlExtensionPct > 0
+        ? ` \u{1F504} renew \u{2265}\`${(CONFIG.minProfitForTtlExtensionPct * 100).toFixed(1)}%\``
+        : "") +
+      ` | Max: \`${fmtDuration(CONFIG.maxTtlSecs)}\``,
     "",
     "**Exit Settings**",
   ];
@@ -83,9 +87,9 @@ function startedMessage(): string {
         `\`${(CONFIG.trailingDistancePct * 100).toFixed(0)}%\` distance`,
     );
   }
-  if (CONFIG.ttlRenewalProfitPct > 0) {
+  if (CONFIG.minProfitForTtlExtensionPct > 0) {
     lines.push(
-      `\u{1F504} TTL Renewal: \`${(CONFIG.ttlRenewalProfitPct * 100).toFixed(0)}%\` profit threshold`,
+      `\u{1F504} TTL Extension: \u{2265}\`${(CONFIG.minProfitForTtlExtensionPct * 100).toFixed(1)}%\` profit to renew`,
     );
   }
   if (CONFIG.signalQueueSize > 0) {

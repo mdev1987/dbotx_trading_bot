@@ -58,8 +58,9 @@ All settings in `.env`:
 |---|---|---|
 | `POSITION_SIZE_SOL` | `0.10` | SOL per trade |
 | `MAX_POSITIONS` | `5` | Max concurrent open positions |
-| `TTL_POSITION_SECONDS` | `120` | Auto-close position after N seconds |
-| `TTL_RENEWAL_PROFIT_PERCENT` | `3` | Profit threshold (%) to reset TTL clock |
+| `BASE_TTL_SECS` | `90` | Initial holding time before position is evaluated for exit |
+| `MIN_PROFIT_FOR_TTL_EXTENSION_PCT` | `3.0` | Minimum profit % required to reset TTL clock |
+| `MAX_TTL_SECS` | `600` | Hard absolute cap on position lifetime |
 | `SIGNAL_QUEUE_SIZE` | `20` | Max queued signals when at max positions |
 | `PARTIAL_TP_TIERS` | — | e.g. `30@20,40@50` (sell 30% at +20%, 40% at +50%) |
 | `PAPER_STOP_LOSS_PERCENT` | `-15` | Stop loss trigger |

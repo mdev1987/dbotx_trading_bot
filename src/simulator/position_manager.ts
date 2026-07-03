@@ -800,7 +800,7 @@ async function openPosition(signal: SolanaPoolSignal): Promise<void> {
     orderId,
     pair: signal.lpAddress,
     token: signal.contractAddress,
-    tokenName: signal.tokenName,
+    tokenName: signal.tokenName ?? "unknown",
     entryPriceUsd: null,
     entryCostUsd: null,
     sizeSol: positionSize,
@@ -868,7 +868,7 @@ acceptedSignal$
  */
 
 const EXPIRY_CHECK_MS = 15_000;
-const { ttlPositionSeconds, ttlRenewalProfitPct } = CONFIG;
+const { baseTtlSecs, minProfitForTtlExtensionPct, maxTtlSecs } = CONFIG;
 
 timer(EXPIRY_CHECK_MS, EXPIRY_CHECK_MS)
   .pipe(
@@ -877,28 +877,41 @@ timer(EXPIRY_CHECK_MS, EXPIRY_CHECK_MS)
   )
   .subscribe((open) => {
     const now = Date.now();
-    const maxAge = ttlPositionSeconds * 1_000;
+    const baseAge = baseTtlSecs * 1_000;
+    const maxAge = maxTtlSecs * 1_000;
 
     for (const pos of open) {
-      if (now - pos.openedAt < maxAge) continue;
+      const elapsed = now - pos.openedAt;
 
-      /* TTL renewal: if profit exceeds threshold, reset the clock. */
+      /* Hard cap: position must close by MAX_TTL_SECS, no renewal past it. */
+      if (elapsed >= maxAge) {
+        console.log(
+          `[position_manager] Position ${pos.tokenName} hit max TTL ` +
+            `(age ${(elapsed / 1_000).toFixed(0)}s >= ${maxTtlSecs}s)`,
+        );
+        closePosition(pos.pair, "expired");
+        continue;
+      }
+
+      if (elapsed < baseAge) continue;
+
+      /* Base TTL reached — renew if profit exceeds threshold. */
       if (
-        ttlRenewalProfitPct > 0 &&
-        pos.currentProfitPercent >= ttlRenewalProfitPct
+        minProfitForTtlExtensionPct > 0 &&
+        pos.currentProfitPercent >= minProfitForTtlExtensionPct
       ) {
         patchPosition(pos.pair, { openedAt: now });
         console.log(
           `[position_manager] Renewed TTL for ${pos.tokenName} ` +
             `(profit ${(pos.currentProfitPercent * 100).toFixed(2)}% >= ` +
-            `${(ttlRenewalProfitPct * 100).toFixed(2)}%)`,
+            `${(minProfitForTtlExtensionPct * 100).toFixed(2)}%)`,
         );
         continue;
       }
 
       console.log(
         `[position_manager] Position ${pos.tokenName} expired ` +
-          `(age ${((now - pos.openedAt) / 1_000).toFixed(0)}s > ${ttlPositionSeconds}s)`,
+          `(age ${(elapsed / 1_000).toFixed(0)}s > ${baseTtlSecs}s)`,
       );
       closePosition(pos.pair, "expired");
     }

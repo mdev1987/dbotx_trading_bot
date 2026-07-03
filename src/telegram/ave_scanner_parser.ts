@@ -39,7 +39,7 @@ export interface ExternalLinks {
 }
 
 export interface SolanaPoolSignal {
-  tokenName: string;
+  tokenName?: string;
   tokenAddress?: string;
   tokenUrl?: string;
 
@@ -183,14 +183,11 @@ export function parseAbbreviatedUsd(value: string): number {
 
 export function parseSolanaPoolSignal(text: string): SolanaPoolSignal {
   try {
-    const tokenMatch = requireMatch(
-      text.match(/^Token:\s*(.+?)(?:\s*\((https?:\/\/[^\)]+)\))?$/m),
-      "token",
-    );
+    const tokenMatch = text.match(/^Token:\s*(.+?)(?:\s*\((https?:\/\/[^\)]+)\))?$/m);
 
-    const tokenName = requiredGroup(tokenMatch, 1, "token name");
+    const tokenName = tokenMatch?.[1]?.trim() ?? "unknown";
 
-    const tokenUrl = tokenMatch[2] ?? "";
+    const tokenUrl = tokenMatch?.[2] ?? "";
 
     const tokenAddress = tokenUrl.split("/").pop() ?? "";
 

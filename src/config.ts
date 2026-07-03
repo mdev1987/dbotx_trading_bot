@@ -61,8 +61,9 @@ export const CONFIG = {
   servapiBaseUrl: process.env.SERVAPI_BASE_URL ?? "https://servapi.dbotx.com",
 
   maxPositions: number("MAX_POSITIONS", 5),
-  ttlPositionSeconds: number("TTL_POSITION_SECONDS", 600),
-  ttlRenewalProfitPct: number("TTL_RENEWAL_PROFIT_PERCENT", 0) / 100,
+  baseTtlSecs: number("BASE_TTL_SECS", 90),
+  minProfitForTtlExtensionPct: number("MIN_PROFIT_FOR_TTL_EXTENSION_PCT", 0) / 100,
+  maxTtlSecs: number("MAX_TTL_SECS", 600),
   signalQueueSize: number("SIGNAL_QUEUE_SIZE", 20),
   positionSize: number("POSITION_SIZE_SOL", 0.1),
 
