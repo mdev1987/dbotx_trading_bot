@@ -6,6 +6,7 @@
       "name": "dbotx_trade_ts",
       "dependencies": {
         "@dotenvx/dotenvx": "^1.75.1",
+        "@notifycode/hash-it": "^1.0.0",
         "grammy": "^1.44.0",
         "remove-markdown": "^0.6.4",
         "rxjs": "^7.8.2",
@@ -26,6 +27,8 @@
     "@dotenvx/primitives": ["@dotenvx/primitives@0.8.0", "", {}, "sha512-VYJy0uhFm9zTJ1TxBaW/pA8bjbOM/OttaNMwZ1RHG4JKyRG7DhSdiqD1ipQoAyoD22olUtxbP78W9xY3Wd11bg=="],
 
     "@grammyjs/types": ["@grammyjs/types@3.28.0", "", {}, "sha512-4JvXCdxRZHCje0M4gHzLwtB4bLno3WD28xd8CNfk4POWIu73BFnSvGeW6OQ5gPem4eYTEwkD9yDaXssixl6tMQ=="],
+
+    "@notifycode/hash-it": ["@notifycode/hash-it@1.0.0", "", {}, "sha512-bEt9r+5sYCqKg6u5fmWm2MK2x1lh3gtEIh+efGvnnhYFD7XiNNL4dwhuvLJvKon+blWvtSz9d78cdG80acPSIw=="],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 

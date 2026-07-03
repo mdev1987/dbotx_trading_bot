@@ -30,6 +30,7 @@ import {
 } from "rxjs/operators";
 import { CONFIG } from "../config";
 import { acceptedSignal$ } from "../telegram/signals_stream";
+import { signalMonitorPump$ } from "../telegram/telegram_listener";
 import type { SolanaPoolSignal } from "../telegram/ave_scanner_parser";
 import { simFastBuy, simFastSell } from "./fast_buy_sell";
 import type { ProfitLossGroup } from "./fast_buy_sell";
@@ -220,7 +221,7 @@ const EXEC_DEFAULTS: {
   slippage: 0.1,
 };
 
-function buildStopEarnGroup(): ProfitLossGroup[] | undefined {
+function buildStopEarnGroup(signalMaxPumpX?: number): ProfitLossGroup[] | undefined {
   const { partialTpTiers, backstopTpPct } = CONFIG;
   const groups: ProfitLossGroup[] = [];
 
@@ -228,12 +229,19 @@ function buildStopEarnGroup(): ProfitLossGroup[] | undefined {
     groups.push({ pricePercent: tier.at, amountPercent: tier.pct });
   }
 
-  if (backstopTpPct > 0) {
+  /* Determine effective backstop TP: use maxPumpX from signal if available,
+     otherwise fall back to config value. */
+  const effectiveBackstopTpPct =
+    signalMaxPumpX && signalMaxPumpX > 0
+      ? (signalMaxPumpX - 1) * 0.7
+      : backstopTpPct;
+
+  if (effectiveBackstopTpPct > 0) {
     const soldSoFar = partialTpTiers.reduce((sum, t) => sum + t.pct, 0);
     const remaining = 1 - soldSoFar;
 
     if (remaining > 0.001) {
-      groups.push({ pricePercent: backstopTpPct, amountPercent: remaining });
+      groups.push({ pricePercent: effectiveBackstopTpPct, amountPercent: remaining });
     }
   }
 
@@ -769,7 +777,7 @@ async function openPosition(signal: SolanaPoolSignal): Promise<void> {
   }
 
   const { positionSize } = CONFIG;
-  const stopEarnGroup = buildStopEarnGroup();
+  const stopEarnGroup = buildStopEarnGroup(signal.maxPumpX);
   const stopLossPercent = buildStopLossPercent();
 
   markPendingBuy(signal.lpAddress);
@@ -857,6 +865,27 @@ acceptedSignal$
     }),
   )
   .subscribe();
+
+/* ---------------------------------------------------------------
+ * Pump result consumer — closes positions when a pump result
+ * arrives for a matching contract address.
+ * ------------------------------------------------------------ */
+signalMonitorPump$
+  .subscribe((pump) => {
+    for (const [pair, pos] of _latestPositions) {
+      if (
+        pos.signal.contractAddress === pump.contractAddress &&
+        (pos.status === "open" || pos.status === "closing")
+      ) {
+        console.log(
+          `[position_manager] Pump signal for ${pos.tokenName} ` +
+            `(x${pump.multiplier}, jumped to ${pump.jumpedToK}K) — closing`,
+        );
+        closePosition(pair, "take_profit");
+        return;
+      }
+    }
+  });
 
 /* ============================================================
  * Section 13: Position Expiry & TTL Renewal

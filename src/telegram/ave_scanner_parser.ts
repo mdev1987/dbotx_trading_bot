@@ -74,6 +74,9 @@ export interface SolanaPoolSignal {
 
   links?: ExternalLinks;
 
+  /** Expected maximum pump multiplier from signal (e.g. 2x → 2). */
+  maxPumpX?: number;
+
   raw: string;
 }
 

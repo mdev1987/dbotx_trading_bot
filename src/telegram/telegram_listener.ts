@@ -3,7 +3,7 @@
  *
  * Reactive Telegram listener using:
  *
- * - gramjs
+ * - teleproto (MTProto client)
  * - RxJS
  * - remove-markdown
  *
@@ -11,9 +11,10 @@
  *
  * - Login to Telegram
  * - Persist session
- * - Listen to new channel messages
+ * - Listen to new channel messages (AVE Scanner + Signal Monitor)
  * - Remove markdown formatting
  * - Parse AVE scanner messages
+ * - Parse Ave Signal Monitor messages (signals + pump results)
  * - Emit parsed signals as RxJS streams
  *
  * ============================================================
@@ -26,7 +27,7 @@ import { TelegramClient } from "teleproto";
 import { StoreSession } from "teleproto/sessions";
 import { NewMessage, NewMessageEvent } from "teleproto/events";
 
-import { Observable, Subject } from "rxjs";
+import { Observable, Subject, merge } from "rxjs";
 
 import { filter, map, share } from "rxjs/operators";
 
@@ -36,6 +37,12 @@ import {
   parseSolanaPoolSignal,
   type SolanaPoolSignal,
 } from "./ave_scanner_parser";
+
+import {
+  parseSignalMonitorSignal,
+  parseSignalMonitorPump,
+  type AveSignalMonitorPump,
+} from "./ave_signal_monitor_parser";
 
 /* ============================================================
  * Config validation
@@ -47,6 +54,7 @@ const {
   telegramApiId,
   telegramChannelUserName,
   telegramChannelId,
+  telegramSignalMonitorUserName,
 } = CONFIG;
 
 if (!telegramApiId || !telegramApiHash || !telegramChannelUserName) {
@@ -145,7 +153,7 @@ export const cleanedTelegramText$ = telegramText$.pipe(
  * ============================================================
  */
 
-export const signal$ = cleanedTelegramText$.pipe(
+const aveSignal$ = cleanedTelegramText$.pipe(
   map((text) => {
     try {
       return parseSolanaPoolSignal(text);
@@ -158,8 +166,49 @@ export const signal$ = cleanedTelegramText$.pipe(
     }
   }),
   filter((s): s is SolanaPoolSignal => s !== null),
+);
+
+/* ============================================================
+ * Parsed Signal Monitor stream
+ * ============================================================
+ */
+
+const signalMonitorSignalConverted$ = cleanedTelegramText$.pipe(
+  map((text) => {
+    const r = parseSignalMonitorSignal(text);
+    if (!r) return null;
+
+    return {
+      tokenName: r.tokenName,
+      contractAddress: r.contractAddress,
+      lpAddress: r.contractAddress,
+      dex: "pump.fun",
+      maxPumpX: r.maxPumpX,
+      marketCapRaw: "",
+      marketCapUsd: r.marketCapUsd,
+      raw: r.raw,
+    } as SolanaPoolSignal;
+  }),
+  filter((s): s is SolanaPoolSignal => s !== null),
+);
+
+const signalMonitorPumpInput$ = new Subject<AveSignalMonitorPump>();
+
+/** Emits when a pump-result message arrives from @AveSignalMonitor. */
+export const signalMonitorPump$ = signalMonitorPumpInput$.pipe(share());
+
+/* Merge AVE signals + Signal Monitor signals into one stream. */
+export const signal$ = merge(aveSignal$, signalMonitorSignalConverted$).pipe(
   share(),
 );
+
+/* Parse pump results from cleaned text and feed the subject. */
+cleanedTelegramText$
+  .pipe(
+    map((text) => parseSignalMonitorPump(text)),
+    filter((r): r is AveSignalMonitorPump => r !== null),
+  )
+  .subscribe((pump) => signalMonitorPumpInput$.next(pump));
 
 /* ============================================================
  * Connection state stream
@@ -174,7 +223,9 @@ export const connected$ = connectedInput$.pipe(share());
  * Start listener
  * ============================================================
  */
-let channelId: number = Number(telegramChannelId ?? undefined);
+
+let channelIds: number[] = [];
+
 export async function startTelegramListener(): Promise<void> {
   try {
     await telegramClient.start({
@@ -204,20 +255,43 @@ export async function startTelegramListener(): Promise<void> {
     throw err;
   }
 
-  if (!channelId) {
+  /* Resolve channel IDs. */
+  const ids: number[] = [];
+
+  try {
+    const ch1 = await telegramClient.getEntity(telegramChannelUserName!);
+    ids.push(Number(ch1.id));
+    console.log(`[Telegram] Resolved ${telegramChannelUserName} → ${ch1.id}`);
+  } catch (err) {
+    console.error(
+      `[Telegram] Failed to resolve channel "${telegramChannelUserName}":`,
+      err,
+    );
+    throw err;
+  }
+
+  if (telegramSignalMonitorUserName) {
     try {
-      const channel = await telegramClient.getEntity(telegramChannelUserName!);
-      channelId = Number(channel.id);
+      const ch2 = await telegramClient.getEntity(telegramSignalMonitorUserName);
+      ids.push(Number(ch2.id));
+      console.log(
+        `[Telegram] Resolved ${telegramSignalMonitorUserName} → ${ch2.id}`,
+      );
     } catch (err) {
       console.error(
-        `[Telegram] Failed to resolve channel "${telegramChannelUserName}":`,
+        `[Telegram] Failed to resolve channel "${telegramSignalMonitorUserName}":`,
         err,
       );
-      throw err;
     }
   }
 
-  console.log(`[Telegram] Listening to ${telegramChannelUserName} (${channelId})`);
+  if (telegramChannelId && !ids.includes(Number(telegramChannelId))) {
+    ids.push(Number(telegramChannelId));
+  }
+
+  channelIds = ids;
+
+  console.log(`[Telegram] Listening to ${ids.length} channel(s): ${ids.join(", ")}`);
 
   telegramClient.addEventHandler(
     (event: NewMessageEvent) => {
@@ -226,7 +300,7 @@ export async function startTelegramListener(): Promise<void> {
 
     new NewMessage({
       incoming: true,
-      chats: [channelId],
+      chats: ids,
     }),
   );
 }
@@ -241,6 +315,7 @@ export async function stopTelegramListener(): Promise<void> {
 
   telegramMessageInput$.complete();
   connectedInput$.complete();
+  signalMonitorPumpInput$.complete();
 
   await telegramClient.disconnect();
 

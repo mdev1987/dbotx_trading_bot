@@ -92,6 +92,9 @@ export const CONFIG = {
   telegramChannelUserName: process.env.TELEGRAM_CHANNEL_USERNAME,
   telegramChannelId: process.env.TELEGRAM_CHANNEL_ID,
 
+  telegramSignalMonitorUserName: process.env.TELEGRAM_SIGNAL_MONITOR_USERNAME,
+  telegramSignalMonitorChannelId: process.env.TELEGRAM_SIGNAL_MONITOR_CHANNEL_ID,
+
   sqlitePath: required("SQLITE_PATH"),
 
   dailyLossLimitUsd: number("DAILY_LOSS_LIMIT_USD", 0),
