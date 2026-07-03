@@ -3,7 +3,7 @@ import { Subscription, timer } from "rxjs";
 import { tap } from "rxjs/operators";
 import { convert } from "telegram-markdown-v2";
 import { CONFIG } from "../config";
-import { positionEvent$, positionClosed$ } from "../simulator/position_manager";
+import { positionEvent$, positionClosed$, openPositions$ } from "../simulator/position_manager";
 import type { PositionEvent } from "../simulator/position_manager";
 import { simulatorAccount$ } from "../simulator/account";
 import type { SimulatorAccount } from "../simulator/account";
@@ -59,14 +59,11 @@ function balanceStr(): string {
 }
 
 let _openCount = 0;
-let _totalCount = 0;
 
-/* Seed counters from DB on init (catches recovered positions). */
-{
-  const r = generateReport();
-  _openCount = r.openPositions;
-  _totalCount = r.totalPositions;
-}
+/* Keep open count in sync with the scan-based store (source of truth). */
+openPositions$.subscribe((positions) => {
+  _openCount = positions.length;
+});
 
 function openLabel(): string {
   return `\u{1F4CC} Positions: \`${_openCount} / ${CONFIG.maxPositions}\``;
@@ -221,8 +218,6 @@ export function startReporter(): void {
       .pipe(
         tap((ev) => {
           if (ev.type === "opened") {
-            _openCount++;
-            _totalCount++;
             send(openedMessage(ev));
           }
         }),
@@ -234,7 +229,6 @@ export function startReporter(): void {
     positionClosed$
       .pipe(
         tap((ev) => {
-          _openCount = Math.max(0, _openCount - 1);
           send(closedMessage(ev));
         }),
       )
