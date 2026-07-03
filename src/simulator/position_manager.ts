@@ -35,7 +35,7 @@ import type { SolanaPoolSignal } from "../telegram/ave_scanner_parser";
 import { simFastBuy, simFastSell } from "./fast_buy_sell";
 import type { ProfitLossGroup } from "./fast_buy_sell";
 import { pairUpdate$ } from "../market/dbotx_data_ws";
-import { refreshAccount$ } from "./account";
+import { refreshAccount$, latestAccount } from "./account";
 import { fetchWithRetry } from "./http";
 import { getDailyPnlUsd } from "../analytics/reports";
 
@@ -761,6 +761,22 @@ async function closePosition(pair: string, reason: CloseReason): Promise<void> {
  * Core buy logic — shared between direct signal processing and
  * dequeued signals.
  */
+
+function computePositionSize(): number {
+  const { positionSize, minPositionSol, maxPositionSol, maxRiskPct } = CONFIG;
+  let size = positionSize;
+
+  if (maxRiskPct > 0 && latestAccount?.balance) {
+    const riskCap = (latestAccount.balance * maxRiskPct) / 100;
+    size = Math.min(size, riskCap);
+  }
+
+  size = Math.max(size, minPositionSol);
+  size = Math.min(size, maxPositionSol);
+
+  return size;
+}
+
 async function openPosition(signal: SolanaPoolSignal): Promise<void> {
   if (_latestPositions.has(signal.lpAddress) || isPendingBuy(signal.lpAddress)) {
     return;
@@ -776,7 +792,7 @@ async function openPosition(signal: SolanaPoolSignal): Promise<void> {
     }
   }
 
-  const { positionSize } = CONFIG;
+  const sizeSol = computePositionSize();
   const stopEarnGroup = buildStopEarnGroup(signal.maxPumpX);
   const stopLossPercent = buildStopLossPercent();
 
@@ -784,7 +800,7 @@ async function openPosition(signal: SolanaPoolSignal): Promise<void> {
 
   console.log(
     `[position_manager] Opening position for ${signal.tokenName} ` +
-      `(${signal.lpAddress}) with ${positionSize} SOL`,
+      `(${signal.lpAddress}) with ${sizeSol.toFixed(4)} SOL`,
   );
 
   let orderId: string;
@@ -792,7 +808,7 @@ async function openPosition(signal: SolanaPoolSignal): Promise<void> {
   try {
     orderId = await simFastBuy({
       pair: signal.lpAddress,
-      amountOrPercent: positionSize,
+      amountOrPercent: sizeSol,
       stopEarnGroup,
       stopLossPercent,
       ...EXEC_DEFAULTS,
@@ -811,7 +827,7 @@ async function openPosition(signal: SolanaPoolSignal): Promise<void> {
     tokenName: signal.tokenName ?? "unknown",
     entryPriceUsd: null,
     entryCostUsd: null,
-    sizeSol: positionSize,
+    sizeSol,
     peakPriceUsd: 0,
     trailingActive: false,
     tasks: new Map(),
@@ -830,7 +846,7 @@ async function openPosition(signal: SolanaPoolSignal): Promise<void> {
   emitEvent({
     type: "opened",
     position,
-    detail: `${signal.tokenName} @ ${positionSize} SOL`,
+    detail: `${signal.tokenName} @ ${sizeSol.toFixed(4)} SOL`,
   });
 
   captureEntryPrice(orderId, signal.lpAddress);

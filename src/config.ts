@@ -66,6 +66,9 @@ export const CONFIG = {
   maxTtlSecs: number("MAX_TTL_SECS", 600),
   signalQueueSize: number("SIGNAL_QUEUE_SIZE", 20),
   positionSize: number("POSITION_SIZE_SOL", 0.1),
+  minPositionSol: number("MIN_POSITION_SOL", 0.03),
+  maxPositionSol: number("MAX_POSITION_SOL", 0.1),
+  maxRiskPct: number("MAX_RISK_PCT", 1),
 
   stopLossPct: number("PAPER_STOP_LOSS_PERCENT") / 100,
   trailingActivationPct: number("PAPER_TRAILING_ACTIVATION_PERCENT") / 100,
