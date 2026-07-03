@@ -1,3 +1,16 @@
+/**
+ * telegram_bot_reporter.ts
+ *
+ * GrammY-based Telegram reporter for position events and periodic
+ * performance summaries.  Subscribes to positionEvent$ from the
+ * position manager and sends real-time opened/closed messages plus
+ * a periodic report card to the configured Telegram chat.
+ *
+ * Open position count is read from openPositions$ (the scan-based
+ * store) rather than a manually-incremented counter, so it always
+ * reflects the true in-memory state regardless of restarts.
+ */
+
 import { Bot } from "grammy";
 import { Subscription, timer } from "rxjs";
 import { tap } from "rxjs/operators";

@@ -1,81 +1,232 @@
-# dbotx\_trade — Simulate Mode
+# DBotX Trade TS — Simulator Bot
 
-RxJS-streaming paper-trading bot for Solana tokens, driven by AVE Scanner Telegram signals and the DBotX simulator API.
-
-## Quick Start
-
-```bash
-cp .env.example .env   # edit credentials
-bun install
-bun run src/main.ts
-```
+RxJS-based paper-trading bot for the DBotX simulator. Listens to Telegram channels for token signals, opens simulated positions, manages TP/SL via the DBotX API, and reports results to a Telegram chat.
 
 ## Architecture
 
 ```
-Telegram (AVE) ──→ signals_stream ──→ position_manager ──→ DBotX Sim API
-                       │                    │
-                       ↓                    ↓
-                 SQLite (analytics)    Telegram reporter
+Telegram (MTProto)  ──►  telegram_listener.ts  ──►  signals_stream.ts  ──►  position_manager.ts  ──►  DBotX API
+                           │                                                    │
+                           ├─ AVE Scanner parser                                ├─ simFastBuy / simFastSell
+                           └─ Signal Monitor parser                             ├─ TP/SL task polling
+                                    │                                           ├─ Trade pair polling
+                                    ▼                                           ├─ Trailing stop monitor
+                              signalMonitorPump$                                ├─ TTL expiry
+                                    │                                           └─ Pump result consumer
+                                    ▼
+                              position_manager.ts  (closes matching position)
 ```
 
-- **signals\_stream** — Signal dedup with 1h cleanup TTL, `acceptedSignal$` output, `latestSignalState` snapshot for WS re-subscribe.
-- **position\_manager** — scan-based reactive store, signal queue (FIFO, configurable size), TP/SL task polling, trade pair polling, trailing stop monitor, TTL expiry with profit-based renewal.
-- **fast\_buy\_sell** — `simFastBuy` / `simFastSell` wrappers with exponential-backoff retry.
-- **http** — `fetchWithRetry`: 30s timeout, 4 retries (1→2→4→8→16s backoff), retries on 429/5xx.
-- **telegram\_bot\_reporter** — grammY bot: real-time open/close alerts, periodic PnL report, start/stop/crash notifications.
-- **telegram\_listener** — teleproto MTProto client with auto-reconnect; listens to AVE Scanner channel.
-- **analytics** — SQLite (Bun), trade persistence, win-rate / PnL reports, daily loss limit query.
-- **market/dbotx\_data\_ws** — Reactive WebSocket client with auto-reconnect, heartbeat ping, active-pair re-subscription on reconnect.
+| Layer | File | Role |
+|-------|------|------|
+| **Telegram client** | `telegram_listener.ts` | MTProto connection, message stream, parser routing |
+| **AVE Scanner parser** | `ave_scanner_parser.ts` | Parses `@Ave_Scanner_Bot` signal format |
+| **Signal Monitor parser** | `ave_signal_monitor_parser.ts` | Parses `@AveSignalMonitor` signals + pump proofs |
+| **Signal dedup** | `signals_stream.ts` | Deduplicates by LP address, 1-hour cleanup |
+| **Position lifecycle** | `position_manager.ts` | Buy/sell, TP/SL polling, trailing stop, TTL, pump closes |
+| **Account** | `account.ts` | Simulator balance stream, manual + auto-poll |
+| **HTTP** | `http.ts` | fetchWithRetry with timeout + exponential backoff |
+| **WebSocket** | `dbotx_data_ws.ts` | Live pair price feed with auto-reconnect |
+| **Reporter** | `telegram_bot_reporter.ts` | GrammY messages for opened/closed/report |
+| **Analytics** | `reports.ts`, `trades_repository.ts` | SQLite persistence + performance queries |
+| **Entry point** | `main.ts` | Startup, shutdown, crash notifications |
 
-## Key Features
+## Signal Source Modes
 
-| Feature | Detail |
-|---|---|
-| Partial TP ladder | Configurable tiers + backstop TP for remainder |
-| Trailing stop | Client-side via WS price feed; configurable activation/dist |
-| TTL expiry | Auto-close positions after N seconds |
-| TTL renewal | Resets clock if profit exceeds threshold |
-| Signal queue | FIFO queue for signals arriving at max positions; dequeued on close |
-| Daily loss limit | Skips signals after USD loss threshold (0 = disabled) |
-| Startup recovery | Rebuilds open positions from API on boot |
-| Pending-buy dedup | 60s guard prevents double-buy on timeout-retry |
-| Exponential backoff | `fetchWithRetry`: 30s timeout, 4 retries |
-| Reconnection | WS auto-reconnect + re-subscribe; Telegram auto-reconnect |
+Controlled by `SIGNAL_SOURCE_MODE` in `.env`:
 
-## Telegram Messages
+### `monitor` (default)
+- **Channel**: `@AveSignalMonitor`
+- **TTL**: Disabled (positions never auto-close from TTL)
+- **Max positions**: No limit (accepts every signal)
+- **Signal queue**: Disabled
+- **Take profit**: From signal's `Max Pump: Xx` field → `(X - 1) * 0.7` as backstop TP
+- **Pump close**: When a 🚀 pump-proof message arrives for an open position, closes it
 
-- **\u{1F680} Bot Started** — Config summary on boot (TTL, exit settings, queue size)
-- **\u{1F7E2} Position Opened / Closed** — Per-position alerts with PnL, reason, duration, open count (X/Y)
-- **\u{1F4CA} Performance Report** — Periodic summary (every `TELEGRAM_REPORT_INTERVAL_MINUTES`) with win rate, PnL, close reasons
-- **\u{1F6D1} Bot Stopped / \u{1F4A5} Bot Crashed** — Shutdown summary with full report
+### `ave`
+- **Channel**: `@Ave_Scanner_Bot`
+- **TTL**: Enabled (configurable via `BASE_TTL_SECS` / `MAX_TTL_SECS`)
+- **Max positions**: Configurable cap (`MAX_POSITIONS`)
+- **Signal queue**: FIFO queue (`SIGNAL_QUEUE_SIZE`)
+- **Take profit**: From config (`PARTIAL_TP_TIERS` + `PAPER_BACKSTOP_TP_PERCENT`)
+- **Pump close**: N/A
+
+## Signal Formats
+
+### Ave Signal Monitor — Signal (🪙)
+
+```
+🪙 $nitro (from pump.fun)
+🔗 solana
+CA: 9zZVV9wytrbCLK3iHyiszLht55fBKpAP6VQqxTzrpump
+
+🔢 2nd Vibe Buy Signal
+💹 Max Pump: 2x
+💰 2 KOL Wallet Buy
+🤑 Current MC: 40.94K
+💸 Total Buy 10.0122 SOL
+
+🛗 Inflow
+🟢 OTTA 💰 Buy 9.876 SOL
+```
+
+### Ave Signal Monitor — Pump Proof (🚀)
+
+```
+🚀 x24 🚀 $Balloon 🆙 🆙 🆙
+
+Jumped from 13.22K to now 127.26K
+
+CA: 96X4zg5T4NFWzTVFXHsadvYbxbzFX2Rqt3GXUv92pump
+```
+
+### AVE Scanner (original)
+
+```
+Token: EXAMPLE (https://...)
+CA: 0x...
+LP: 0x...
+Init Price: $0.0{5}1234
+MCap: 12.34K
+Pair: 1.23M EXAMPLE / 0.5 SOL
+Dex: Pump.fun
+Liquidity: 12.34K
+...
+```
 
 ## Configuration
 
-All settings in `.env`:
+All config via environment variables (see `.env.example`):
 
-| Var | Default | Description |
-|---|---|---|
-| `POSITION_SIZE_SOL` | `0.10` | SOL per trade |
-| `MAX_POSITIONS` | `5` | Max concurrent open positions |
-| `BASE_TTL_SECS` | `90` | Initial holding time before position is evaluated for exit |
-| `MIN_PROFIT_FOR_TTL_EXTENSION_PCT` | `3.0` | Minimum profit % required to reset TTL clock |
-| `MAX_TTL_SECS` | `600` | Hard absolute cap on position lifetime |
-| `SIGNAL_QUEUE_SIZE` | `20` | Max queued signals when at max positions |
-| `PARTIAL_TP_TIERS` | — | e.g. `30@20,40@50` (sell 30% at +20%, 40% at +50%) |
-| `PAPER_STOP_LOSS_PERCENT` | `-15` | Stop loss trigger |
-| `PAPER_BACKSTOP_TP_PERCENT` | `500` | TP for remaining position after partial tiers |
-| `PAPER_TRAILING_ACTIVATION_PERCENT` | `25` | Gain % before trail engages |
-| `PAPER_TRAILING_STOP_PERCENT` | `5` | Trail distance from peak |
-| `PAPER_MAX_SLIPPAGE_EXIT_PERCENT` | `80` | Max loss per trade before panic exit |
-| `DAILY_LOSS_LIMIT_USD` | `0` | Daily max loss before skipping signals (0 = disabled) |
-| `TELEGRAM_REPORT_INTERVAL_MINUTES` | `5` | Periodic report interval |
-| `SQLITE_PATH` | `./data/paper_trading.sqlite` | Analytics database path |
-| `LOG_LEVEL` | `info` | Console log verbosity |
+### DBotX API
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DBOTX_API_KEY` | Yes | — | API key |
+| `DBOTX_WS_URL` | Yes | — | WebSocket URL |
+| `DBOTX_BASE_URL` | Yes | — | REST base URL |
+| `SERVAPI_BASE_URL` | No | `https://servapi.dbotx.com` | Service API base |
+
+### Account & Position Sizing
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `POSITION_SIZE_SOL` | No | `0.1` | Base position size (SOL), clamped by min/max |
+| `MIN_POSITION_SOL` | No | `0.03` | Smallest position allowed |
+| `MAX_POSITION_SOL` | No | `0.1` | Largest position allowed |
+| `MAX_RISK_PCT` | No | `1.0` | Max % of account balance risked per trade |
+| `MAX_POSITIONS` | No | `5` | Max concurrent positions (ave mode only) |
+
+### TTL (ave mode only)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `BASE_TTL_SECS` | No | `90` | Initial holding time before evaluation |
+| `MIN_PROFIT_FOR_TTL_EXTENSION_PCT` | No | `3.0` | Profit % required to reset TTL clock |
+| `MAX_TTL_SECS` | No | `600` | Hard cap on position lifetime |
+
+### Signal Queue (ave mode only)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SIGNAL_QUEUE_SIZE` | No | `20` | Max queued signals when at max positions |
+
+### Exit Settings
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PARTIAL_TP_TIERS` | No | `30@20,40@50` | Partial TP tiers: `pct%@pct%` pairs (ave mode) |
+| `PAPER_BACKSTOP_TP_PERCENT` | No | `500` | Backstop TP for remaining position (ave mode) |
+| `PAPER_STOP_LOSS_PERCENT` | Yes | — | Stop loss percent (negative) |
+| `PAPER_TRAILING_ACTIVATION_PERCENT` | Yes | — | Gain % before trailing engages |
+| `PAPER_TRAILING_STOP_PERCENT` | Yes | — | Trail distance from peak |
+| `PAPER_MAX_SLIPPAGE_EXIT_PERCENT` | Yes | — | Max loss before panic exit |
+| `DAILY_LOSS_LIMIT_USD` | No | `0` | Daily loss limit in USD (0 = disabled) |
+
+### Telegram
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `TELEGRAM_BOT_TOKEN` | No | — | GrammY bot token (for reporting) |
+| `TELEGRAM_CHAT_ID` | No | — | Chat ID for reports |
+| `TELEGRAM_REPORT_INTERVAL_MINUTES` | No | `5` | Periodic report interval |
+| `TELEGRAM_API_ID` | Yes | — | MTProto API ID (my.telegram.org) |
+| `TELEGRAM_API_HASH` | Yes | — | MTProto API hash |
+| `TELEGRAM_CHANNEL_USERNAME` | Yes | — | Channel to listen to |
+| `TELEGRAM_CHANNEL_ID` | No | — | Numeric channel ID (resolved from username if unset) |
+| `SIGNAL_SOURCE_MODE` | No | `monitor` | `monitor` or `ave` |
+
+### Storage
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SQLITE_PATH` | Yes | — | Path to SQLite database file |
+
+### Logging
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `LOG_LEVEL` | No | `info` | Log level |
+
+## Running
+
+```bash
+# Copy and edit config
+cp .env.example .env
+
+# Install dependencies
+bun install
+
+# Run
+bun run src/main.ts
+```
+
+On first run, the Telegram client will prompt for:
+1. Phone number (international format)
+2. Verification code (sent to Telegram)
+3. 2FA password (if enabled)
+
+The session is persisted to `telegram_session` for subsequent runs.
+
+## Position Lifecycle
+
+```
+Signal received ──► acceptedSignal$ ──► openPosition()
+                                             │
+                                             ├─ simFastBuy() → orderId
+                                             ├─ captureEntryPrice() (polls /trades)
+                                             ├─ WS subscribe pairInfo
+                                             └─ refreshAccount$
+
+Position open ──► Polling loops (every 5-30s)
+                     │
+                     ├─ TP/SL tasks (pnl_orders_from_swap_order)
+                     │   └─ all tasks done → closePosition()
+                     │
+                     ├─ Trade pair PnL (trade_pairs)
+                     │   └─ balance ≤ 0 → closePosition()
+                     │
+                     └─ Trailing stop monitor (pairUpdate$)
+                         └─ price ≤ peak * (1 - trailPct) → closePosition()
+
+Position close ──► closePosition()
+                      │
+                      ├─ simFastSell() (for stop_loss / trailing / expired)
+                      ├─ emitEvent("closed") → analytics + reporter
+                      ├─ refreshAccount$
+                      ├─ processQueuedSignal() (ave mode)
+                      └─ Pump result consumer (monitor mode)
+```
 
 ## Development
 
 ```bash
-npx tsc --noEmit   # type-check
-bun test           # run tests
+# Run tests (43 tests across 2 parser suites)
+bun test
+
+# Type-check only
+npx tsc --noEmit
+
+# Watch mode
+bun --watch run src/main.ts
 ```

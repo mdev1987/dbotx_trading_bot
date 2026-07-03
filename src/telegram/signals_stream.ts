@@ -1,3 +1,19 @@
+/**
+ * signals_stream.ts
+ *
+ * Signal deduplication and acceptance pipeline.
+ *
+ * Incoming SolanaPoolSignal objects from telegram_listener are
+ * deduplicated by lpAddress in a scan-based reducer.  A periodic
+ * tick sweep removes entries older than CLEANUP_TTL_SECONDS to
+ * prevent unbounded memory growth.
+ *
+ * Exports:
+ *  - acceptedSignal$  — newly deduped signals for the position manager
+ *  - expiredPair$     — LP addresses removed during cleanup
+ *  - latestSignalState — synchronous snapshot for WS re-subscribe
+ */
+
 import { Subject, Observable, interval, merge } from "rxjs";
 import { filter, map, scan, shareReplay } from "rxjs/operators";
 import { signal$ as telegramSignal$ } from "./telegram_listener";

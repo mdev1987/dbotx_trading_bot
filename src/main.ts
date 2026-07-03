@@ -66,7 +66,7 @@ function startedMessage(): string {
     lines.push(`\u{1F4CC} Max Positions: \`${CONFIG.maxPositions}\``);
   }
 
-  lines.push(`\u{1F4B0} Position Size: \`${CONFIG.positionSize.toFixed(2)} SOL\``);
+  lines.push(`\u{1F4B0} Position: \`${CONFIG.positionSize.toFixed(2)} SOL\` (min \`${CONFIG.minPositionSol.toFixed(2)}\` / max \`${CONFIG.maxPositionSol.toFixed(2)}\` risk \u{2264}\`${CONFIG.maxRiskPct.toFixed(1)}%\` of balance)`);
 
   if (CONFIG.signalSourceMode === "ave") {
     lines.push(

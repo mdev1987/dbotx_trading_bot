@@ -762,6 +762,17 @@ async function closePosition(pair: string, reason: CloseReason): Promise<void> {
  * dequeued signals.
  */
 
+/**
+ * Compute the effective position size for the next trade.
+ *
+ * Starts from the configured POSITION_SIZE_SOL, then applies:
+ *  1. MAX_RISK_PCT cap — position must not exceed X% of account balance
+ *  2. MIN_POSITION_SOL floor
+ *  3. MAX_POSITION_SOL ceiling
+ *
+ * If the account snapshot (latestAccount) hasn't loaded yet, the
+ * risk cap is skipped and only the SOL bounds are applied.
+ */
 function computePositionSize(): number {
   const { positionSize, minPositionSol, maxPositionSol, maxRiskPct } = CONFIG;
   let size = positionSize;
