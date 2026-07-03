@@ -92,8 +92,9 @@ export const CONFIG = {
   telegramChannelUserName: process.env.TELEGRAM_CHANNEL_USERNAME,
   telegramChannelId: process.env.TELEGRAM_CHANNEL_ID,
 
-  telegramSignalMonitorUserName: process.env.TELEGRAM_SIGNAL_MONITOR_USERNAME,
-  telegramSignalMonitorChannelId: process.env.TELEGRAM_SIGNAL_MONITOR_CHANNEL_ID,
+  /** 'monitor' = Ave Signal Monitor (no TTL, no max pos, accept all, pump TP)
+   *  'ave'    = AVE Scanner (TTL, max positions, queue, config TP) */
+  signalSourceMode: (process.env.SIGNAL_SOURCE_MODE ?? "monitor") as "ave" | "monitor",
 
   sqlitePath: required("SQLITE_PATH"),
 

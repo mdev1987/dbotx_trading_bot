@@ -851,6 +851,12 @@ async function processQueuedSignal(): Promise<void> {
 acceptedSignal$
   .pipe(
     concatMap(async (signal) => {
+      if (CONFIG.signalSourceMode === "monitor") {
+        /* Monitor mode: no max positions, no queue — accept all. */
+        await openPosition(signal);
+        return;
+      }
+
       let openCount = 0;
       for (const pos of _latestPositions.values()) {
         if (pos.status === "open" || pos.status === "closing") openCount++;
@@ -905,6 +911,8 @@ timer(EXPIRY_CHECK_MS, EXPIRY_CHECK_MS)
     map(([, open]) => open),
   )
   .subscribe((open) => {
+    if (CONFIG.signalSourceMode === "monitor") return;
+
     const now = Date.now();
     const baseAge = baseTtlSecs * 1_000;
     const maxAge = maxTtlSecs * 1_000;

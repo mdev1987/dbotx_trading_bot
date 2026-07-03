@@ -58,42 +58,61 @@ function startedMessage(): string {
     "\u{1F680} **Bot Started**",
     "",
     `Mode: \u{1F9EA} \`Simulate\``,
-    `\u{1F4CC} Max Positions: \`${CONFIG.maxPositions}\``,
-    `\u{1F4B0} Position Size: \`${CONFIG.positionSize.toFixed(2)} SOL\``,
-    `\u{23F0} Base TTL: \`${fmtDuration(CONFIG.baseTtlSecs)}\`` +
-      (CONFIG.minProfitForTtlExtensionPct > 0
-        ? ` \u{1F504} renew \u{2265}\`${(CONFIG.minProfitForTtlExtensionPct * 100).toFixed(1)}%\``
-        : "") +
-      ` | Max: \`${fmtDuration(CONFIG.maxTtlSecs)}\``,
-    "",
-    "**Exit Settings**",
   ];
+
+  if (CONFIG.signalSourceMode === "monitor") {
+    lines.push(`\u{1F4CC} Positions: \`no limit\` (Ave Signal Monitor)`);
+  } else {
+    lines.push(`\u{1F4CC} Max Positions: \`${CONFIG.maxPositions}\``);
+  }
+
+  lines.push(`\u{1F4B0} Position Size: \`${CONFIG.positionSize.toFixed(2)} SOL\``);
+
+  if (CONFIG.signalSourceMode === "ave") {
+    lines.push(
+      `\u{23F0} Base TTL: \`${fmtDuration(CONFIG.baseTtlSecs)}\`` +
+        (CONFIG.minProfitForTtlExtensionPct > 0
+          ? ` \u{1F504} renew \u{2265}\`${(CONFIG.minProfitForTtlExtensionPct * 100).toFixed(1)}%\``
+          : "") +
+        ` | Max: \`${fmtDuration(CONFIG.maxTtlSecs)}\``,
+    );
+  }
+
+  lines.push("", "**Exit Settings**");
+
+  if (CONFIG.signalSourceMode === "monitor") {
+    lines.push(`\u{1F7E2} TP: \`from signal maxPumpX\``);
+  }
 
   if (CONFIG.stopLossPct) {
     lines.push(`\u{1F534} Stop Loss: \`${(CONFIG.stopLossPct * 100).toFixed(1)}%\``);
   }
-  if (CONFIG.partialTpTiers.length > 0) {
-    const tiers = CONFIG.partialTpTiers
-      .map((t) => `${(t.pct * 100).toFixed(0)}%@${(t.at * 100).toFixed(0)}%`)
-      .join(", ");
-    lines.push(`\u{1F7E2} Partial TP: \`${tiers}\``);
+
+  if (CONFIG.signalSourceMode === "ave") {
+    if (CONFIG.partialTpTiers.length > 0) {
+      const tiers = CONFIG.partialTpTiers
+        .map((t) => `${(t.pct * 100).toFixed(0)}%@${(t.at * 100).toFixed(0)}%`)
+        .join(", ");
+      lines.push(`\u{1F7E2} Partial TP: \`${tiers}\``);
+    }
+    if (CONFIG.backstopTpPct) {
+      lines.push(`\u{1F7E2} Backstop TP: \`${(CONFIG.backstopTpPct * 100).toFixed(0)}%\``);
+    }
+    if (CONFIG.minProfitForTtlExtensionPct > 0) {
+      lines.push(
+        `\u{1F504} TTL Extension: \u{2265}\`${(CONFIG.minProfitForTtlExtensionPct * 100).toFixed(1)}%\` profit to renew`,
+      );
+    }
+    if (CONFIG.signalQueueSize > 0) {
+      lines.push(`\u{1F4E6} Signal Queue: \`${CONFIG.signalQueueSize}\` slots`);
+    }
   }
-  if (CONFIG.backstopTpPct) {
-    lines.push(`\u{1F7E2} Backstop TP: \`${(CONFIG.backstopTpPct * 100).toFixed(0)}%\``);
-  }
+
   if (CONFIG.trailingDistancePct) {
     lines.push(
       `\u{1F7E1} Trailing: \`${(CONFIG.trailingActivationPct * 100).toFixed(0)}%\` activation, ` +
         `\`${(CONFIG.trailingDistancePct * 100).toFixed(0)}%\` distance`,
     );
-  }
-  if (CONFIG.minProfitForTtlExtensionPct > 0) {
-    lines.push(
-      `\u{1F504} TTL Extension: \u{2265}\`${(CONFIG.minProfitForTtlExtensionPct * 100).toFixed(1)}%\` profit to renew`,
-    );
-  }
-  if (CONFIG.signalQueueSize > 0) {
-    lines.push(`\u{1F4E6} Signal Queue: \`${CONFIG.signalQueueSize}\` slots`);
   }
 
   return convert(lines.join("\n"));
@@ -129,7 +148,7 @@ async function sendStoppedMessage(error?: string): Promise<void> {
 
     lines.push(`\u{1F4CA} **Summary**`);
     lines.push(`\u{1F4CB} Total: \`${report.totalPositions}\``);
-    lines.push(`\u{1F4CC} Open: \`${report.openPositions} / ${CONFIG.maxPositions}\``);
+    lines.push(`\u{1F4CC} Open: \`${report.openPositions}\`` + (CONFIG.signalSourceMode === "ave" ? ` / ${CONFIG.maxPositions}` : ""));
     lines.push(`\u{2705} Closed: \`${report.closedPositions}\``);
     lines.push(`${winIcon} Wins: \`${report.winningTrades}\` / \`${report.losingTrades}\` (\`${report.winRate.toFixed(1)}%\`)`);
     lines.push(`${balIcon} Total PnL: \`${report.totalProfitPct.toFixed(2)}%\` (\`$${report.totalProfitUsd.toFixed(2)}\`)`);

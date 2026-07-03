@@ -66,6 +66,9 @@ openPositions$.subscribe((positions) => {
 });
 
 function openLabel(): string {
+  if (CONFIG.signalSourceMode === "monitor") {
+    return `\u{1F4CC} Positions: \`${_openCount}\` (no limit)`;
+  }
   return `\u{1F4CC} Positions: \`${_openCount} / ${CONFIG.maxPositions}\``;
 }
 
