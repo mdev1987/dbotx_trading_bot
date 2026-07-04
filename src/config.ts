@@ -103,6 +103,10 @@ export const CONFIG = {
 
   sqlitePath: required("SQLITE_PATH"),
 
+  /** If "true", clears all analytics data on startup. */
+  clearAnalyticsOnStart:
+    process.env.CLEAR_ANALYTICS_ON_START?.toLowerCase() === "true",
+
   dailyLossLimitUsd: number("DAILY_LOSS_LIMIT_USD", 0),
 
   logLevel: process.env.LOG_LEVEL ?? "info",

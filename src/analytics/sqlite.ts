@@ -20,6 +20,13 @@ export function getDb(): Database {
     _db = new Database(CONFIG.sqlitePath, { create: true });
     _db.exec("PRAGMA journal_mode = WAL");
     _db.exec("PRAGMA synchronous = NORMAL");
+
+    if (CONFIG.clearAnalyticsOnStart) {
+      console.log("[sqlite] Clearing analytics data (CLEAR_ANALYTICS_ON_START=true)");
+      _db.exec("DROP TABLE IF EXISTS tasks");
+      _db.exec("DROP TABLE IF EXISTS positions");
+    }
+
     migrate(_db);
   }
   return _db;

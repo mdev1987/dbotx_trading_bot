@@ -527,6 +527,22 @@ const pnlTaskPoll$ = timer(PNL_TASK_POLL_MS, PNL_TASK_POLL_MS).pipe(
         }
 
         if (allDone && tasks.length > 0) {
+          /* Compute weighted profit from triggered tasks before close.
+             The trade pair poll (30s cycle) may not have updated
+             currentProfitPercent/Usd yet, so they would be 0. */
+          let weightedProfitPct = 0;
+          for (const t of tasks) {
+            if (t.state === "done") {
+              weightedProfitPct += t.triggerPercent * (t.currencyAmountUI / 100);
+            }
+          }
+          const cost = pos.entryCostUsd ?? (pos.entryPriceUsd ? pos.entryPriceUsd * pos.sizeSol : 0);
+          const profitUsd = cost * (weightedProfitPct / 100);
+          patchPosition(pos.pair, {
+            currentProfitPercent: weightedProfitPct,
+            currentProfitUsd: profitUsd,
+          });
+
           const reason: CloseReason = tasks.some((t) => t.state === "done")
             ? "take_profit"
             : "expired";
