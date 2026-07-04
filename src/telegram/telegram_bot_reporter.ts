@@ -1,22 +1,13 @@
-/**
- * telegram_bot_reporter.ts
- *
- * GrammY-based Telegram reporter for position events and periodic
- * performance summaries.  Subscribes to positionEvent$ from the
- * position manager and sends real-time opened/closed messages plus
- * a periodic report card to the configured Telegram chat.
- *
- * Open position count is read from openPositions$ (the scan-based
- * store) rather than a manually-incremented counter, so it always
- * reflects the true in-memory state regardless of restarts.
- */
-
 import { Bot } from "grammy";
-import { Subscription, timer } from "rxjs";
-import { tap } from "rxjs/operators";
+import { Subscription, timer, Subject } from "rxjs";
+import { concatMap, map, distinctUntilChanged } from "rxjs/operators";
 import { convert } from "telegram-markdown-v2";
 import { CONFIG } from "../config";
-import { positionEvent$, positionClosed$, openPositions$ } from "../simulator/position_manager";
+import {
+  positionEvent$,
+  positionClosed$,
+  openPositions$,
+} from "../simulator/position_manager";
 import type { PositionEvent } from "../simulator/position_manager";
 import { simulatorAccount$ } from "../simulator/account";
 import type { SimulatorAccount } from "../simulator/account";
@@ -26,16 +17,39 @@ import type { PerformanceReport } from "../analytics/reports";
 const bot = new Bot(CONFIG.telegramBotToken!);
 const CHAT_ID = CONFIG.telegramChatId!;
 
-/* Local account snapshot — updated from the shared stream so
-   console and Telegram reports always see the same value. */
-let _account: SimulatorAccount | null = null;
-simulatorAccount$.subscribe((a) => { _account = a; });
+// --- Pure formatting utilities ---
 
+/**
+ * Determine the emoji icon and sign prefix for a PnL value.
+ *
+ * @param value - Profit/loss value (positive = green circle, negative = red circle).
+ * @returns Icon emoji and sign string for display.
+ */
+function formatPnl(value: number): { icon: string; sign: string } {
+  return {
+    icon: value >= 0 ? "\u{1F7E2}" : "\u{1F534}",
+    sign: value >= 0 ? "+" : "",
+  };
+}
+
+/**
+ * Format a PnL value as a signed string with an optional suffix.
+ *
+ * @param value - PnL value to format.
+ * @param suffix - Optional trailing character (e.g. "$", "%").
+ * @returns Signed, fixed-precision string (e.g. "+12.34$").
+ */
 function fmtPnL(value: number, suffix = ""): string {
   const sign = value >= 0 ? "+" : "";
   return `${sign}${value.toFixed(2)}${suffix}`;
 }
 
+/**
+ * Format a duration in milliseconds to a human-readable string.
+ *
+ * @param ms - Duration in milliseconds.
+ * @returns Formatted string (e.g. "2m 30s" or "15s").
+ */
 function fmtDuration(ms: number): string {
   const totalSec = Math.floor(ms / 1_000);
   const m = Math.floor(totalSec / 60);
@@ -43,14 +57,28 @@ function fmtDuration(ms: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
+/**
+ * Return a colored emoji icon for a given close reason.
+ *
+ * @param reason - Close reason key (take_profit, stop_loss, etc.).
+ * @returns Emoji icon representing the outcome of the reason.
+ */
 function closeIcon(reason: string): string {
-  if (reason === "take_profit") return "\u{1F7E2}";
-  if (reason === "stop_loss") return "\u{1F534}";
-  if (reason === "trailing_stop") return "\u{1F7E1}";
-  if (reason === "expired") return "\u{23F0}";
-  return "\u{26A0}\uFE0F";
+  switch (reason) {
+    case "take_profit": return "\u{1F7E2}";       // Green: profitable TP
+    case "stop_loss": return "\u{1F534}";          // Red: stopped out
+    case "trailing_stop": return "\u{1F7E1}";      // Yellow: trailing stop triggered
+    case "expired": return "\u{23F0}";             // Clock: TTL expired
+    default: return "\u{26A0}\uFE0F";              // Warning: unknown reason
+  }
 }
 
+/**
+ * Return a human-readable label for a close reason key.
+ *
+ * @param reason - Close reason key.
+ * @returns Human-readable label (e.g. "Take Profit") or the raw key if unknown.
+ */
 function reasonLabel(reason: string): string {
   const labels: Record<string, string> = {
     take_profit: "Take Profit",
@@ -62,126 +90,227 @@ function reasonLabel(reason: string): string {
   return labels[reason] ?? reason;
 }
 
-function balanceStr(): string {
-  if (!_account) return "";
-  const bal = _account.balance;
-  const change = _account.changeAll;
-  const icon = change >= 0 ? "\u{1F7E2}" : "\u{1F534}";
-  const sign = change >= 0 ? "+" : "";
-  return `${icon} \u{1F4B0} Balance: \`$${bal.toFixed(2)}\` (\`${sign}${(change * 100).toFixed(2)}%\`)`;
+/**
+ * Format the account balance line with a change indicator and emoji.
+ *
+ * @param account - Current simulator account state (nullable — returns empty if null).
+ * @returns Formatted balance string (e.g. "🟢 💰 Balance: `$123.45` (`+5.00%`)") or "".
+ */
+function balanceStr(account: SimulatorAccount | null): string {
+  if (!account) return "";
+  const change = account.changeAll;
+  const pnl = formatPnl(change);
+  return `${pnl.icon} \u{1F4B0} Balance: \`$${account.balance.toFixed(2)}\` (\`${pnl.sign}${(change * 100).toFixed(2)}%\`)`;
 }
 
-let _openCount = 0;
-
-/* Keep open count in sync with the scan-based store (source of truth). */
-openPositions$.subscribe((positions) => {
-  _openCount = positions.length;
-});
-
-function openLabel(): string {
-  if (CONFIG.signalSourceMode === "monitor") {
-    return `\u{1F4CC} Positions: \`${_openCount}\` (no limit)`;
+/**
+ * Format the open position count label, adapting the display to the channel mode.
+ *
+ * @param count - Number of currently open positions.
+ * @returns Formatted label showing position count and limit info.
+ */
+function openLabel(count: number): string {
+  switch (CONFIG.telegramChannelUserName) {
+    case "avesignalmonitor":
+      return `\u{1F4CC} Positions: \`${count}\` (no limit)`;
+    case "avesolantokenscanner":
+      return `\u{1F4CC} Positions: \`${count} / ${CONFIG.maxPositions}\``;
+    default:
+      return `\u{1F4CC} Positions: \`${count}\` (no limit)`;
   }
-  return `\u{1F4CC} Positions: \`${_openCount} / ${CONFIG.maxPositions}\``;
 }
 
-function winsTotalWinrate(): string {
-  const r = generateReport();
-  const wins = r.winningTrades ?? 0;
-  const total = r.closedPositions ?? 0;
-  const rate = total > 0 ? r.winRate : 0;
-  const winIcon = rate >= 50 ? "\u{1F3C6}" : "\u{26A0}\uFE0F";
-  return `${winIcon} Wins: \`${wins}\` / \`${total}\` (\`${rate.toFixed(1)}%\`)`;
+/**
+ * Format the wins / total / win-rate line for a performance report.
+ *
+ * @param report - Performance report data.
+ * @returns Formatted win-rate string with a trophy (≥50%) or warning (<50%) icon.
+ */
+function winsTotalWinrate(report: PerformanceReport): string {
+  const wins = report.winningTrades ?? 0;
+  const total = report.closedPositions ?? 0;
+  const rate = total > 0 ? report.winRate : 0;
+  const icon = rate >= 50 ? "\u{1F3C6}" : "\u{26A0}\uFE0F";
+  return `${icon} Wins: \`${wins}\` / \`${total}\` (\`${rate.toFixed(1)}%\`)`;
 }
 
-function openedMessage(ev: PositionEvent): string {
+// --- Message builders ---
+
+/**
+ * Build the Telegram message for a newly opened position.
+ *
+ * @param ev - The position opened event from the position manager.
+ * @param account - Current account state (nullable).
+ * @param openCount - Number of positions currently open.
+ * @param report - Aggregated performance report for win-rate context.
+ * @returns Telegram MarkdownV2 formatted message string.
+ */
+function openedMessage(
+  ev: PositionEvent,
+  account: SimulatorAccount | null,
+  openCount: number,
+  report: PerformanceReport,
+): string {
   const p = ev.position;
-
   return convert(
     [
-      "\u{1F7E2} **Position Opened**",
-      "",
-      `\u{1F512} Token: \`${p.tokenName}\``,
-      `\u{1F4B0} Size: **${p.sizeSol.toFixed(2)} SOL**`,
-      `\u{23F0} Time: \`${new Date(p.openedAt).toLocaleTimeString()}\``,
-      "",
-      balanceStr(),
-      openLabel(),
-      winsTotalWinrate(),
+      "\u{1F7E2} **Position Opened**",                     // Green header: position opened
+      "",                                                    // Blank separator line
+      `\u{1F512} Token: \`${p.tokenName}\``,                // Token name in code block
+      `\u{1F4B0} Size: **${p.sizeSol.toFixed(2)} SOL**`,    // Position size in SOL
+      `\u{23F0} Time: \`${new Date(p.openedAt).toLocaleTimeString()}\``,  // Open timestamp
+      "",                                                    // Blank separator line
+      balanceStr(account),                                   // Account balance summary
+      openLabel(openCount),                                  // Open position count
+      winsTotalWinrate(report),                              // Win rate summary
     ].join("\n"),
   );
 }
 
-function closedMessage(ev: PositionEvent): string {
+/**
+ * Build a single PnL display line with percentage and USD value.
+ *
+ * Handles the "+" prefix for positive values automatically.
+ *
+ * @param profit - Profit percentage.
+ * @param profitUsd - Profit in USD.
+ * @param chartIcon - Emoji icon for direction (chart up or chart down).
+ * @returns Formatted PnL line string.
+ */
+function buildPnlLine(
+  profit: number,
+  profitUsd: number,
+  chartIcon: string,
+): string {
+  if (profit >= 0) {
+    return `${chartIcon} PnL: **+${profit.toFixed(2)}%** (\u0024+${profitUsd.toFixed(2)})`;
+  }
+  return `${chartIcon} PnL: **${profit.toFixed(2)}%** (\u0024${profitUsd.toFixed(2)})`;
+}
+
+/**
+ * Calculate and format the exit price based on entry price and PnL percentage.
+ *
+ * @param entryPriceUsd - Entry price in USD (nullable — returns empty if null).
+ * @param profit - Profit percentage used to derive the exit price.
+ * @returns Formatted exit price line or empty string if entry is unknown.
+ */
+function buildExitPrice(
+  entryPriceUsd: number | null,
+  profit: number,
+): string {
+  if (entryPriceUsd === null) return "";
+  // exitPrice = entryPrice × (1 + profit%)
+  const exitPrice = entryPriceUsd * (1 + profit / 100);
+  return `\u{1F4B4} Exit: \`$${exitPrice.toFixed(8)}\``;
+}
+
+/**
+ * Build the Telegram message for a closed position with full details.
+ *
+ * @param ev - The position closed event from the position manager.
+ * @param account - Current account state (nullable).
+ * @param openCount - Number of positions currently open.
+ * @param report - Aggregated performance report for win-rate context.
+ * @returns Telegram MarkdownV2 formatted message string.
+ */
+function closedMessage(
+  ev: PositionEvent,
+  account: SimulatorAccount | null,
+  openCount: number,
+  report: PerformanceReport,
+): string {
   const p = ev.position;
   const profit = p.currentProfitPercent;
   const profitUsd = p.currentProfitUsd;
   const isProfit = profit >= 0;
   const reason = p.closeReason ?? "?";
-
-  const resultIcon = isProfit ? "\u{2705}" : "\u{274C}";
-  const headerIcon = isProfit ? "\u{1F7E2}" : "\u{1F534}";
-  const chartIcon = isProfit ? "\u{1F4C8}" : "\u{1F4C9}";
-
-  const pnlLine = isProfit
-    ? `${chartIcon} PnL: **+${profit.toFixed(2)}%** (\u0024+${profitUsd.toFixed(2)})`
-    : `${chartIcon} PnL: **${profit.toFixed(2)}%** (\u0024${profitUsd.toFixed(2)})`;
-
   const duration = fmtDuration(p.lastUpdateAt - p.openedAt);
 
-  let exitPriceStr = "";
-  if (p.entryPriceUsd !== null) {
-    const exitPrice = p.entryPriceUsd * (1 + profit / 100);
-    exitPriceStr = `\u{1F4B4} Exit: \`$${exitPrice.toFixed(8)}\``;
-  }
+  // Choose icons based on profit/loss direction
+  const resultIcon = isProfit ? "\u{2705}" : "\u{274C}";     // Green check / Red X
+  const headerIcon = isProfit ? "\u{1F7E2}" : "\u{1F534}";   // Green / Red circle
+  const chartIcon = isProfit ? "\u{1F4C8}" : "\u{1F4C9}";    // Chart up / Chart down
 
   return convert(
     [
-      `${headerIcon} **Position Closed** ${resultIcon}`,
-      "",
-      `\u{1F512} Token: \`${p.tokenName}\``,
+      `${headerIcon} **Position Closed** ${resultIcon}`,     // Colored header with result icon
+      "",                                                      // Blank line
+      `\u{1F512} Token: \`${p.tokenName}\``,                  // Token name in code block
       p.entryPriceUsd !== null
-        ? `\u{1F4B5} Entry: \`$${p.entryPriceUsd.toFixed(8)}\``
+        ? `\u{1F4B5} Entry: \`$${p.entryPriceUsd.toFixed(8)}\``  // Entry price (if available)
         : "",
-      exitPriceStr,
-      pnlLine,
-      `\u{1F517} Reason: ${closeIcon(reason)} **${reasonLabel(reason)}**`,
-      `\u{23F1}\uFE0F Duration: \`${duration}\``,
-      "",
-      balanceStr(),
-      openLabel(),
-      winsTotalWinrate(),
+      buildExitPrice(p.entryPriceUsd, profit),                 // Calculated exit price
+      buildPnlLine(profit, profitUsd, chartIcon),              // PnL with direction icon
+      `\u{1F517} Reason: ${closeIcon(reason)} **${reasonLabel(reason)}**`,  // Close reason
+      `\u{23F1}\uFE0F Duration: \`${duration}\``,             // Position hold duration
+      "",                                                      // Blank line
+      balanceStr(account),                                     // Account balance summary
+      openLabel(openCount),                                    // Open position count
+      winsTotalWinrate(report),                                // Win rate summary
     ]
-      .filter(Boolean)
+      .filter(Boolean)   // Remove empty lines (e.g. when entryPriceUsd is null)
       .join("\n"),
   );
 }
 
-function summaryMessage(): string {
-  const report: PerformanceReport = generateReport();
-  const winRateIcon = report.winRate >= 50 ? "\u{1F3C6}" : "\u{26A0}\uFE0F";
-  const pnlIcon = report.totalProfitUsd >= 0 ? "\u{1F7E2}" : "\u{1F534}";
+/**
+ * Build the close-reasons breakdown section for a summary report.
+ *
+ * @param report - Performance report containing the reasons map.
+ * @returns Array of lines for the close reasons section (empty array if none).
+ */
+function buildCloseReasons(report: PerformanceReport): string[] {
+  const lines: string[] = [];
+  if (Object.keys(report.reasons).length > 0) {
+    lines.push("**Close Reasons**");
+    for (const [r, count] of Object.entries(report.reasons)) {
+      lines.push(`${closeIcon(r)} **${reasonLabel(r)}**: \`${count}\``);
+    }
+  }
+  return lines;
+}
 
+/**
+ * Build the periodic performance summary message with full report breakdown.
+ *
+ * @param account - Current account state (nullable).
+ * @param openCount - Number of positions currently open.
+ * @param report - Aggregated performance report.
+ * @returns Telegram MarkdownV2 formatted summary message.
+ */
+function summaryMessage(
+  account: SimulatorAccount | null,
+  openCount: number,
+  report: PerformanceReport,
+): string {
+  const winRateIcon = report.winRate >= 50 ? "\u{1F3C6}" : "\u{26A0}\uFE0F";
+  const pnl = formatPnl(report.totalProfitUsd);
+
+  // Header section with title and simulation mode badge
   const lines: string[] = [
-    "\u{1F4CA} **Performance Report**",
-    "",
-    `Mode: \u{1F9EA} \`Simulate\``,
-    "",
-    "---",
-    "",
+    "\u{1F4CA} **Performance Report**",   // Chart icon with bold title
+    "",                                    // Blank line
+    "Mode: \u{1F9EA} \`Simulate\`",        // Simulation mode badge
+    "",                                    // Blank line
+    "---",                                 // Horizontal separator
+    "",                                    // Blank line
   ];
 
-  const bal = balanceStr();
+  // Account balance line (only if account is available)
+  const bal = balanceStr(account);
   if (bal) lines.push(`${bal}\n`);
 
+  // Overview: open count, closed count, total positions
   lines.push(
     "**Overview**",
-    openLabel(),
+    openLabel(openCount),
     `\u{2705} Closed: \`${report.closedPositions}\``,
     `\u{1F4CB} Total: \`${report.totalPositions}\``,
     "",
   );
 
+  // Results: wins, losses, win rate with trophy/warning icon
   lines.push(
     `**Results** ${winRateIcon}`,
     `\u{2705} Wins: \`${report.winningTrades}\``,
@@ -190,8 +319,9 @@ function summaryMessage(): string {
     "",
   );
 
+  // PnL summary: totals, averages, best/worst trades
   lines.push(
-    `${pnlIcon} **PnL Summary**`,
+    `${pnl.icon} **PnL Summary**`,
     `\u{1F4B0} Total PnL: **${fmtPnL(report.totalProfitPct)}%** (${fmtPnL(report.totalProfitUsd, "$")})`,
     `\u{1F4C8} Avg PnL: **${fmtPnL(report.avgProfitPct)}%** (${fmtPnL(report.avgProfitUsd, "$")})`,
     `\u{1F3C6} Best: **${fmtPnL(report.bestTradePct)}%**`,
@@ -199,77 +329,158 @@ function summaryMessage(): string {
     "",
   );
 
-  if (Object.keys(report.reasons).length > 0) {
-    lines.push("**Close Reasons**");
-    for (const [r, count] of Object.entries(report.reasons)) {
-      lines.push(`${closeIcon(r)} **${reasonLabel(r)}**: \`${count}\``);
-    }
-  }
+  // Close reason breakdown (only shown if there are reasons)
+  lines.push(...buildCloseReasons(report));
 
   return convert(lines.join("\n"));
 }
 
-async function send(text: string): Promise<void> {
-  try {
-    await bot.api.sendMessage(CHAT_ID, text, {
-      parse_mode: "MarkdownV2",
+// --- Reporter service ---
+
+/**
+ * Manages Telegram message reporting for position events and periodic summaries.
+ *
+ * Subscribes to position event streams and forwards formatted messages
+ * through a serialized send pipeline with automatic retry on failure.
+ */
+class TelegramReporter {
+  /** Subject that serializes outbound messages (processed one-at-a-time via concatMap). */
+  private send$ = new Subject<string>();
+  /** Holds active RxJS subscriptions for cleanup on stop(). */
+  private subs: Subscription[] = [];
+  /** Cached snapshot of the latest simulator account state. */
+  private account: SimulatorAccount | null = null;
+  /** Cached count of currently open positions. */
+  private openCount = 0;
+
+  constructor() {
+    // Serialize outbound messages — process one at a time in FIFO order
+    this.send$
+      .pipe(concatMap((text) => this.sendWithRetry(text)))
+      .subscribe();
+
+    // Keep an up-to-date snapshot of the account state
+    simulatorAccount$.subscribe((a) => {
+      this.account = a;
     });
-  } catch (err) {
-    console.error("[reporter] Failed to send message:", err);
+
+    // Keep an up-to-date count of open positions
+    openPositions$.subscribe((positions) => {
+      this.openCount = positions.length;
+    });
   }
-}
 
-export function sendMessage(text: string): Promise<void> {
-  return send(text);
-}
+  /**
+   * Activate all reporting subscriptions.
+   *
+   * Safe to call multiple times — subsequent calls are no-ops.
+   */
+  start(): void {
+    // Guard: prevent duplicate subscriptions
+    if (this.subs.length > 0) return;
 
-let _lastReport: string | null = null;
-let subs: Subscription[] = [];
-
-export function startReporter(): void {
-  if (subs.length > 0) return;
-
-  subs.push(
-    positionEvent$
-      .pipe(
-        tap((ev) => {
-          if (ev.type === "opened") {
-            send(openedMessage(ev));
-          }
-        }),
-      )
-      .subscribe(),
-  );
-
-  subs.push(
-    positionClosed$
-      .pipe(
-        tap((ev) => {
-          send(closedMessage(ev));
-        }),
-      )
-      .subscribe(),
-  );
-
-  const intervalMs = CONFIG.reportIntervalMinutes * 60 * 1_000;
-
-  if (intervalMs > 0) {
-    subs.push(
-      timer(intervalMs, intervalMs)
+    // Subscribe 1: position-opened events → build and enqueue an "opened" message
+    this.subs.push(
+      positionEvent$
         .pipe(
-          tap(() => {
-            const msg = summaryMessage();
-            if (msg === _lastReport) return;
-            _lastReport = msg;
-            send(msg);
+          map((ev) => {
+            if (ev.type !== "opened") return null;
+            return openedMessage(ev, this.account, this.openCount, generateReport());
           }),
         )
-        .subscribe(),
+        .subscribe((msg) => {
+          if (msg) this.send$.next(msg);
+        }),
     );
+
+    // Subscribe 2: position-closed events → build and enqueue a "closed" message
+    this.subs.push(
+      positionClosed$
+        .pipe(
+          map((ev) => {
+            const report = generateReport();
+            return closedMessage(ev, this.account, this.openCount, report);
+          }),
+        )
+        .subscribe((msg) => this.send$.next(msg)),
+    );
+
+    // Subscribe 3: periodic summary report (if interval is configured > 0)
+    const intervalMs = CONFIG.reportIntervalMinutes * 60 * 1_000;
+    if (intervalMs > 0) {
+      this.subs.push(
+        timer(intervalMs, intervalMs)
+          .pipe(
+            map(() => generateReport()),
+            // Only send if the report actually changed since last tick
+            distinctUntilChanged(
+              (prev, curr) => JSON.stringify(prev) === JSON.stringify(curr),
+            ),
+            map((report) => summaryMessage(this.account, this.openCount, report)),
+          )
+          .subscribe((msg) => this.send$.next(msg)),
+      );
+    }
   }
+
+  /**
+   * Tear down all reporting subscriptions.
+   */
+  stop(): void {
+    for (const s of this.subs) s.unsubscribe();
+    this.subs = [];
+  }
+
+  /**
+   * Enqueue a custom message for delivery through the serialized pipeline.
+   *
+   * @param text - Message text to send (MarkdownV2 formatted).
+   */
+  sendMessage(text: string): void {
+    this.send$.next(text);
+  }
+
+  /**
+   * Send a message with linear backoff retry on failure.
+   *
+   * Does not rethrow — errors are logged and swallowed after exhausting retries
+   * so a single failed message does not block the serialized pipeline.
+   *
+   * @param text - The message text to send (MarkdownV2 formatted).
+   * @param retries - Maximum number of send attempts (default 3).
+   * @returns Resolves when sent successfully, or after all retries are exhausted.
+   */
+  private async sendWithRetry(text: string, retries = 3): Promise<void> {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        // Attempt to send the message via Telegram Bot API
+        await bot.api.sendMessage(CHAT_ID, text, {
+          parse_mode: "MarkdownV2",
+        });
+        return;  // Success — exit the retry loop immediately
+      } catch (err: unknown) {
+        if (attempt === retries - 1) {
+          // Last attempt failed — log the error without rethrowing
+          console.error("[reporter] Failed to send message after all retries:", err);
+        } else {
+          // Linear backoff: wait 1s, 2s, 3s... before next attempt
+          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        }
+      }
+    }
+  }
+}
+
+const reporter = new TelegramReporter();
+
+export function startReporter(): void {
+  reporter.start();
 }
 
 export function stopReporter(): void {
-  for (const s of subs) s.unsubscribe();
-  subs = [];
+  reporter.stop();
+}
+
+export function sendMessage(text: string): void {
+  reporter.sendMessage(text);
 }

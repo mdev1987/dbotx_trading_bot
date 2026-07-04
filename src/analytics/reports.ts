@@ -1,34 +1,50 @@
-/**
- * analytics/reports.ts
- *
- * Performance report generator.
- *
- * Queries the SQLite positions table and aggregates win rate,
- * total/avg PnL, best/worst trades, and close-reason breakdown.
- * Used by main.ts on SIGINT to print a summary before exit.
- */
-
+// Performance report generator that queries the SQLite positions database
 import { getDb } from "./sqlite";
 
+/**
+ * Aggregated performance report generated from the positions database.
+ */
 export interface PerformanceReport {
+  /** Total positions ever created. */
   totalPositions: number;
+  /** Number of fully closed positions. */
   closedPositions: number;
+  /** Number of currently open positions. */
   openPositions: number;
+  /** Closed positions with positive PnL. */
   winningTrades: number;
+  /** Closed positions with negative PnL. */
   losingTrades: number;
+  /** Win rate as a percentage (0–100). */
   winRate: number;
+  /** Sum of all PnL in USD across closed positions. */
   totalProfitUsd: number;
+  /** Total PnL as percentage of total cost basis. */
   totalProfitPct: number;
+  /** Average PnL percentage per closed trade. */
   avgProfitPct: number;
+  /** Average PnL in USD per closed trade. */
   avgProfitUsd: number;
+  /** Highest PnL percentage across all closed trades. */
   bestTradePct: number;
+  /** Lowest PnL percentage across all closed trades. */
   worstTradePct: number;
+  /** Map of close reason key → count of occurrences. */
   reasons: Record<string, number>;
 }
 
+/**
+ * Generate a full performance report by querying the positions database.
+ *
+ * Aggregates all closed positions into summary metrics including win rate,
+ * PnL totals, averages, best/worst trades, and close-reason breakdown.
+ *
+ * @returns A complete PerformanceReport object.
+ */
 export function generateReport(): PerformanceReport {
   const db = getDb();
 
+  // Query 1: Aggregate metrics for all closed positions (wins, losses, PnL, costs)
   const closed = db.query(`
     SELECT
       COUNT(*)                                                      AS total_closed,
@@ -54,14 +70,17 @@ export function generateReport(): PerformanceReport {
     total_cost: number;
   };
 
+  // Query 2: Count currently open positions (no closed_at timestamp)
   const openCount = db.query(
     `SELECT COUNT(*) AS cnt FROM positions WHERE closed_at IS NULL`,
   ).get() as { cnt: number };
 
+  // Query 3: Count total positions ever created (open + closed)
   const totalCount = db.query(
     `SELECT COUNT(*) AS cnt FROM positions`,
   ).get() as { cnt: number };
 
+  // Query 4: Group closed positions by close_reason for breakdown
   const reasons = db.query(`
     SELECT close_reason, COUNT(*) AS cnt
     FROM positions
@@ -69,18 +88,21 @@ export function generateReport(): PerformanceReport {
     GROUP BY close_reason
   `).all() as { close_reason: string; cnt: number }[];
 
+  // Derived: total PnL as percentage of total entry cost
   const totalClosed = closed.total_closed;
   const totalProfitPct =
     closed.total_cost > 0
       ? (closed.total_profit_usd / closed.total_cost) * 100
       : 0;
 
+  // Assemble the final report object
   return {
     totalPositions: totalCount.cnt,
     closedPositions: totalClosed,
     openPositions: openCount.cnt,
     winningTrades: closed.wins,
     losingTrades: closed.losses,
+    // Win rate = wins / (wins + losses); 0 if no closed trades exist
     winRate: (closed.wins + closed.losses) > 0
       ? (closed.wins / (closed.wins + closed.losses)) * 100
       : 0,
@@ -90,17 +112,24 @@ export function generateReport(): PerformanceReport {
     avgProfitUsd: closed.avg_profit_usd,
     bestTradePct: closed.best_trade_pct,
     worstTradePct: closed.worst_trade_pct,
+    // Convert the reasons array [{close_reason, cnt}] → Record<reason, count>
     reasons: Object.fromEntries(
       reasons.map((r) => [r.close_reason, r.cnt]),
     ),
   };
 }
 
-/** sum of profit_usd for positions closed today (UTC). */
+/**
+ * Get the sum of profit_usd for positions closed today (UTC).
+ *
+ * @returns Total USD PnL for all positions closed since midnight UTC.
+ */
 export function getDailyPnlUsd(): number {
   const db = getDb();
+  // Calculate the start of the current UTC day (midnight)
   const startOfDay = new Date();
   startOfDay.setUTCHours(0, 0, 0, 0);
+  // Sum profit_usd for positions closed at or after today's UTC midnight
   const row = db
     .query(
       `SELECT COALESCE(SUM(profit_usd), 0) AS total
@@ -111,6 +140,11 @@ export function getDailyPnlUsd(): number {
   return row.total;
 }
 
+/**
+ * Print a formatted performance report to the console.
+ *
+ * @param r - The performance report to display.
+ */
 export function printReport(r: PerformanceReport): void {
   console.log("=".repeat(50));
   console.log("PERFORMANCE REPORT");

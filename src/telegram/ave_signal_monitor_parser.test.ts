@@ -4,15 +4,12 @@ import {
   parseSignalMonitorPump,
   parseSignalMonitorMessage,
 } from "./ave_signal_monitor_parser";
-import type {
-  AveSignalMonitorSignal,
-  AveSignalMonitorPump,
-} from "./ave_signal_monitor_parser";
 
-/* ============================================================
- * Signal test cases  (🏙 prefix)
- * ============================================================
- */
+// Test cases for Ave Signal Monitor parsing (signal + pump message formats)
+
+// ============================================================
+// Signal test cases  (🪙 prefix — buy signals from AveSignalMonitor)
+// ============================================================
 
 const NITRO_SIGNAL = `🪙 $nitro (from pump.fun)
 🔗 solana
@@ -202,10 +199,9 @@ Link: https://pro.ave.ai/token/2ePoF216vi22YgBn21SaeBffAhZkBaw2yP5fk5Nepump-sola
 🟢 eq Buy 1.483 SOL
 🟢 Cupsey Buy 0.224 SOL`;
 
-/* ============================================================
- * Pump result test cases  (🚀 prefix)
- * ============================================================
- */
+// ============================================================
+// Pump result test cases  (🚀 prefix — pump proof messages)
+// ============================================================
 
 const BALLOON_X24_PUMP = `🚀 x24 🚀 $Balloon 🆙 🆙 🆙
 
@@ -271,17 +267,20 @@ CA: GfQw9B9UJY7NuB5aYGG83ttgeU8YksDyEAsFq6Djpump
 
 Powered by @AveSignalMonitor 🤑`;
 
-/* ============================================================
- * Signal tests
- * ============================================================
- */
+// ============================================================
+// Signal parser tests
+// ============================================================
 
 describe("parseSignalMonitorSignal", () => {
   test("nitro — 2x pump, KOL wallets", () => {
     const r = parseSignalMonitorSignal(NITRO_SIGNAL)!;
-    expect(r.type).toBe("signal");
+    expect(r.type).toBe("ave_monitor_signal");
     expect(r.tokenName).toBe("nitro");
-    expect(r.contractAddress).toBe("9zZVV9wytrbCLK3iHyiszLht55fBKpAP6VQqxTzrpump");
+    expect(r.fromDEX).toBe("pump.fun");
+    expect(r.contractAddress).toBe(
+      "9zZVV9wytrbCLK3iHyiszLht55fBKpAP6VQqxTzrpump",
+    );
+    expect(r.nVibeSignal).toBe(2);
     expect(r.chain).toBe("solana");
     expect(r.maxPumpX).toBe(2);
     expect(r.marketCapUsd).toBe(40940);
@@ -292,26 +291,32 @@ describe("parseSignalMonitorSignal", () => {
   test("Indy — 5x pump, Smart Wallet", () => {
     const r = parseSignalMonitorSignal(INDY_SIGNAL)!;
     expect(r.tokenName).toBe("Indy");
-    expect(r.contractAddress).toBe("6LoUYezdr8ukLRXBFqpsXddJda3qNs6vwGT3ph4Qpump");
+    expect(r.contractAddress).toBe(
+      "6LoUYezdr8ukLRXBFqpsXddJda3qNs6vwGT3ph4Qpump",
+    );
     expect(r.maxPumpX).toBe(5);
     expect(r.marketCapUsd).toBe(18740);
     expect(r.walletBuyCount).toBe(2);
-    expect(r.totalBuySol).toBeCloseTo(0.660, 3);
+    expect(r.totalBuySol).toBeCloseTo(0.66, 3);
   });
 
   test("BITCAT — 4x pump", () => {
     const r = parseSignalMonitorSignal(BITCAT_SIGNAL)!;
     expect(r.tokenName).toBe("BITCAT");
-    expect(r.contractAddress).toBe("EyCvEEKkrU24jQmcPsB53Aq8NFVM8MX3eRP3s1RJpump");
+    expect(r.contractAddress).toBe(
+      "EyCvEEKkrU24jQmcPsB53Aq8NFVM8MX3eRP3s1RJpump",
+    );
     expect(r.maxPumpX).toBe(4);
     expect(r.marketCapUsd).toBe(23550);
-    expect(r.totalBuySol).toBeCloseTo(3.560, 3);
+    expect(r.totalBuySol).toBeCloseTo(3.56, 3);
   });
 
   test("POW — 6x pump, KOL wallets", () => {
     const r = parseSignalMonitorSignal(POW_SIGNAL)!;
     expect(r.tokenName).toBe("POW");
-    expect(r.contractAddress).toBe("D83LZYX3q8x43qGiGPWmEEWEdosid6UAAoYRusXtpump");
+    expect(r.contractAddress).toBe(
+      "D83LZYX3q8x43qGiGPWmEEWEdosid6UAAoYRusXtpump",
+    );
     expect(r.maxPumpX).toBe(6);
     expect(r.marketCapUsd).toBe(36650);
     expect(r.totalBuySol).toBeCloseTo(3.537, 3);
@@ -320,7 +325,9 @@ describe("parseSignalMonitorSignal", () => {
   test("DevXT — 4x pump, KOL wallets", () => {
     const r = parseSignalMonitorSignal(DEVXT_SIGNAL)!;
     expect(r.tokenName).toBe("DevXT");
-    expect(r.contractAddress).toBe("GfQw9B9UJY7NuB5aYGG83ttgeU8YksDyEAsFq6Djpump");
+    expect(r.contractAddress).toBe(
+      "GfQw9B9UJY7NuB5aYGG83ttgeU8YksDyEAsFq6Djpump",
+    );
     expect(r.maxPumpX).toBe(4);
     expect(r.marketCapUsd).toBe(15990);
     expect(r.totalBuySol).toBeCloseTo(2.868, 3);
@@ -380,7 +387,9 @@ describe("parseSignalMonitorSignal", () => {
   test("DevXT #2 — same name, different CA", () => {
     const r = parseSignalMonitorSignal(DEVXT2_SIGNAL)!;
     expect(r.tokenName).toBe("DevXT");
-    expect(r.contractAddress).toBe("2ePoF216vi22YgBn21SaeBffAhZkBaw2yP5fk5Nepump");
+    expect(r.contractAddress).toBe(
+      "2ePoF216vi22YgBn21SaeBffAhZkBaw2yP5fk5Nepump",
+    );
     expect(r.maxPumpX).toBe(2);
     expect(r.marketCapUsd).toBe(13600);
   });
@@ -394,17 +403,19 @@ describe("parseSignalMonitorSignal", () => {
   });
 });
 
-/* ============================================================
- * Pump result tests
- * ============================================================
- */
+// ============================================================
+// Pump result parser tests
+// ============================================================
 
 describe("parseSignalMonitorPump", () => {
   test("Balloon x24", () => {
     const r = parseSignalMonitorPump(BALLOON_X24_PUMP)!;
-    expect(r.type).toBe("pump");
+    expect(r.type).toBe("ave_monitor_pump");
+    // expect(r.type).toBe("pump");
     expect(r.tokenName).toBe("Balloon");
-    expect(r.contractAddress).toBe("96X4zg5T4NFWzTVFXHsadvYbxbzFX2Rqt3GXUv92pump");
+    expect(r.contractAddress).toBe(
+      "96X4zg5T4NFWzTVFXHsadvYbxbzFX2Rqt3GXUv92pump",
+    );
     expect(r.multiplier).toBe(24);
     expect(r.jumpedFromK).toBe(13220);
     expect(r.jumpedToK).toBe(127260);
@@ -437,7 +448,9 @@ describe("parseSignalMonitorPump", () => {
   test("nitro x5", () => {
     const r = parseSignalMonitorPump(NITRO_X5_PUMP)!;
     expect(r.tokenName).toBe("nitro");
-    expect(r.contractAddress).toBe("9zZVV9wytrbCLK3iHyiszLht55fBKpAP6VQqxTzrpump");
+    expect(r.contractAddress).toBe(
+      "9zZVV9wytrbCLK3iHyiszLht55fBKpAP6VQqxTzrpump",
+    );
     expect(r.multiplier).toBe(5);
     expect(r.jumpedFromK).toBe(15430);
     expect(r.jumpedToK).toBe(64670);
@@ -452,7 +465,9 @@ describe("parseSignalMonitorPump", () => {
   test("DevXT x7 — matches first DevXT CA", () => {
     const r = parseSignalMonitorPump(DEVXT_X7_PUMP)!;
     expect(r.tokenName).toBe("DevXT");
-    expect(r.contractAddress).toBe("GfQw9B9UJY7NuB5aYGG83ttgeU8YksDyEAsFq6Djpump");
+    expect(r.contractAddress).toBe(
+      "GfQw9B9UJY7NuB5aYGG83ttgeU8YksDyEAsFq6Djpump",
+    );
     expect(r.multiplier).toBe(7);
     expect(r.jumpedFromK).toBe(10200);
     expect(r.jumpedToK).toBe(18320);
@@ -461,7 +476,9 @@ describe("parseSignalMonitorPump", () => {
   test("DevXT x10 — same CA, higher pump", () => {
     const r = parseSignalMonitorPump(DEVXT_X10_PUMP)!;
     expect(r.tokenName).toBe("DevXT");
-    expect(r.contractAddress).toBe("GfQw9B9UJY7NuB5aYGG83ttgeU8YksDyEAsFq6Djpump");
+    expect(r.contractAddress).toBe(
+      "GfQw9B9UJY7NuB5aYGG83ttgeU8YksDyEAsFq6Djpump",
+    );
     expect(r.multiplier).toBe(10);
     expect(r.jumpedToK).toBe(34320);
   });
@@ -475,24 +492,23 @@ describe("parseSignalMonitorPump", () => {
   });
 });
 
-/* ============================================================
- * Dispatch tests
- * ============================================================
- */
+// ============================================================
+// Dispatch parser tests (routes to correct sub-parser)
+// ============================================================
 
 describe("parseSignalMonitorMessage", () => {
   test("routes signal messages correctly", () => {
     const r = parseSignalMonitorMessage(NITRO_SIGNAL)!;
-    expect(r.type).toBe("signal");
-    if (r.type === "signal") {
+    expect(r.type).toBe("ave_monitor_signal");
+    if (r.type === "ave_monitor_signal") {
       expect(r.tokenName).toBe("nitro");
     }
   });
 
   test("routes pump messages correctly", () => {
     const r = parseSignalMonitorMessage(BALLOON_X24_PUMP)!;
-    expect(r.type).toBe("pump");
-    if (r.type === "pump") {
+    expect(r.type).toBe("ave_monitor_pump");
+    if (r.type === "ave_monitor_pump") {
       expect(r.tokenName).toBe("Balloon");
     }
   });

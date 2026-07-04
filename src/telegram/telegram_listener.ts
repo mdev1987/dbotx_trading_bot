@@ -1,272 +1,300 @@
-/* ============================================================
- * telegram_listener.ts
- *
- * Reactive Telegram listener using:
- *
- * - teleproto (MTProto client)
- * - RxJS
- * - remove-markdown
- *
- * Listens to a single Telegram channel.  The active parser and
- * behaviour are determined by SIGNAL_SOURCE_MODE:
- *
- *   'monitor' — Ave Signal Monitor (no TTL, no max pos, pump TP)
- *   'ave'     — AVE Scanner (TTL, max pos, queue, config TP)
- *
- * ============================================================
- */
+// Reactive Telegram listener using MTProto (teleproto) + RxJS.
+//
+// Responsibilities:
+// - Authenticate with Telegram.
+// - Subscribe to a single Telegram channel.
+// - Convert MTProto events into reactive RxJS streams.
+// - Parse channel messages into strongly typed trading signals.
+// - Expose connection status and signal streams.
+//
+// This module is designed for long-running trading bots and supports
+// graceful restart without process termination.
 
-import readLine from "readline";
+import readline from "readline";
 import removeMarkdown from "remove-markdown";
 
 import { TelegramClient } from "teleproto";
 import { StoreSession } from "teleproto/sessions";
 import { NewMessage, NewMessageEvent } from "teleproto/events";
 
-import { Observable, Subject } from "rxjs";
+import { ReplaySubject, Subject } from "rxjs";
 
-import { filter, map, share } from "rxjs/operators";
+import { distinctUntilChanged, filter, map, shareReplay } from "rxjs/operators";
 
 import { CONFIG } from "../config";
 
 import {
-  parseSolanaPoolSignal,
-  type SolanaPoolSignal,
+  parseAveScannerSignal,
+  type AveScannerSignal,
 } from "./ave_scanner_parser";
 
 import {
-  parseSignalMonitorSignal,
-  parseSignalMonitorPump,
+  parseSignalMonitorMessage,
   type AveSignalMonitorPump,
+  type AveSignalMonitorSignal,
 } from "./ave_signal_monitor_parser";
 
-/* ============================================================
- * Config validation
- * ============================================================
- */
+/* -------------------------------------------------------------------------- */
+/*                                  Constants                                 */
+/* -------------------------------------------------------------------------- */
 
-const {
-  telegramApiHash,
-  telegramApiId,
-  telegramChannelUserName,
-  telegramChannelId,
-  signalSourceMode,
-} = CONFIG;
 
-if (!telegramApiId || !telegramApiHash || !telegramChannelUserName) {
+
+const CHANNEL_NAME = CONFIG.telegramChannelUserName.toLowerCase();
+
+/* -------------------------------------------------------------------------- */
+/*                               Configuration                                */
+/* -------------------------------------------------------------------------- */
+
+if (
+  !CONFIG.telegramApiId ||
+  !CONFIG.telegramApiHash ||
+  !CONFIG.telegramChannelUserName
+) {
   throw new Error(
     "telegramApiId, telegramApiHash and telegramChannelUserName are required",
   );
 }
 
-/* ============================================================
- * Telegram session
- * ============================================================
- */
+/* -------------------------------------------------------------------------- */
+/*                             Telegram Session                               */
+/* -------------------------------------------------------------------------- */
 
-const CONNECTION_RETRIES = 5;
-const RETRY_DELAY_MS = 5_000;
-const AUTH_TIMEOUT_MS = 5 * 60 * 1_000;
-
+// Persistent Telegram authentication session stored to disk
 const session = new StoreSession("telegram_session");
 
+// Telegram MTProto client configured with auto-reconnect and retry settings
 export const telegramClient = new TelegramClient(
   session,
-  Number(telegramApiId),
-  telegramApiHash,
+  Number(CONFIG.telegramApiId),
+  CONFIG.telegramApiHash,
   {
-    connectionRetries: CONNECTION_RETRIES,
+    connectionRetries: CONFIG.tgConnectionRetries,
     autoReconnect: true,
     reconnectRetries: Infinity,
-    retryDelay: RETRY_DELAY_MS,
+    retryDelay: CONFIG.tgRetryDelayMs,
   },
 );
 
-/* ============================================================
- * Login prompt
- * ============================================================
- */
+/* -------------------------------------------------------------------------- */
+/*                               CLI Helpers                                  */
+/* -------------------------------------------------------------------------- */
 
-const rl = readLine.createInterface({
+const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
 });
 
-function ask(question: string): Promise<string> {
+/**
+ * Prompt the user for input during Telegram authentication.
+ *
+ * A timeout protects against hanging CI environments or unattended terminals.
+ *
+ * @param question - Prompt text shown to the user.
+ * @returns User input trimmed of whitespace.
+ * @throws {Error} If the user does not respond within CONFIG.tgAuthTimeoutMs.
+ */
+async function ask(question: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      rl.removeAllListeners("line");
-      reject(new Error("Input timed out after 5 minutes"));
-    }, AUTH_TIMEOUT_MS);
+    // Guard against double-resolution (race between timeout and user answer)
+    let completed = false;
 
+    // Schedule a timeout that rejects if the user doesn't respond in time
+    const timeout = setTimeout(() => {
+      if (completed) return;
+
+      completed = true;
+
+      // Timeout reached — reject the promise with a descriptive error
+      reject(
+        new Error(`Input timed out after ${CONFIG.tgAuthTimeoutMs / 1000} seconds`),
+      );
+    }, CONFIG.tgAuthTimeoutMs);
+
+    // Listen for user input from stdin via readline
     rl.question(question, (answer) => {
+      // Ignore if already completed (race between timeout and answer)
+      if (completed) return;
+
+      completed = true;
       clearTimeout(timeout);
-      resolve(answer);
+
+      resolve(answer.trim());
     });
   });
 }
 
-/* ============================================================
- * Raw telegram message stream
- * ============================================================
- */
+/* -------------------------------------------------------------------------- */
+/*                               Parser Setup                                 */
+/* -------------------------------------------------------------------------- */
 
+export type ParsedSignal =
+  | AveSignalMonitorSignal
+  | AveSignalMonitorPump
+  | AveScannerSignal;
+
+/**
+ * Select the appropriate message parser based on the configured channel.
+ *
+ * Throws at module load time if the channel is not supported,
+ * so invalid configurations are caught immediately on import.
+ */
+const parser = (() => {
+  switch (CHANNEL_NAME) {
+    // Ave Signal Monitor → parse pump-detection monitor messages
+    case "avesignalmonitor":
+      return parseSignalMonitorMessage;
+
+    // Ave Solana Token Scanner → parse scanner trade signals
+    case "avesolantokenscanner":
+      return parseAveScannerSignal;
+
+    // Unknown channel — fail fast at import time
+    default:
+      throw new Error(`Unsupported telegram channel parser: ${CHANNEL_NAME}`);
+  }
+})();
+
+/* -------------------------------------------------------------------------- */
+/*                             Reactive Streams                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Raw Telegram MTProto events.
+ */
 const telegramMessageInput$ = new Subject<NewMessageEvent>();
 
-export const telegramMessage$ = telegramMessageInput$.pipe(share());
-
-export const telegramText$ = telegramMessage$.pipe(
-  map((event) => event.message?.text ?? ""),
-  filter((text) => text.trim().length > 0),
-  share(),
-);
-
-export const cleanedTelegramText$ = telegramText$.pipe(
-  map((text) => removeMarkdown(text)),
-  share(),
-);
-
-/* ============================================================
- * Parsed signal stream & pump result stream
+/**
+ * Emits parsed trading signals processed from raw Telegram messages.
  *
- * The parser depends on signalSourceMode:
- *   'monitor' — parse Signal Monitor messages (signal + pump)
- *   'ave'     — parse AVE Scanner messages (signal only)
- * ============================================================
+ * Pipeline:
+ *   MTProto Event → extract text → trim → strip markdown → parse → filter nulls → share
+ *
+ * Deduplication (distinctUntilChanged by contractAddress) is commented out
+ * because the parser layer already deduplicates for Ave Scanner.
  */
+export const telegramSignal$ = telegramMessageInput$.pipe(
+  // Step 1: Extract message text (default to empty string)
+  map((event) => event.message?.text ?? ""),
+  // Step 2: Trim whitespace
+  map((text) => text.trim()),
+  // Step 3: Skip empty messages
+  filter((text) => text.length > 0),
+  // Step 4: Strip Telegram MarkdownV2 formatting
+  map((text) => removeMarkdown(text)),
+  // Step 5: Parse the raw text into a structured signal
+  map((text) => parser(text)),
+  // Step 6: Filter out unparseable messages (parser returned null)
+  filter((signal): signal is ParsedSignal => signal !== null),
+  //Only compares with the immediately previous signal
+  // For Ave Scanner Channel
+  // distinctUntilChanged(
+  //   (prev, curr) => prev.contractAddress === curr.contractAddress,
+  // ),
+  // Step 7: Cache the latest signal and share across subscribers
+  shareReplay({
+    bufferSize: 1,
+    refCount: true,
+  }),
+);
 
-/** Subject for pump results (fed in monitor mode; silent in ave mode). */
-const pumpInput$ = new Subject<AveSignalMonitorPump>();
-
-export const signalMonitorPump$: Observable<AveSignalMonitorPump> =
-  pumpInput$.pipe(share());
-
-export let signal$: Observable<SolanaPoolSignal>;
-
-if (signalSourceMode === "monitor") {
-  /* ---- Monitor mode: Signal Monitor parser ------------------- */
-
-  const convertedSignal$ = cleanedTelegramText$.pipe(
-    map((text) => {
-      const r = parseSignalMonitorSignal(text);
-      if (!r) return null;
-      return {
-        tokenName: r.tokenName,
-        contractAddress: r.contractAddress,
-        lpAddress: r.contractAddress,
-        dex: "pump.fun",
-        maxPumpX: r.maxPumpX,
-        marketCapRaw: "",
-        marketCapUsd: r.marketCapUsd,
-        raw: r.raw,
-      } as SolanaPoolSignal;
-    }),
-    filter((s): s is SolanaPoolSignal => s !== null),
-    share(),
-  );
-
-  signal$ = convertedSignal$;
-
-  /* Parse pump results from the same text stream. */
-  cleanedTelegramText$
-    .pipe(
-      map((text) => parseSignalMonitorPump(text)),
-      filter((r): r is AveSignalMonitorPump => r !== null),
-    )
-    .subscribe((pump) => pumpInput$.next(pump));
-} else {
-  /* ---- AVE mode: AVE Scanner parser ------------------------- */
-
-  signal$ = cleanedTelegramText$.pipe(
-    map((text) => {
-      try {
-        return parseSolanaPoolSignal(text);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg !== "Failed to parse pair") {
-          console.warn("[Telegram] Skip non-signal message:", msg);
-        }
-        return null;
-      }
-    }),
-    filter((s): s is SolanaPoolSignal => s !== null),
-    share(),
-  );
-}
-
-/* ============================================================
- * Connection state stream
- * ============================================================
+/**
+ * Connection state stream.
  */
+const connectionStateInput$ = new ReplaySubject<boolean>(1);
 
-const connectedInput$ = new Subject<boolean>();
-
-export const connected$ = connectedInput$.pipe(share());
-
-/* ============================================================
- * Start listener
- * ============================================================
+/**
+ * Emits `true` when connected to Telegram, `false` on disconnect.
+ *
+ * Replays the last known state so late subscribers always get the current status.
  */
+export const connected$ = connectionStateInput$.pipe(
+  shareReplay({
+    bufferSize: 1,
+    refCount: true,
+  }),
+);
 
-let channelId: number = Number(telegramChannelId ?? undefined);
+/* -------------------------------------------------------------------------- */
+/*                              Internal State                                */
+/* -------------------------------------------------------------------------- */
 
+let channelId: number | undefined = Number(CONFIG.telegramChannelId);
+
+let eventHandler: ((event: NewMessageEvent) => void) | undefined;
+
+/* -------------------------------------------------------------------------- */
+/*                              Public API                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Connect to Telegram and begin listening for channel messages.
+ *
+ * Handles phone/OTP authentication, resolves the channel entity,
+ * and subscribes to new incoming messages. Safe to call multiple times.
+ *
+ * @throws When authentication fails or the channel entity cannot be resolved.
+ * @returns Resolves once the listener is fully attached and subscribed.
+ */
 export async function startTelegramListener(): Promise<void> {
   try {
+    // Authenticate with Telegram (phone → OTP code → 2FA if needed)
     await telegramClient.start({
       phoneNumber: async () => ask("Phone number: "),
       phoneCode: async () => ask("Telegram code: "),
-      password: async () => ask("2FA password: "),
       onError: console.error,
     });
 
+    // Persist the session so next startup skips authentication
     telegramClient.session.save();
-    rl.close();
-    connectedInput$.next(true);
-    console.log("[Telegram] Client connected");
-  } catch (err) {
-    rl.close();
-    console.error("[Telegram] Login failed:", err);
-    throw err;
-  }
-
-  if (!channelId) {
-    try {
-      const channel = await telegramClient.getEntity(telegramChannelUserName!);
-      channelId = Number(channel.id);
-    } catch (err) {
-      console.error(
-        `[Telegram] Failed to resolve channel "${telegramChannelUserName}":`,
-        err,
+    // Signal that we are now connected
+    connectionStateInput$.next(true);
+    console.log("[Telegram] Connected");
+    // Resolve the channel entity by username if not already known
+    if (!channelId) {
+      const entity = await telegramClient.getEntity(
+        CONFIG.telegramChannelUserName,
       );
-      throw err;
+      channelId = Number(entity.id);
     }
-  }
-
-  console.log(
-    `[Telegram] Listening to ${telegramChannelUserName} (${channelId}) — mode: ${signalSourceMode}`,
-  );
-
-  telegramClient.addEventHandler(
-    (event: NewMessageEvent) => {
+    console.log(
+      `[Telegram] Listening to ${CONFIG.telegramChannelUserName} (${channelId})`,
+    );
+    // Create the event handler that feeds incoming messages into the RxJS stream
+    eventHandler = (event: NewMessageEvent) => {
       telegramMessageInput$.next(event);
-    },
-    new NewMessage({
-      incoming: true,
-      chats: [channelId],
-    }),
-  );
+    };
+    // Subscribe to new incoming messages from the target channel only
+    telegramClient.addEventHandler(
+      eventHandler,
+      new NewMessage({
+        incoming: true,
+        chats: [channelId],
+      }),
+    );
+  } catch (err) {
+    // Signal disconnection state on failure
+    connectionStateInput$.next(false);
+    throw err;
+  } finally {
+    // Always close the readline interface to free stdin
+    rl.close();
+  }
 }
 
-/* ============================================================
- * Stop listener
- * ============================================================
+/**
+ * Stop listening and disconnect from Telegram.
+ *
+ * Completes the connection and message streams so subscribers can clean up.
+ *
+ * @returns Resolves when the client has fully disconnected.
  */
-
 export async function stopTelegramListener(): Promise<void> {
-  connectedInput$.next(false);
-  telegramMessageInput$.complete();
-  connectedInput$.complete();
-  pumpInput$.complete();
+  // Disconnect the MTProto client from Telegram servers
   await telegramClient.disconnect();
-  console.log("[Telegram] Client disconnected");
+  // Signal to connected$ subscribers that the stream has ended
+  connectionStateInput$.complete();
+  // Signal to telegramSignal$ subscribers that no more messages will arrive
+  telegramMessageInput$.complete();
+  console.log("[Telegram] Disconnected");
 }
