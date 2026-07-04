@@ -105,6 +105,12 @@ export function parseSignalMonitorSignal(text: string): AveSignalMonitorSignal |
     totalBuySol = 0;
   }
 
+  /* Validate parsed values. */
+  if (!ca || ca.length < 10) return null;
+  if (typeof marketCapUsd !== "number" || !Number.isFinite(marketCapUsd) || marketCapUsd < 0) return null;
+  if (maxPumpX < 0) return null;
+  if (totalBuySol < 0) return null;
+
   return {
     type: "signal",
     tokenName,
@@ -149,6 +155,9 @@ export function parseSignalMonitorPump(text: string): AveSignalMonitorPump | nul
   const jumpedToVal = jumpMatch?.[2];
   const jumpedFromK = jumpedFrom ? parseAbbreviated(jumpedFrom) : 0;
   const jumpedToK = jumpedToVal ? parseAbbreviated(jumpedToVal) : 0;
+
+  if (typeof multiplier !== "number" || !Number.isFinite(multiplier) || multiplier <= 0) return null;
+  if (!ca || ca.length < 10) return null;
 
   return {
     type: "pump",

@@ -211,12 +211,14 @@ export function parseSolanaPoolSignal(text: string): SolanaPoolSignal {
       1,
       "initial price",
     );
+    const initPrice = expandCompressedDecimal(initPriceRaw);
 
     const marketCapRaw = requiredGroup(
       requireMatch(text.match(/^MCap:\s*(.+)$/m), "market cap"),
       1,
       "market cap",
     );
+    const marketCapUsd = parseAbbreviatedUsd(marketCapRaw);
 
     const pairMatch = requireMatch(
       text.match(/^Pair:\s*([\d.]+)([KMB]?)\s+(.+?)\s*\/\s*([\d.]+)\s*SOL$/m),
@@ -343,6 +345,20 @@ export function parseSolanaPoolSignal(text: string): SolanaPoolSignal {
       twitter: extractUrl(text.match(/Twitter\s*\((.*?)\)/)?.[1] ?? ""),
     };
 
+    /* Validate parsed values to reject malformed signals. */
+    const mc = marketCapUsd;
+    const ip = initPrice;
+    const errors: string[] = [];
+    if (mc !== undefined && (typeof mc !== "number" || !Number.isFinite(mc) || mc < 0)) {
+      errors.push(`invalid marketCapUsd: ${mc}`);
+    }
+    if (ip !== undefined && (typeof ip !== "number" || !Number.isFinite(ip) || ip <= 0)) {
+      errors.push(`invalid initPrice: ${ip}`);
+    }
+    if (errors.length > 0) {
+      throw new Error(`Signal validation failed: ${errors.join(", ")}`);
+    }
+
     return {
       tokenName,
       tokenAddress: tokenAddress || "",
@@ -352,10 +368,10 @@ export function parseSolanaPoolSignal(text: string): SolanaPoolSignal {
       lpAddress,
 
       initPriceRaw,
-      initPrice: expandCompressedDecimal(initPriceRaw),
+      initPrice: ip,
 
       marketCapRaw,
-      marketCapUsd: parseAbbreviatedUsd(marketCapRaw),
+      marketCapUsd: mc,
 
       pairTokenAmount,
       pairTokenSymbol,

@@ -44,12 +44,15 @@ export interface SimulatorOrderResponse {
   docs?: string;
 }
 
+const DEFAULT_GAS_FEE_DELTA = 5;
+const DEFAULT_MAX_FEE_PER_GAS = 100;
+
 const DEFAULT_SETTINGS = {
   chain: "solana" as const,
   walletId: "",
   priorityFee: "",
-  gasFeeDelta: 5,
-  maxFeePerGas: 100,
+  gasFeeDelta: DEFAULT_GAS_FEE_DELTA,
+  maxFeePerGas: DEFAULT_MAX_FEE_PER_GAS,
   slippage: 0.1,
 };
 
@@ -57,7 +60,7 @@ async function createSimulatorOrder(
   request: SimulatorFastSwapRequest,
 ): Promise<string> {
   const response = await fetchWithRetry(
-    "https://api-bot-v1.dbotx.com/simulator/sim_swap_order",
+    `${CONFIG.baseUrl}/simulator/sim_swap_order`,
     {
       method: "POST",
       headers: {

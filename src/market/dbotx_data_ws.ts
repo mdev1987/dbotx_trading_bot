@@ -37,6 +37,33 @@ export interface PairUpdate {
   raw: unknown;
 }
 
+/** Shape of an incoming raw WebSocket JSON message from the DBotX API. */
+interface WsRawMessage {
+  status?: string;
+  pair?: string;
+  token?: string;
+  priceUsd?: unknown;
+  marketCapUsd?: unknown;
+  liquidityUsd?: unknown;
+  holders?: unknown;
+  t?: number;
+  result?: {
+    pair?: string;
+    token?: string;
+    priceUsd?: unknown;
+    marketCapUsd?: unknown;
+    liquidityUsd?: unknown;
+    holders?: unknown;
+  };
+}
+
+/* ---------------------------------------------------------------
+ * Constants
+ * ------------------------------------------------------------ */
+
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const DISCONNECT_LOG_THROTTLE_MS = 30_000;
+
 /* ---------------------------------------------------------------
  * Reactive WebSocket lifecycle
  * ------------------------------------------------------------ */
@@ -58,7 +85,7 @@ function connect(): void {
 
   ws.addEventListener("close", () => {
     const now = Date.now();
-    if (now - _lastDisconnectLog > 30_000) {
+    if (now - _lastDisconnectLog > DISCONNECT_LOG_THROTTLE_MS) {
       console.log(
         `[DBotX] Disconnected — reconnecting in ${RECONNECT_DELAY_MS}ms`,
       );
@@ -99,7 +126,7 @@ export const connected$ = ws$.pipe(
 
 connected$
   .pipe(
-    switchMap(() => interval(30_000)),
+    switchMap(() => interval(HEARTBEAT_INTERVAL_MS)),
     tap(() => {
       const ws = wsSubject.value;
       if (ws && ws.readyState === WebSocket.OPEN) ws.ping();
@@ -190,13 +217,13 @@ const rawMessage$ = ws$.pipe(
   map((event) => {
     try {
       const raw = typeof event.data === "string" ? event.data : event.data.toString();
-      return JSON.parse(raw) as Record<string, unknown>;
+      return JSON.parse(raw) as WsRawMessage;
     } catch (err) {
       console.error("[DBotX] Failed to parse message:", err, event.data);
       return null;
     }
   }),
-  filter((msg): msg is Record<string, unknown> => msg !== null),
+  filter((msg): msg is WsRawMessage => msg !== null),
   share(),
 );
 
@@ -207,8 +234,7 @@ const rawMessage$ = ws$.pipe(
 const dataMessage$ = rawMessage$.pipe(
   filter((msg) => msg.status !== "ack"),
   filter((msg) => {
-    const result = msg.result as Record<string, unknown> | undefined;
-    return !!(msg.pair as string | undefined) || !!(result?.pair as string | undefined);
+    return !!(msg.pair) || !!(msg.result?.pair);
   }),
   share(),
 );
@@ -229,16 +255,17 @@ function num(value: unknown): number | undefined {
 
 export const pairUpdate$ = dataMessage$.pipe(
   map((msg): PairUpdate => {
-    const result = msg.result as Record<string, unknown> | undefined;
+    const pair = msg.pair ?? msg.result?.pair ?? "";
+    const token = msg.token ?? msg.result?.token;
 
     return {
-      pair: ((msg.pair as string | undefined) ?? (result?.pair as string | undefined) ?? ""),
-      token: ((msg.token as string | undefined) ?? (result?.token as string | undefined)),
-      priceUsd: num(msg.priceUsd ?? result?.priceUsd),
-      marketCapUsd: num(msg.marketCapUsd ?? result?.marketCapUsd),
-      liquidityUsd: num(msg.liquidityUsd ?? result?.liquidityUsd),
-      holders: num(msg.holders ?? result?.holders),
-      timestamp: (msg.t as number | undefined ?? Date.now()),
+      pair,
+      token,
+      priceUsd: num(msg.priceUsd ?? msg.result?.priceUsd),
+      marketCapUsd: num(msg.marketCapUsd ?? msg.result?.marketCapUsd),
+      liquidityUsd: num(msg.liquidityUsd ?? msg.result?.liquidityUsd),
+      holders: num(msg.holders ?? msg.result?.holders),
+      timestamp: (msg.t ?? Date.now()),
       raw: msg,
     };
   }),

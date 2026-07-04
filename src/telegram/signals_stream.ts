@@ -21,6 +21,7 @@ import type { SolanaPoolSignal } from "./ave_scanner_parser";
 
 /** Hardcoded cleanup TTL for dedup cache (1 hour). */
 const CLEANUP_TTL_SECONDS = 3600;
+const TICK_INTERVAL_MS = 5_000;
 
 interface SignalEvent {
   type: "signal";
@@ -43,7 +44,7 @@ const signalEvent$ = telegramSignal$.pipe(
   })),
 );
 
-const tick$ = interval(5_000).pipe(
+const tick$ = interval(TICK_INTERVAL_MS).pipe(
   map<number, TickEvent>(() => ({
     type: "tick",
     now: Math.floor(Date.now() / 1000),

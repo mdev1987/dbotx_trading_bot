@@ -592,7 +592,7 @@ async function captureEntryPrice(
   orderId: string,
   pair: string,
 ): Promise<number | null> {
-  for (let attempt = 0; attempt < 10; attempt++) {
+  for (let attempt = 0; attempt < MAX_ENTRY_PRICE_ATTEMPTS; attempt++) {
     try {
       const trade = await fetchBuyTrade(orderId);
 
@@ -612,7 +612,7 @@ async function captureEntryPrice(
       /* Server may not have persisted the trade yet */
     }
 
-    await new Promise((r) => setTimeout(r, 1_000));
+    await new Promise((r) => setTimeout(r, ENTRY_PRICE_POLL_DELAY_MS));
   }
 
   console.warn(
@@ -726,8 +726,11 @@ async function closePosition(pair: string, reason: CloseReason): Promise<void> {
     console.error(`[position_manager] Failed to sell ${pos.tokenName}:`, err);
   }
 
+  /* Re-read latest state after async work to avoid stale metadata. */
+  const latest = _latestPositions.get(pair) ?? pos;
+
   const final: PositionState = {
-    ...pos,
+    ...latest,
     status: "closed",
     closeReason: reason,
     lastUpdateAt: Date.now(),
@@ -930,6 +933,8 @@ signalMonitorPump$
  */
 
 const EXPIRY_CHECK_MS = 15_000;
+const MAX_ENTRY_PRICE_ATTEMPTS = 10;
+const ENTRY_PRICE_POLL_DELAY_MS = 1_000;
 const { baseTtlSecs, minProfitForTtlExtensionPct, maxTtlSecs } = CONFIG;
 
 timer(EXPIRY_CHECK_MS, EXPIRY_CHECK_MS)

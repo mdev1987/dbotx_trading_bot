@@ -17,6 +17,12 @@ import { Subject, from, merge, timer, EMPTY } from "rxjs";
 import { switchMap, shareReplay, catchError, tap } from "rxjs/operators";
 import { CONFIG } from "../config";
 
+/* ---------------------------------------------------------------
+ * Constants
+ * ------------------------------------------------------------ */
+
+const ACCOUNT_POLL_INTERVAL_MS = 60_000;
+
 export interface SimulatorAccount {
   balance: number;
   change24h: number;
@@ -77,7 +83,7 @@ const manualRefresh$ = refreshAccount$.pipe(
 );
 
 /* Auto-poll every 60s (first tick delayed so it doesn't fire on cold load) */
-const polling$ = timer(60_000, 60_000).pipe(
+const polling$ = timer(ACCOUNT_POLL_INTERVAL_MS, ACCOUNT_POLL_INTERVAL_MS).pipe(
   switchMap(() =>
     from(fetchSimulatorAccount()).pipe(
       tap((a) => { latestAccount = a; }),

@@ -64,6 +64,10 @@ if (!telegramApiId || !telegramApiHash || !telegramChannelUserName) {
  * ============================================================
  */
 
+const CONNECTION_RETRIES = 5;
+const RETRY_DELAY_MS = 5_000;
+const AUTH_TIMEOUT_MS = 5 * 60 * 1_000;
+
 const session = new StoreSession("telegram_session");
 
 export const telegramClient = new TelegramClient(
@@ -71,10 +75,10 @@ export const telegramClient = new TelegramClient(
   Number(telegramApiId),
   telegramApiHash,
   {
-    connectionRetries: 5,
+    connectionRetries: CONNECTION_RETRIES,
     autoReconnect: true,
     reconnectRetries: Infinity,
-    retryDelay: 5_000,
+    retryDelay: RETRY_DELAY_MS,
   },
 );
 
@@ -93,7 +97,7 @@ function ask(question: string): Promise<string> {
     const timeout = setTimeout(() => {
       rl.removeAllListeners("line");
       reject(new Error("Input timed out after 5 minutes"));
-    }, 5 * 60 * 1_000);
+    }, AUTH_TIMEOUT_MS);
 
     rl.question(question, (answer) => {
       clearTimeout(timeout);
