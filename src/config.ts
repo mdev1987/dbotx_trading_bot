@@ -141,6 +141,10 @@ export const CONFIG = {
   /** Distance fraction for trailing take-profit below peak price (always active from entry) */
   trailingTpDistancePct: number("PAPER_TRAILING_TP_PERCENT") / 100,
 
+  /** Enable partial take-profit tiers (scaling out) */
+  partialTpEnabled:
+    process.env.PARTIAL_TP_ENABLED?.toLowerCase() === "true",
+
   /** Partial take-profit tiers for scaling out */
   partialTpTiers: parsePartialTpTiers(process.env.PARTIAL_TP_TIERS),
 

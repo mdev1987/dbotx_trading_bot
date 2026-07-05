@@ -44,7 +44,18 @@ import type {
 function buildStopEarnGroup(
   signalMaxPumpX?: number,
 ): ProfitLossGroup[] | undefined {
-  const { partialTpTiers, backstopTpPct } = CONFIG;
+  const { partialTpEnabled, partialTpTiers, backstopTpPct } = CONFIG;
+
+  // If partial TP is disabled, let the single backstop TP (if configured)
+  // handle the full position exit, or return undefined so only the bot's own
+  // exit mechanisms (trailing stop, TTL expiry, pump message) close it.
+  if (!partialTpEnabled) {
+    if (backstopTpPct > 0) {
+      return [{ pricePercent: backstopTpPct, amountPercent: 1 }];
+    }
+    return undefined;
+  }
+
   const groups: ProfitLossGroup[] = [];
 
   // Build TP tiers from configured partial take-profit levels
@@ -468,7 +479,9 @@ const pnlTaskPoll$ = timer(CONFIG.pnlTaskPollMs, CONFIG.pnlTaskPollMs).pipe(
           });
         }
 
-        // When all tasks are finished, compute weighted profit and close
+        // When all tasks are finished, compute weighted profit and close.
+        // Detect the actual close reason from the task states rather than
+        // always defaulting to take_profit.
         if (allDone && tasks.length > 0) {
           // Calculate weighted profit percentage across completed tasks
           let weightedProfitPct = 0;
@@ -488,10 +501,21 @@ const pnlTaskPoll$ = timer(CONFIG.pnlTaskPollMs, CONFIG.pnlTaskPollMs).pipe(
             currentProfitUsd: profitUsd,
           });
 
-          // Determine close reason: take_profit if any task succeeded, else expired
-          const reason: CloseReason = tasks.some((t) => t.state === "done")
-            ? "take_profit"
-            : "expired";
+          // Determine close reason:
+          //   stop_loss   → a stop-loss task (down) completed
+          //   take_profit → any TP task (up) completed
+          //   expired     → no task ever reached its trigger
+          const hasStopLoss = tasks.some(
+            (t) => t.state === "done" && t.triggerDirection === "down",
+          );
+          const hasTakeProfit = tasks.some(
+            (t) => t.state === "done" && t.triggerDirection === "up",
+          );
+          const reason: CloseReason = hasStopLoss
+            ? "stop_loss"
+            : hasTakeProfit
+              ? "take_profit"
+              : "expired";
           closePositionById(pos.id, reason);
         }
       } catch (err) {
@@ -533,10 +557,16 @@ const tradePairPoll$ = timer(CONFIG.tradePairPollMs, CONFIG.tradePairPollMs).pip
           currentProfitUsd: pair.fullProfitUsd,
         });
 
-        // Close position if remaining token balance has dropped to zero
+        // Close position if remaining token balance has dropped to zero.
+        // Use the API's sell-profit sign to distinguish take_profit from
+        // stop_loss when the bot missed the task-level event.
         const balanceNum = Number(pair.token0Balance);
         if (balanceNum <= 0 && matching.status === "open") {
-          closePositionById(matching.id, "take_profit");
+          const reason: CloseReason =
+            pair.sellProfitPercent !== null && pair.sellProfitPercent < 0
+              ? "stop_loss"
+              : "take_profit";
+          closePositionById(matching.id, reason);
         }
       }
     } catch (err) {
@@ -625,6 +655,7 @@ interface FinalPnLData {
   profitPct: number;
   profitUsd: number;
   exitPriceUsd: number | null;
+  remainingBalance: string;
 }
 
 async function fetchFinalPnLData(
@@ -648,6 +679,7 @@ async function fetchFinalPnLData(
           profitPct: pair.fullProfitPercent * 100,
           profitUsd: pair.fullProfitUsd,
           exitPriceUsd: exitPrice,
+          remainingBalance: pair.token0Balance,
         };
       }
     } catch {
@@ -680,9 +712,10 @@ export async function closePositionById(
     // Mark position as closing before executing any sell
     patchPositionById(id, { status: "closing", closeReason: reason });
 
-    // Execute market sell for trailing stop, expired, or pump_message positions
-    // and then fetch the final PnL from the API so the close event reflects
-    // the true result (including any TP profits realised before the final sell).
+    // Execute market sell and then fetch the final PnL from the API so the
+    // close event reflects the true result (including TP profits realised
+    // before the final sell).  For take_profit we first check whether the
+    // API tasks already sold everything; if not, we sell the orphaned tokens.
     try {
       if (reason === "trailing_stop" || reason === "expired" || reason === "pump_message") {
         const orderId = await simFastSell({
@@ -696,17 +729,35 @@ export async function closePositionById(
         );
 
         refreshAccount$.next();
-
-        // Poll the API for the updated trade-pair data so we capture the
-        // correct final PnL (including previously realised TP profits).
-        const finalData = await fetchFinalPnLData(pos.token);
-        if (finalData) {
-          patchPositionById(id, {
-            currentProfitPercent: finalData.profitPct,
-            currentProfitUsd: finalData.profitUsd,
-            exitPriceUsd: finalData.exitPriceUsd,
+      } else if (reason === "take_profit") {
+        // Check if the API tasks left any unsold tokens (e.g. when TP tiers
+        // sum to less than 100 % of the position).
+        const preData = await fetchFinalPnLData(pos.token);
+        const balanceNum = preData ? Number(preData.remainingBalance) : 0;
+        if (balanceNum > 0) {
+          const orderId = await simFastSell({
+            pair: pos.pair,
+            amountOrPercent: 1,
+            ...EXEC_DEFAULTS,
           });
+
+          console.log(
+            `[position_core] take_profit sell (remaining ${balanceNum}) for ${pos.tokenName}: ${orderId}`,
+          );
+
+          refreshAccount$.next();
         }
+      }
+
+      // Poll the API for the updated trade-pair data so we capture the
+      // correct final PnL (including previously realised TP profits).
+      const finalData = await fetchFinalPnLData(pos.token);
+      if (finalData) {
+        patchPositionById(id, {
+          currentProfitPercent: finalData.profitPct,
+          currentProfitUsd: finalData.profitUsd,
+          exitPriceUsd: finalData.exitPriceUsd,
+        });
       }
     } catch (err) {
       console.error(`[position_core] Failed to sell ${pos.tokenName}:`, err);
