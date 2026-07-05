@@ -13,11 +13,14 @@ import {
 import {
   startTelegramListener,
   stopTelegramListener,
+  getTelegramClient,
+  resetTelegramClient,
 } from "./telegram/telegram_listener"; // Listener lifecycle
 import { simulatorAccount$ } from "./simulator/account"; // Simulator account stream for balance logging
 import { CONFIG } from "./config"; // Configuration constants
+import { timer, Subscription } from "rxjs";
+import { tap } from "rxjs/operators";
 import { convert } from "telegram-markdown-v2"; // Markdown converter for Telegram
-import { tap } from "rxjs"; // RxJS tap operator for side effects
 
 // Determine the signal-source mode from the configured Telegram channel name
 let channel_mode: "ave" | "monitor";
@@ -71,7 +74,12 @@ async function start(): Promise<void> {
     )
     .subscribe();
 
-  // Step 5: Send the startup notification to the configured Telegram chat
+  // Step 5: Start Telegram health check — periodically verify the MTProto
+  // connection and restart the listener on failure (teleproto's built-in
+  // auto-reconnect is unreliable after ~6 minutes).
+  startTelegramWatchdog();
+
+  // Step 6: Send the startup notification to the configured Telegram chat
   await sendStartedMessage();
 }
 
@@ -256,6 +264,66 @@ async function sendStoppedMessage(error?: string): Promise<void> {
   }
 }
 
+// ──────────────────────────────────────────────
+// Telegram Watchdog
+// ──────────────────────────────────────────────
+
+let _tgWatchdogSub: Subscription | undefined;
+
+/**
+ * Periodically verify the Telegram connection and restart the listener if
+ * the client is no longer authorised.
+ *
+ * Teleproto's built-in `autoReconnect` often fails silently (TIMEOUT pings,
+ * "connection closed while receiving data"), so this watchdog detects stale
+ * connections and forces a full re-authentication cycle.
+ *
+ * Runs every 60 seconds. Restarts involve calling resetTelegramClient() to
+ * create a fresh MTProto client, then startTelegramListener() to re-auth.
+ */
+function startTelegramWatchdog(): void {
+  _tgWatchdogSub = timer(CONFIG.tgRetryDelayMs, 60_000)
+    .pipe(
+      tap(async () => {
+        if (_shuttingDown) return;
+        try {
+          const client = getTelegramClient();
+          const ok = await client.checkAuthorization();
+          if (!ok) {
+            console.warn("[watchdog] Telegram not authorized — restarting");
+            await restartTelegram();
+          }
+        } catch (err) {
+          console.warn("[watchdog] Telegram health check failed — restarting:", err);
+          await restartTelegram();
+        }
+      }),
+    )
+    .subscribe();
+}
+
+/**
+ * Restart the Telegram listener from scratch: stop, reset the client,
+ * then start again. Silent on errors (non-critical).
+ */
+async function restartTelegram(): Promise<void> {
+  try {
+    await stopTelegramListener();
+  } catch { /* ok */ }
+  resetTelegramClient();
+  // Small delay to let network state settle before reconnecting
+  await new Promise((r) => setTimeout(r, 2000));
+  try {
+    await startTelegramListener();
+  } catch (err) {
+    console.error("[watchdog] Telegram restart failed:", err);
+  }
+}
+
+// ══════════════════════════════════════════════
+// Application entry
+// ══════════════════════════════════════════════
+
 // Start the application
 start().catch((err) => {
   console.error("[main] Startup failed:", err);
@@ -283,6 +351,9 @@ async function shutdown(error?: string): Promise<void> {
 
   // Send shutdown notification to Telegram (best-effort)
   await sendStoppedMessage(error);
+
+  // Stop the Telegram watchdog health check timer
+  _tgWatchdogSub?.unsubscribe();
 
   // Tear down subsystems in reverse order of initialization
   stopReporter();

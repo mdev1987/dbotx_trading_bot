@@ -245,7 +245,8 @@ export type CloseReason =
   | "stop_loss"
   | "trailing_stop"
   | "expired"
-  | "manual";
+  | "manual"
+  | "pump_message";
 
 /**
  * Lifecycle status of a position
@@ -256,6 +257,8 @@ export type PositionStatus = "open" | "closing" | "closed";
  * Full state of a trading position
  */
 export interface PositionState {
+  /** Unique auto-increment position ID (used as the store key) */
+  id: number;
   /** Simulator order ID associated with this position */
   orderId: string;
   /** LP address / pair identifier */

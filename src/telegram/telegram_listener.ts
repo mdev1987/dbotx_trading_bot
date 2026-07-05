@@ -61,20 +61,33 @@ if (
 /* -------------------------------------------------------------------------- */
 
 // Persistent Telegram authentication session stored to disk
-const session = new StoreSession("telegram_session");
 
-// Telegram MTProto client configured with auto-reconnect and retry settings
-export const telegramClient = new TelegramClient(
-  session,
-  Number(CONFIG.telegramApiId),
-  CONFIG.telegramApiHash,
-  {
-    connectionRetries: CONFIG.tgConnectionRetries,
-    autoReconnect: true,
-    reconnectRetries: Infinity,
-    retryDelay: CONFIG.tgRetryDelayMs,
-  },
-);
+// Telegram MTProto client configured with auto-reconnect and retry settings.
+// Module-level variable — re-created by resetTelegramClient() when a full
+// reconnection cycle is needed.
+let _telegramClient: TelegramClient | undefined;
+
+export function getTelegramClient(): TelegramClient {
+  if (!_telegramClient) {
+    const session = new StoreSession("telegram_session");
+    _telegramClient = new TelegramClient(
+      session,
+      Number(CONFIG.telegramApiId),
+      CONFIG.telegramApiHash!, // validated above at module scope
+      {
+        connectionRetries: CONFIG.tgConnectionRetries,
+        autoReconnect: true,
+        reconnectRetries: Infinity,
+        retryDelay: CONFIG.tgRetryDelayMs,
+      },
+    );
+  }
+  return _telegramClient;
+}
+
+export function resetTelegramClient(): void {
+  _telegramClient = undefined;
+}
 
 /* -------------------------------------------------------------------------- */
 /*                               CLI Helpers                                  */
@@ -222,6 +235,7 @@ export const connected$ = connectionStateInput$.pipe(
 let channelId: number | undefined = Number(CONFIG.telegramChannelId);
 
 let eventHandler: ((event: NewMessageEvent) => void) | undefined;
+let eventBuilder: NewMessage | undefined;
 
 /* -------------------------------------------------------------------------- */
 /*                              Public API                                    */
@@ -237,22 +251,23 @@ let eventHandler: ((event: NewMessageEvent) => void) | undefined;
  * @returns Resolves once the listener is fully attached and subscribed.
  */
 export async function startTelegramListener(): Promise<void> {
+  const client = getTelegramClient();
   try {
     // Authenticate with Telegram (phone → OTP code → 2FA if needed)
-    await telegramClient.start({
+    await client.start({
       phoneNumber: async () => ask("Phone number: "),
       phoneCode: async () => ask("Telegram code: "),
       onError: console.error,
     });
 
     // Persist the session so next startup skips authentication
-    telegramClient.session.save();
+    client.session.save();
     // Signal that we are now connected
     connectionStateInput$.next(true);
     console.log("[Telegram] Connected");
     // Resolve the channel entity by username if not already known
     if (!channelId) {
-      const entity = await telegramClient.getEntity(
+      const entity = await client.getEntity(
         CONFIG.telegramChannelUserName,
       );
       channelId = Number(entity.id);
@@ -260,17 +275,22 @@ export async function startTelegramListener(): Promise<void> {
     console.log(
       `[Telegram] Listening to ${CONFIG.telegramChannelUserName} (${channelId})`,
     );
+    // Remove any stale event handler before adding the new one
+    if (eventHandler && eventBuilder) {
+      try { client.removeEventHandler(eventHandler, eventBuilder); } catch { /* ok */ }
+    }
     // Create the event handler that feeds incoming messages into the RxJS stream
     eventHandler = (event: NewMessageEvent) => {
       telegramMessageInput$.next(event);
     };
+    eventBuilder = new NewMessage({
+      incoming: true,
+      chats: [channelId],
+    });
     // Subscribe to new incoming messages from the target channel only
-    telegramClient.addEventHandler(
+    client.addEventHandler(
       eventHandler,
-      new NewMessage({
-        incoming: true,
-        chats: [channelId],
-      }),
+      eventBuilder,
     );
   } catch (err) {
     // Signal disconnection state on failure
@@ -285,16 +305,22 @@ export async function startTelegramListener(): Promise<void> {
 /**
  * Stop listening and disconnect from Telegram.
  *
- * Completes the connection and message streams so subscribers can clean up.
+ * Disconnects the client and removes the event handler, but does **not**
+ * complete the RxJS subjects so that a subsequent call to
+ * {@link startTelegramListener} can re-subscribe without creating new streams.
  *
  * @returns Resolves when the client has fully disconnected.
  */
 export async function stopTelegramListener(): Promise<void> {
+  const client = getTelegramClient();
+  // Remove the event handler so stale callbacks don't feed into the stream
+  if (eventHandler && eventBuilder) {
+    try { client.removeEventHandler(eventHandler, eventBuilder); } catch { /* ok */ }
+  }
   // Disconnect the MTProto client from Telegram servers
-  await telegramClient.disconnect();
-  // Signal to connected$ subscribers that the stream has ended
-  connectionStateInput$.complete();
-  // Signal to telegramSignal$ subscribers that no more messages will arrive
-  telegramMessageInput$.complete();
+  await client.disconnect();
+  // Do NOT complete connectionStateInput$ or telegramMessageInput$ — the
+  // subjects survive for the next startTelegramListener call.
+  connectionStateInput$.next(false);
   console.log("[Telegram] Disconnected");
 }

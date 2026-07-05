@@ -1,25 +1,28 @@
 // AveSignalMonitor strategy — no max-position limit, no expiry, pump-result consumer.
 //
 // This strategy is used when the monitored channel is `avesignalmonitor`.
-// Every accepted signal is opened immediately (no cap).  Positions are closed
-// when a matching pump-result message arrives from the same channel.
+// **No signal deduplication is applied** (all signals from the channel are
+// accepted).  If the same token already has an open position a new entry
+// is opened alongside the existing one — the old position is **not** closed
+// on re-entry.
+//
+// Positions are closed only via:
+//   • TP / SL tasks   (configured in the simulator API)
+//   • Trailing stop   (client-side, via trailing_stop.ts)
+//   • Trailing TP     (client-side, via trailing_stop.ts)
+//   • Partial TP      (simulator API partial-take-profit tiers)
+//   • Pump message    (ave_monitor_pump — closes the **oldest** matching
+//                      position for that contract address)
 import { concatMap, filter } from "rxjs/operators";
 import { telegramSignal$ } from "../telegram/telegram_listener";
-import type { AveSignalMonitorPump } from "../telegram/ave_signal_monitor_parser";
-import { acceptedSignal$ } from "../telegram/signals_stream";
-import { openPosition, closePosition, _latestPositions } from "./position_core";
+import type { AveSignalMonitorSignal, AveSignalMonitorPump } from "../telegram/ave_signal_monitor_parser";
+import { openPosition, closePositionById, _latestPositions } from "./position_core";
 
 // ──────────────────────────────────────────────
 // Pump-result observable (filtered from raw signal stream)
 // ──────────────────────────────────────────────
 
-/**
- * Subset of the raw telegram message stream that only contains
- * `ave_monitor_pump` events — the pump-result announcements that tell us
- * a monitored token just pumped.
- */
 const signalMonitorPump$ = telegramSignal$.pipe(
-  // Narrow the union type to AveSignalMonitorPump via a type guard.
   filter(
     (s): s is AveSignalMonitorPump =>
       (s as AveSignalMonitorPump).type === "ave_monitor_pump",
@@ -27,34 +30,59 @@ const signalMonitorPump$ = telegramSignal$.pipe(
 );
 
 // ──────────────────────────────────────────────
-// Signal subscription — accept every signal, no limits
+// Monitor signal observable — no dedup
 // ──────────────────────────────────────────────
 
-// Open every accepted signal immediately.
-// concatMap serialises execution so we never race two openPosition calls.
-acceptedSignal$
-  .pipe(concatMap(async (signal) => openPosition(signal)))
+const signalMonitorSignal$ = telegramSignal$.pipe(
+  filter(
+    (s): s is AveSignalMonitorSignal =>
+      (s as AveSignalMonitorSignal).type === "ave_monitor_signal",
+  ),
+);
+
+// ──────────────────────────────────────────────
+// Signal subscription — accept every signal, no close-before-open
+// ──────────────────────────────────────────────
+
+signalMonitorSignal$
+  .pipe(
+    concatMap(async (signal) => {
+      // Open a new position with force=true to bypass the pair-exists guard.
+      // The old position (if any) for the same token is **not** closed —
+      // it continues running until it hits TP/SL/trailing/pump.
+      await openPosition(signal, { force: true });
+    }),
+  )
   .subscribe();
 
 // ──────────────────────────────────────────────
-// Pump result consumer — close position when a pump arrives
+// Pump result consumer — close **oldest** matching position
 // ──────────────────────────────────────────────
 
-// Listen for pump-result messages and close the matching open position.
 signalMonitorPump$.subscribe((pump: AveSignalMonitorPump) => {
-  // Scan all tracked positions for one whose contract matches the pump.
-  for (const [pair, pos] of _latestPositions) {
+  let oldestId: number | undefined;
+  let oldestTime = Infinity;
+  let oldestName = "";
+
+  for (const [pid, pos] of _latestPositions) {
     if (
       pos.signal.contractAddress === pump.contractAddress &&
       (pos.status === "open" || pos.status === "closing")
     ) {
-      console.log(
-        `[position_manager] Pump signal for ${pos.tokenName} ` +
-          `(x${pump.multiplier}, jumped to ${pump.jumpedToK}K) — closing`,
-      );
-      // Close at the pump peak (simulated take-profit).
-      closePosition(pair, "take_profit");
-      return;
+      if (pos.openedAt < oldestTime) {
+        oldestTime = pos.openedAt;
+        oldestId = pid;
+        oldestName = pos.tokenName;
+      }
     }
+  }
+
+  if (oldestId !== undefined) {
+    const detail = `Pump x${pump.multiplier} to $${pump.jumpedToK}K (from $${pump.jumpedFromK}K)`;
+    console.log(
+      `[position_manager] Pump signal for ${oldestName} ` +
+        `(x${pump.multiplier}, jumped to ${pump.jumpedToK}K) — closing oldest position`,
+    );
+    closePositionById(oldestId, "pump_message", detail);
   }
 });

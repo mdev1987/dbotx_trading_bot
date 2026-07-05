@@ -17,7 +17,7 @@ import type { ParsedSignal } from "../telegram/telegram_listener";
 import type { AveScannerSignal } from "../telegram/ave_scanner_parser";
 import { simFastBuy, simFastSell } from "./fast_buy_sell";
 import type { ProfitLossGroup } from "./fast_buy_sell";
-import { refreshAccount$, latestAccount } from "./account";
+import { refreshAccount$, latestAccount, fetchSimulatorAccount, setLatestAccount } from "./account";
 import { fetchWithRetry } from "./http";
 import { getDailyPnlUsd } from "../analytics/reports";
 import type { AveSignalMonitorPump } from "../telegram/ave_signal_monitor_parser";
@@ -266,38 +266,41 @@ async function fetchBuyTrade(orderId: string): Promise<TradeRecord | null> {
 
 interface PositionCommand {
   type: "upsert" | "patch" | "remove";
-  pair: string;
+  /** Position ID (used as the store key) */
+  id: number;
+  /** Full position object (required for upsert) */
   position?: PositionState;
+  /** Partial fields to merge (required for patch) */
   patch?: Partial<PositionState>;
 }
 
 const positionCommand$ = new Subject<PositionCommand>();
 
-export let _latestPositions = new Map<string, PositionState>();
+export let _latestPositions = new Map<number, PositionState>();
 
-export const positions$: Observable<Map<string, PositionState>> =
+export const positions$: Observable<Map<number, PositionState>> =
   positionCommand$.pipe(
     scan((map, cmd) => {
       // Remove: delete position from the store entirely
       if (cmd.type === "remove") {
         const next = new Map(map);
-        next.delete(cmd.pair);
+        next.delete(cmd.id);
         _latestPositions = next;
         return next;
       }
-      // Upsert: replace the entire position entry for this pair
+      // Upsert: replace the entire position entry for this id
       if (cmd.type === "upsert" && cmd.position) {
         const next = new Map(map);
-        next.set(cmd.pair, cmd.position);
+        next.set(cmd.id, cmd.position);
         _latestPositions = next;
         return next;
       }
       // Patch: merge a partial update into the existing position fields
       if (cmd.type === "patch" && cmd.patch) {
-        const existing = map.get(cmd.pair);
+        const existing = map.get(cmd.id);
         if (existing) {
           const next = new Map(map);
-          next.set(cmd.pair, {
+          next.set(cmd.id, {
             ...existing,
             ...cmd.patch,
             lastUpdateAt: Date.now(),
@@ -309,7 +312,7 @@ export const positions$: Observable<Map<string, PositionState>> =
       // Fallback: return current map unchanged
       _latestPositions = map;
       return map;
-    }, new Map<string, PositionState>()),
+    }, new Map<number, PositionState>()),
     shareReplay({ bufferSize: 1, refCount: true }),
   );
 
@@ -326,26 +329,57 @@ export const openPositions$: Observable<PositionState[]> = positions$.pipe(
   shareReplay({ bufferSize: 1, refCount: true }),
 );
 
+/** Auto-incrementing position ID counter */
+let _nextPositionId = 1;
+
 /**
- * Replace the entire position for a given pair in the store.
+ * Replace the entire position for a given id in the store.
  *
  * @param position - The full position state to store.
  */
 function upsertPosition(position: PositionState): void {
-  positionCommand$.next({ type: "upsert", pair: position.pair, position });
+  positionCommand$.next({ type: "upsert", id: position.id, position });
 }
 
 /**
- * Apply a partial update to an existing position in the store.
+ * Apply a partial update to an existing position, identified by its ID.
+ *
+ * @param id - The unique position ID.
+ * @param patch - Partial position fields to merge into the current state.
+ */
+export function patchPositionById(
+  id: number,
+  patch: Partial<PositionState>,
+): void {
+  positionCommand$.next({ type: "patch", id, patch });
+}
+
+/**
+ * Apply a partial update to the oldest open position with a given LP address.
+ *
+ * This is a convenience wrapper for callers that only know the pair (LP address)
+ * and don't have the position ID. It patches only the **oldest** open position
+ * matching the pair.
  *
  * @param pair - The liquidity pair address.
- * @param patch - Partial position fields to merge into the current state.
+ * @param patch - Partial position fields to merge.
  */
 export function patchPosition(
   pair: string,
   patch: Partial<PositionState>,
 ): void {
-  positionCommand$.next({ type: "patch", pair, patch });
+  // Find the oldest open position with this pair
+  let oldest: PositionState | undefined;
+  for (const pos of _latestPositions.values()) {
+    if (pos.pair === pair && (pos.status === "open" || pos.status === "closing")) {
+      if (!oldest || pos.openedAt < oldest.openedAt) {
+        oldest = pos;
+      }
+    }
+  }
+  if (oldest) {
+    positionCommand$.next({ type: "patch", id: oldest.id, patch });
+  }
 }
 
 // ──────────────────────────────────────────────
@@ -415,7 +449,7 @@ const pnlTaskPoll$ = timer(CONFIG.pnlTaskPollMs, CONFIG.pnlTaskPollMs).pipe(
         }
 
         // Persist task data and best-known entry price to the position
-        patchPosition(pos.pair, {
+        patchPositionById(pos.id, {
           tasks: taskMap,
           entryPriceUsd: pos.entryPriceUsd ?? tasks[0]?.basePriceUsd ?? null,
         });
@@ -449,7 +483,7 @@ const pnlTaskPoll$ = timer(CONFIG.pnlTaskPollMs, CONFIG.pnlTaskPollMs).pipe(
             pos.entryCostUsd ??
             (pos.entryPriceUsd ? pos.entryPriceUsd * pos.sizeSol : 0);
           const profitUsd = cost * (weightedProfitPct / 100);
-          patchPosition(pos.pair, {
+          patchPositionById(pos.id, {
             currentProfitPercent: weightedProfitPct,
             currentProfitUsd: profitUsd,
           });
@@ -458,7 +492,7 @@ const pnlTaskPoll$ = timer(CONFIG.pnlTaskPollMs, CONFIG.pnlTaskPollMs).pipe(
           const reason: CloseReason = tasks.some((t) => t.state === "done")
             ? "take_profit"
             : "expired";
-          closePosition(pos.pair, reason);
+          closePositionById(pos.id, reason);
         }
       } catch (err) {
         console.error(
@@ -491,7 +525,7 @@ const tradePairPoll$ = timer(CONFIG.tradePairPollMs, CONFIG.tradePairPollMs).pip
         if (!matching) continue;
 
         // Sync position store with latest balance and profit data from API
-        patchPosition(matching.pair, {
+        patchPositionById(matching.id, {
           remainingBalance: pair.token0Balance,
           currentProfitPercent: pair.fullProfitPercent,
           currentProfitUsd: pair.fullProfitUsd,
@@ -500,7 +534,7 @@ const tradePairPoll$ = timer(CONFIG.tradePairPollMs, CONFIG.tradePairPollMs).pip
         // Close position if remaining token balance has dropped to zero
         const balanceNum = Number(pair.token0Balance);
         if (balanceNum <= 0 && matching.status === "open") {
-          closePosition(matching.pair, "take_profit");
+          closePositionById(matching.id, "take_profit");
         }
       }
     } catch (err) {
@@ -519,12 +553,12 @@ tradePairPoll$.subscribe();
  * Poll the API until an entry price is available for a given order.
  *
  * @param orderId - The buy order ID to fetch the trade record for.
- * @param pair - The liquidity pair address to patch with entry data.
+ * @param positionId - The unique position ID to patch with entry data.
  * @returns The entry price in USD, or null if all attempts are exhausted.
  */
 async function captureEntryPrice(
   orderId: string,
-  pair: string,
+  positionId: number,
 ): Promise<number | null> {
   // Retry loop: attempt to fetch the trade record up to the configured max
   for (let attempt = 0; attempt < CONFIG.maxEntryPriceAttempts; attempt++) {
@@ -533,14 +567,14 @@ async function captureEntryPrice(
 
       // If a trade record with a valid price is found, persist and return
       if (trade && trade.priceUsd > 0) {
-        patchPosition(pair, {
+        patchPositionById(positionId, {
           entryPriceUsd: trade.priceUsd,
           peakPriceUsd: trade.priceUsd,
           entryCostUsd: trade.totalUsd,
         });
 
         console.log(
-          `[position_core] Entry price for ${pair}: $${trade.priceUsd}`,
+          `[position_core] Entry price for order ${orderId}: $${trade.priceUsd}`,
         );
         return trade.priceUsd;
       }
@@ -574,24 +608,30 @@ const EXEC_DEFAULTS = {
 // ──────────────────────────────────────────────
 
 /**
- * Close a position by marking it as closed, optionally executing a sell,
- * emitting a close event, and processing the next queued signal.
+ * Close a position by its unique ID.
  *
- * @param pair - The liquidity pair address to close.
- * @param reason - The reason for closing (take_profit, trailing_stop, expired, etc.).
+ * Marks the position as closing, optionally executes a market sell, emits
+ * a close event, and processes the next queued signal.
+ *
+ * @param id - The unique position ID.
+ * @param reason - The reason for closing.
  */
-export async function closePosition(pair: string, reason: CloseReason): Promise<void> {
-  const pos = _latestPositions.get(pair);
+export async function closePositionById(
+  id: number,
+  reason: CloseReason,
+  detailOverride?: string,
+): Promise<void> {
+  const pos = _latestPositions.get(id);
   // Skip if position does not exist, is already closed, or is already being closed
   if (!pos || pos.status === "closed" || pos.status === "closing") return;
 
   try {
     // Mark position as closing before executing any sell
-    patchPosition(pair, { status: "closing", closeReason: reason });
+    patchPositionById(id, { status: "closing", closeReason: reason });
 
-    // Execute market sell for trailing stop or expired positions
+    // Execute market sell for trailing stop, expired, or pump_message positions
     try {
-      if (reason === "trailing_stop" || reason === "expired") {
+      if (reason === "trailing_stop" || reason === "expired" || reason === "pump_message") {
         const orderId = await simFastSell({
           pair: pos.pair,
           amountOrPercent: 1,
@@ -609,7 +649,7 @@ export async function closePosition(pair: string, reason: CloseReason): Promise<
     }
 
     // Build final closed state from latest store data (or fallback to initial pos)
-    const latest = _latestPositions.get(pair) ?? pos;
+    const latest = _latestPositions.get(id) ?? pos;
 
     const final: PositionState = {
       ...latest,
@@ -621,12 +661,14 @@ export async function closePosition(pair: string, reason: CloseReason): Promise<
     // Persist final closed state to the position store
     upsertPosition(final);
 
+    const detail = detailOverride ?? `Closed via ${reason}`;
+
     // Emit close event so downstream consumers can react
     emitEvent({
       type: "closed",
       position: final,
       closeReason: reason,
-      detail: `Closed via ${reason}`,
+      detail,
     });
 
     refreshAccount$.next();
@@ -634,7 +676,34 @@ export async function closePosition(pair: string, reason: CloseReason): Promise<
     // Attempt to open the next queued signal after a position closes
     processQueuedSignal();
   } catch (err) {
-    console.error(`[position_core] Failed to close position ${pair}:`, err);
+    console.error(`[position_core] Failed to close position #${id}:`, err);
+  }
+}
+
+/**
+ * Close the **oldest** open position matching a given LP address.
+ *
+ * This is a convenience wrapper for callers that only know the pair and want
+ * to close one position. If multiple positions exist for the same pair (e.g.
+ * after a re-entry), the oldest one is closed.
+ *
+ * @param pair - The liquidity pair address.
+ * @param reason - The reason for closing.
+ */
+export async function closePosition(pair: string, reason: CloseReason): Promise<void> {
+  // Find the oldest open position with this pair
+  let oldestId: number | undefined;
+  let oldestTime = Infinity;
+  for (const [pid, pos] of _latestPositions) {
+    if (pos.pair === pair && (pos.status === "open" || pos.status === "closing")) {
+      if (pos.openedAt < oldestTime) {
+        oldestTime = pos.openedAt;
+        oldestId = pid;
+      }
+    }
+  }
+  if (oldestId !== undefined) {
+    await closePositionById(oldestId, reason);
   }
 }
 
@@ -670,18 +739,36 @@ function computePositionSize(): number {
 /**
  * Open a new position by executing a buy order and persisting the position state.
  *
- * Guards against duplicate buys, respects daily loss limits, computes position
- * size, executes the buy via simFastBuy, then stores and emits the result.
+ * Guards against duplicate buys (unless `force` is true), respects daily loss
+ * limits, computes position size, executes the buy via simFastBuy, then stores
+ * and emits the result.
+ *
+ * When `force` is true, the pair-exists and pending-buy guards are bypassed so
+ * the caller (e.g. the monitor strategy) can re-enter a pair after closing the
+ * old position.
  *
  * @param signal - The parsed trading signal containing pair and token info.
+ * @param options - Optional overrides (e.g. `{ force: true }` to skip guards).
  */
-export async function openPosition(signal: ParsedSignal): Promise<void> {
+export async function openPosition(
+  signal: ParsedSignal,
+  options?: { force?: boolean },
+): Promise<void> {
   // Guard: skip if a position for this pair already exists or buy is pending
-  if (
-    _latestPositions.has(signal.lpAddress) ||
-    isPendingBuy(signal.lpAddress)
-  ) {
-    return;
+  if (!options?.force) {
+    let exists = false;
+    for (const pos of _latestPositions.values()) {
+      if (
+        pos.pair === signal.lpAddress &&
+        (pos.status === "open" || pos.status === "closing")
+      ) {
+        exists = true;
+        break;
+      }
+    }
+    if (exists || isPendingBuy(signal.lpAddress)) {
+      return;
+    }
   }
 
   // Guard: respect daily loss limit by skipping new positions when exceeded
@@ -733,7 +820,9 @@ export async function openPosition(signal: ParsedSignal): Promise<void> {
     const now = Date.now();
 
     // Construct the initial position state with null entry prices
+    const positionId = _nextPositionId++;
     const position: PositionState = {
+      id: positionId,
       orderId,
       pair: signal.lpAddress,
       token: signal.contractAddress,
@@ -755,9 +844,22 @@ export async function openPosition(signal: ParsedSignal): Promise<void> {
       signal,
     };
 
-    // Persist position to store and emit opened event for downstream consumers
+    // Persist position to store
     upsertPosition(position);
 
+    // Fetch latest account balance BEFORE emitting the opened event so that
+    // downstream subscribers (Telegram reporter, console logger) see the
+    // balance *after* the buy fee was deducted.
+    try {
+      const fresh = await fetchSimulatorAccount();
+      setLatestAccount(fresh);
+    } catch {
+      // Fall through — the reactive stream refresh below will update eventually
+    }
+    refreshAccount$.next();
+
+    // Emit opened event *after* the account refresh so consumers get the
+    // correct post-buy balance in the message.
     emitEvent({
       type: "opened",
       position,
@@ -765,8 +867,7 @@ export async function openPosition(signal: ParsedSignal): Promise<void> {
     });
 
     // Start background entry-price capture (does not block open)
-    captureEntryPrice(orderId, signal.lpAddress);
-    refreshAccount$.next();
+    captureEntryPrice(orderId, position.id);
   } catch (err) {
     console.error(
       `[position_core] Failed to open position for ${signal.tokenName}:`,
@@ -816,6 +917,7 @@ async function recoverOpenPositions(): Promise<void> {
 
       // Reconstruct a full PositionState from the API trade-pair data
       const pos: PositionState = {
+        id: _nextPositionId++,
         orderId: p._id,
         pair: p._id,
         token: p.tokenInfo0.contract,

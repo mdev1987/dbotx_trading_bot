@@ -9,7 +9,7 @@ import {
   openPositions$,
 } from "../simulator/position_manager";
 import type { PositionEvent } from "../simulator/position_manager";
-import { simulatorAccount$ } from "../simulator/account";
+import { simulatorAccount$, latestAccount } from "../simulator/account";
 import type { SimulatorAccount } from "../simulator/account";
 import { generateReport } from "../analytics/reports";
 import type { PerformanceReport } from "../analytics/reports";
@@ -69,6 +69,7 @@ function closeIcon(reason: string): string {
     case "stop_loss": return "\u{1F534}";          // Red: stopped out
     case "trailing_stop": return "\u{1F7E1}";      // Yellow: trailing stop triggered
     case "expired": return "\u{23F0}";             // Clock: TTL expired
+    case "pump_message": return "\u{1F680}";       // Rocket: pump message closed
     default: return "\u{26A0}\uFE0F";              // Warning: unknown reason
   }
 }
@@ -86,6 +87,7 @@ function reasonLabel(reason: string): string {
     trailing_stop: "Trailing Stop",
     expired: "TTL Expired",
     manual: "Manual",
+    pump_message: "Pump Message",
   };
   return labels[reason] ?? reason;
 }
@@ -152,19 +154,33 @@ function openedMessage(
   report: PerformanceReport,
 ): string {
   const p = ev.position;
-  return convert(
-    [
-      "\u{1F7E2} **Position Opened**",                     // Green header: position opened
-      "",                                                    // Blank separator line
-      `\u{1F512} Token: \`${p.tokenName}\``,                // Token name in code block
-      `\u{1F4B0} Size: **${p.sizeSol.toFixed(2)} SOL**`,    // Position size in SOL
-      `\u{23F0} Time: \`${new Date(p.openedAt).toLocaleTimeString()}\``,  // Open timestamp
-      "",                                                    // Blank separator line
-      balanceStr(account),                                   // Account balance summary
-      openLabel(openCount),                                  // Open position count
-      winsTotalWinrate(report),                              // Win rate summary
-    ].join("\n"),
-  );
+  const sig = p.signal as { maxPumpX?: number; fromDEX?: string; nVibeSignal?: number; walletBuyCount?: number; totalBuySol?: number };
+  const lines: string[] = [
+    "\u{1F7E2} **Position Opened**",
+    "",
+    `\u{1F512} Token: \`${p.tokenName}\``,
+    `\u{1F4B0} Size: **${p.sizeSol.toFixed(2)} SOL**`,
+    `\u{23F0} Time: \`${new Date(p.openedAt).toLocaleTimeString()}\``,
+  ];
+
+  // Signal metadata
+  if (sig.fromDEX) lines.push(`\u{1F4E1} From: \`${sig.fromDEX}\``);
+  if (sig.maxPumpX !== undefined && sig.maxPumpX > 0) {
+    lines.push(`\u{1F680} Max Pump: **x${sig.maxPumpX}**`);
+  }
+  if (sig.nVibeSignal !== undefined) {
+    lines.push(`\u{1F4E2} Signal #${sig.nVibeSignal}`);
+  }
+  if (sig.walletBuyCount && sig.walletBuyCount > 0) {
+    lines.push(`\u{1F464} Wallets: **${sig.walletBuyCount}**`);
+  }
+  if (sig.totalBuySol && sig.totalBuySol > 0) {
+    lines.push(`\u{1F4B0} Buy Vol: **${sig.totalBuySol.toFixed(2)} SOL**`);
+  }
+
+  lines.push("", balanceStr(account), openLabel(openCount), winsTotalWinrate(report));
+
+  return convert(lines.join("\n"));
 }
 
 /**
@@ -232,26 +248,32 @@ function closedMessage(
   const headerIcon = isProfit ? "\u{1F7E2}" : "\u{1F534}";   // Green / Red circle
   const chartIcon = isProfit ? "\u{1F4C8}" : "\u{1F4C9}";    // Chart up / Chart down
 
-  return convert(
-    [
-      `${headerIcon} **Position Closed** ${resultIcon}`,     // Colored header with result icon
-      "",                                                      // Blank line
-      `\u{1F512} Token: \`${p.tokenName}\``,                  // Token name in code block
-      p.entryPriceUsd !== null
-        ? `\u{1F4B5} Entry: \`$${p.entryPriceUsd.toFixed(8)}\``  // Entry price (if available)
-        : "",
-      buildExitPrice(p.entryPriceUsd, profit),                 // Calculated exit price
-      buildPnlLine(profit, profitUsd, chartIcon),              // PnL with direction icon
-      `\u{1F517} Reason: ${closeIcon(reason)} **${reasonLabel(reason)}**`,  // Close reason
-      `\u{23F1}\uFE0F Duration: \`${duration}\``,             // Position hold duration
-      "",                                                      // Blank line
-      balanceStr(account),                                     // Account balance summary
-      openLabel(openCount),                                    // Open position count
-      winsTotalWinrate(report),                                // Win rate summary
-    ]
-      .filter(Boolean)   // Remove empty lines (e.g. when entryPriceUsd is null)
-      .join("\n"),
+  const lines: string[] = [
+    `${headerIcon} **Position Closed** ${resultIcon}`,
+    "",
+    `\u{1F512} Token: \`${p.tokenName}\``,
+  ];
+
+  // Show pump details when closed by pump message
+  if (reason === "pump_message" && ev.detail) {
+    lines.push(`\u{1F680} ${ev.detail}`);
+  }
+
+  lines.push(
+    p.entryPriceUsd !== null
+      ? `\u{1F4B5} Entry: \`$${p.entryPriceUsd.toFixed(8)}\``
+      : "",
+    buildExitPrice(p.entryPriceUsd, profit),
+    buildPnlLine(profit, profitUsd, chartIcon),
+    `\u{1F517} Reason: ${closeIcon(reason)} **${reasonLabel(reason)}**`,
+    `\u{23F1}\uFE0F Duration: \`${duration}\``,
+    "",
+    balanceStr(account),
+    openLabel(openCount),
+    winsTotalWinrate(report),
   );
+
+  return convert(lines.filter(Boolean).join("\n"));
 }
 
 /**
@@ -380,12 +402,15 @@ class TelegramReporter {
     if (this.subs.length > 0) return;
 
     // Subscribe 1: position-opened events → build and enqueue an "opened" message
+    // Uses the synchronous latestAccount snapshot (already refreshed in
+    // openPosition before the event was emitted) so the balance displayed
+    // is always correct (post-buy), never stale.
     this.subs.push(
       positionEvent$
         .pipe(
           map((ev) => {
             if (ev.type !== "opened") return null;
-            return openedMessage(ev, this.account, this.openCount, generateReport());
+            return openedMessage(ev, latestAccount, this.openCount, generateReport());
           }),
         )
         .subscribe((msg) => {
@@ -399,7 +424,7 @@ class TelegramReporter {
         .pipe(
           map((ev) => {
             const report = generateReport();
-            return closedMessage(ev, this.account, this.openCount, report);
+            return closedMessage(ev, latestAccount, this.openCount, report);
           }),
         )
         .subscribe((msg) => this.send$.next(msg)),

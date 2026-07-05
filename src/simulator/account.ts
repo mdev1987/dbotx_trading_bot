@@ -77,6 +77,19 @@ export async function fetchSimulatorAccount(): Promise<SimulatorAccount> {
 export let latestAccount: SimulatorAccount | null = null;
 
 /**
+ * Update the synchronous account snapshot.
+ *
+ * Exists because ES module imports are read-only — the observable chain in
+ * this file reassigns `latestAccount` directly, but consumers must use this
+ * setter when they need to update the snapshot from outside the module.
+ *
+ * @param account - The new account value.
+ */
+export function setLatestAccount(account: SimulatorAccount): void {
+  latestAccount = account;
+}
+
+/**
  * Manual refresh stream — triggers on refreshAccount$.next()
  */
 const manualRefresh$ = refreshAccount$.pipe(

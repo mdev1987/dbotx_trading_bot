@@ -7,8 +7,8 @@ import {
   _latestPositions,
   openPosition,
   enqueueSignal,
-  closePosition,
-  patchPosition,
+  closePositionById,
+  patchPositionById,
   openPositions$,
 } from "./position_core";
 import type { PositionState } from "./types";
@@ -81,7 +81,7 @@ const checkPositionExpiry = (open: PositionState[]): void => {
         `[EXPIRY] Hard cap: ${pos.tokenName} ` +
           `(${((now - pos.openedAt) / 1000).toFixed(0)}s >= ${CONFIG.maxTtlSecs}s)`,
       );
-      closePosition(pos.pair, "expired");
+      closePositionById(pos.id, "expired");
       continue;
     }
 
@@ -93,7 +93,7 @@ const checkPositionExpiry = (open: PositionState[]): void => {
       CONFIG.minProfitForTtlExtensionPct > 0 &&
       pos.currentProfitPercent >= CONFIG.minProfitForTtlExtensionPct
     ) {
-      patchPosition(pos.pair, { expiresAt: now + CONFIG.baseTtlSecs * 1000 });
+      patchPositionById(pos.id, { expiresAt: now + CONFIG.baseTtlSecs * 1000 });
       console.log(
         `[EXPIRY] Renewed ${pos.tokenName} ` +
           `(profit ${(pos.currentProfitPercent * 100).toFixed(2)}% >= ` +
@@ -107,7 +107,7 @@ const checkPositionExpiry = (open: PositionState[]): void => {
       `[EXPIRY] Expired: ${pos.tokenName} ` +
         `(${((now - pos.openedAt) / 1000).toFixed(0)}s > ${CONFIG.baseTtlSecs}s)`,
     );
-    closePosition(pos.pair, "expired");
+    closePositionById(pos.id, "expired");
   }
 };
 

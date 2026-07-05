@@ -40,8 +40,8 @@ import { pairUpdate$ } from "../market/dbotx_data_ws";
 import { filter, map, withLatestFrom } from "rxjs/operators";
 import {
   openPositions$,
-  patchPosition,
-  closePosition,
+  patchPositionById,
+  closePositionById,
   emitEvent,
 } from "./position_core";
 
@@ -103,7 +103,7 @@ export function startTrailingMonitor(): void {
         // This is shared by both trailing modes.
         if (price > peakPriceUsd) {
           peakPriceUsd = price;
-          patchPosition(pos.pair, { peakPriceUsd });
+          patchPositionById(pos.id, { peakPriceUsd });
         }
 
         // If the trailing stop is not yet armed, check whether the price has
@@ -114,7 +114,7 @@ export function startTrailingMonitor(): void {
 
           if (price >= activationPrice) {
             trailingActive = true;
-            patchPosition(pos.pair, { trailingActive: true });
+            patchPositionById(pos.id, { trailingActive: true });
             console.log(
               `[trailing] Activated stop for ${pos.tokenName} ` +
                 `(price $${price} >= activation $${activationPrice})`,
@@ -175,7 +175,7 @@ export function startTrailingMonitor(): void {
           detail: `Trailing stop: price $${price} below $${trailPrice}`,
         });
 
-        closePosition(pos.pair, "trailing_stop");
+        closePositionById(pos.id, "trailing_stop");
         return;
       }
 
@@ -197,7 +197,7 @@ export function startTrailingMonitor(): void {
           detail: `Trailing TP: price $${price} below $${trailPrice}`,
         });
 
-        closePosition(pos.pair, "take_profit");
+        closePositionById(pos.id, "take_profit");
       }
     });
 
