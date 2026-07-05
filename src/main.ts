@@ -113,12 +113,8 @@ function startedMessage(): string {
     `Mode: \u{1F9EA} \`Simulate\``,       // 🧪 Simulate
   ];
 
-  // Position limit depends on signal source mode
-  if (channel_mode === "monitor") {
-    lines.push(`\u{1F4CC} Positions: \`no limit\` (Ave Signal Monitor)`); // 📌
-  } else if (channel_mode === "ave") {
-    lines.push(`\u{1F4CC} Max Positions: \`${CONFIG.maxPositions}\``); // 📌
-  }
+  // Position limit
+  lines.push(`\u{1F4CC} Max Positions: \`${CONFIG.maxPositions}\``); // 📌
 
   // Position size with min/max and risk limit
   lines.push(

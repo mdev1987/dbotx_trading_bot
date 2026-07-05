@@ -21,7 +21,7 @@ import type {
 } from "../telegram/ave_signal_monitor_parser";
 import {
   openPosition,
-  closePositionById,
+  handlePumpPartialExit,
   _latestPositions,
 } from "./position_core";
 
@@ -64,7 +64,7 @@ signalMonitorSignal$
   .subscribe();
 
 // ──────────────────────────────────────────────
-// Pump result consumer — close **oldest** matching position
+// Pump result consumer — partial exit on **oldest** matching position
 // ──────────────────────────────────────────────
 
 signalMonitorPump$.subscribe((pump: AveSignalMonitorPump) => {
@@ -86,11 +86,10 @@ signalMonitorPump$.subscribe((pump: AveSignalMonitorPump) => {
   }
 
   if (oldestId !== undefined) {
-    const detail = `Pump x${pump.multiplier} to $${pump.jumpedToK}K (from $${pump.jumpedFromK}K)`;
     console.log(
       `[position_manager] Pump signal for ${oldestName} ` +
-        `(x${pump.multiplier}, jumped to ${pump.jumpedToK}K) — closing oldest position`,
+        `(x${pump.multiplier}, jumped to ${pump.jumpedToK}K) — partial sell 50 %, trailing manages rest`,
     );
-    closePositionById(oldestId, "pump_message", detail);
+    handlePumpPartialExit(oldestId, pump);
   }
 });

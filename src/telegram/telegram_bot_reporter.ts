@@ -112,14 +112,7 @@ function balanceStr(account: SimulatorAccount | null): string {
  * @returns Formatted label showing position count and limit info.
  */
 function openLabel(count: number): string {
-  switch (CONFIG.telegramChannelUserName) {
-    case "avesignalmonitor":
-      return `\u{1F4CC} Positions: \`${count}\` (no limit)`;
-    case "avesolantokenscanner":
-      return `\u{1F4CC} Positions: \`${count} / ${CONFIG.maxPositions}\``;
-    default:
-      return `\u{1F4CC} Positions: \`${count}\` (no limit)`;
-  }
+  return `\u{1F4CC} Positions: \`${count} / ${CONFIG.maxPositions}\``;
 }
 
 /**

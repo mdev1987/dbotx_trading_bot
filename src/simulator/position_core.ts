@@ -343,6 +343,22 @@ export const openPositions$: Observable<PositionState[]> = positions$.pipe(
 /** Auto-incrementing position ID counter */
 let _nextPositionId = 1;
 
+// ──────────────────────────────────────────────
+// Consecutive Loss Cooldown
+// ──────────────────────────────────────────────
+
+/** Number of consecutive losing trades */
+let _consecutiveLosses = 0;
+
+/** Timestamp (ms) until which new positions are blocked by cooldown */
+let _cooldownUntil = 0;
+
+/** How long to pause after 3+ consecutive losses (ms) */
+const COOLDOWN_DURATION_MS = 20 * 60 * 1000; // 20 minutes
+
+/** Consecutive losses needed to trigger the cooldown */
+const COOLDOWN_THRESHOLD = 3;
+
 /**
  * Replace the entire position for a given id in the store.
  *
@@ -788,10 +804,69 @@ export async function closePositionById(
 
     refreshAccount$.next();
 
+    // Track consecutive losses for cooldown
+    if (final.currentProfitPercent < 0) {
+      _consecutiveLosses++;
+      if (_consecutiveLosses >= COOLDOWN_THRESHOLD) {
+        _cooldownUntil = Date.now() + COOLDOWN_DURATION_MS;
+        console.log(
+          `[position_core] ${_consecutiveLosses} consecutive losses — ` +
+            `cooling down for ${COOLDOWN_DURATION_MS / 1000}s`,
+        );
+      }
+    } else {
+      _consecutiveLosses = 0;
+    }
+
     // Attempt to open the next queued signal after a position closes
     processQueuedSignal();
   } catch (err) {
     console.error(`[position_core] Failed to close position #${id}:`, err);
+  }
+}
+
+/**
+ * Handle a pump message by selling 50 % of the position and letting the
+ * trailing stop manage the remainder.
+ *
+ * Unlike closePositionById this does NOT close the position — the position
+ * stays open so the trailing monitor can capture further upside on the
+ * remaining 50 %.
+ */
+export async function handlePumpPartialExit(
+  id: number,
+  pump: AveSignalMonitorPump,
+): Promise<void> {
+  const pos = _latestPositions.get(id);
+  if (!pos || pos.status !== "open") return;
+
+  try {
+    const orderId = await simFastSell({
+      pair: pos.pair,
+      amountOrPercent: 0.5,
+      ...EXEC_DEFAULTS,
+    });
+
+    console.log(
+      `[position_core] Pump partial sell (50 %) for ${pos.tokenName}: ${orderId}`,
+    );
+
+    refreshAccount$.next();
+
+    emitEvent({
+      type: "trailing_triggered",
+      position: {
+        ...pos,
+        status: "open",
+        lastUpdateAt: Date.now(),
+      },
+      detail: `Pump x${pump.multiplier} to $${pump.jumpedToK}K (from $${pump.jumpedFromK}K) — sold 50 %, trailing manages rest`,
+    });
+  } catch (err) {
+    console.error(
+      `[position_core] Failed to partial-sell ${pos.tokenName}:`,
+      err,
+    );
   }
 }
 
@@ -827,16 +902,42 @@ export async function closePosition(pair: string, reason: CloseReason): Promise<
 // ──────────────────────────────────────────────
 
 /**
- * Compute the position size in SOL based on config defaults and risk limits.
+ * Score a signal based on wallet count, buy volume, and max pump multiplier.
  *
- * Starts from the configured base size, applies risk cap, then clamps
- * to the configured min/max bounds.
+ * @returns A score between 0 and 1, where 1 is the highest quality.
+ */
+function scoreSignal(signal: ParsedSignal): number {
+  const s = signal as {
+    walletBuyCount?: number;
+    totalBuySol?: number;
+    maxPumpX?: number;
+  };
+  const walletScore = Math.min(1, (s.walletBuyCount ?? 0) / 5);
+  const volumeScore = Math.min(1, (s.totalBuySol ?? 0) / 5);
+  const pumpScore = Math.min(1, (s.maxPumpX ?? 0) / 10);
+  return walletScore * 0.4 + volumeScore * 0.3 + pumpScore * 0.3;
+}
+
+/**
+ * Compute the position size in SOL based on signal quality, config, and risk limits.
  *
+ * When a signal is provided the position size is scaled linearly between
+ * minPositionSol and maxPositionSol according to the signal's composite score
+ * (wallet count, buy volume, max pump).  The result is then capped by the
+ * configured risk percentage of the account balance and clamped to bounds.
+ *
+ * @param signal - Optional parsed signal used to compute a quality score.
  * @returns The final position size in SOL.
  */
-function computePositionSize(): number {
-  const { positionSize, minPositionSol, maxPositionSol, maxRiskPct } = CONFIG;
-  let size = positionSize;
+function computePositionSize(signal?: ParsedSignal): number {
+  const { minPositionSol, maxPositionSol, maxRiskPct } = CONFIG;
+  let size = maxPositionSol;
+
+  // Scale size by signal quality when signal data is available
+  if (signal) {
+    const score = scoreSignal(signal);
+    size = minPositionSol + (maxPositionSol - minPositionSol) * score;
+  }
 
   // Cap size by risk percentage of current account balance
   if (maxRiskPct > 0 && latestAccount?.balance) {
@@ -898,9 +999,19 @@ export async function openPosition(
     }
   }
 
+  // Guard: consecutive loss cooldown — pause after 3 losses in a row
+  const remaining = _cooldownUntil - Date.now();
+  if (remaining > 0) {
+    console.log(
+      `[position_core] Cooldown active (${Math.ceil(remaining / 1000)}s remaining) ` +
+        `— skipping ${signal.tokenName}`,
+    );
+    return;
+  }
+
   try {
-    // Compute position size and build TP/SL parameters from config and signal
-    const sizeSol = computePositionSize();
+    // Compute position size (scaled by signal quality) and build TP/SL parameters
+    const sizeSol = computePositionSize(signal);
     const maxPumpX = (signal as { maxPumpX?: number }).maxPumpX;
     const stopEarnGroup = buildStopEarnGroup(maxPumpX);
     const stopLossPercent = buildStopLossPercent();
