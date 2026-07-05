@@ -214,14 +214,8 @@ function buildPnlLine(
 function buildExitPrice(
   entryPriceUsd: number | null,
   profit: number,
-  exitPriceUsd?: number | null,
 ): string {
-  // Prefer the actual execution price when available (populated by Bug 2 fix).
-  if (exitPriceUsd != null) {
-    return `\u{1F4B4} Exit: \`$${exitPriceUsd.toFixed(8)}\``;
-  }
   if (entryPriceUsd === null) return "";
-  // Fallback: derive exit price from entry and PnL percentage.
   const exitPrice = entryPriceUsd * (1 + profit / 100);
   return `\u{1F4B4} Exit: \`$${exitPrice.toFixed(8)}\``;
 }
@@ -268,7 +262,7 @@ function closedMessage(
     p.entryPriceUsd !== null
       ? `\u{1F4B5} Entry: \`$${p.entryPriceUsd.toFixed(8)}\``
       : "",
-    buildExitPrice(p.entryPriceUsd, profit, p.exitPriceUsd),
+    buildExitPrice(p.entryPriceUsd, profit),
     buildPnlLine(profit, profitUsd, chartIcon),
     `\u{1F517} Reason: ${closeIcon(reason)} **${reasonLabel(reason)}**`,
     `\u{23F1}\uFE0F Duration: \`${duration}\``,
