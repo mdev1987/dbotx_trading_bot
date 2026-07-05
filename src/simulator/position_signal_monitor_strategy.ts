@@ -15,8 +15,15 @@
 //                      position for that contract address)
 import { concatMap, filter } from "rxjs/operators";
 import { telegramSignal$ } from "../telegram/telegram_listener";
-import type { AveSignalMonitorSignal, AveSignalMonitorPump } from "../telegram/ave_signal_monitor_parser";
-import { openPosition, closePositionById, _latestPositions } from "./position_core";
+import type {
+  AveSignalMonitorSignal,
+  AveSignalMonitorPump,
+} from "../telegram/ave_signal_monitor_parser";
+import {
+  openPosition,
+  closePositionById,
+  _latestPositions,
+} from "./position_core";
 
 // ──────────────────────────────────────────────
 // Pump-result observable (filtered from raw signal stream)
@@ -38,6 +45,7 @@ const signalMonitorSignal$ = telegramSignal$.pipe(
     (s): s is AveSignalMonitorSignal =>
       (s as AveSignalMonitorSignal).type === "ave_monitor_signal",
   ),
+  filter((s) => s.chain === "solana"),
 );
 
 // ──────────────────────────────────────────────

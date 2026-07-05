@@ -38,8 +38,6 @@ import {
 /*                                  Constants                                 */
 /* -------------------------------------------------------------------------- */
 
-
-
 const CHANNEL_NAME = CONFIG.telegramChannelUserName.toLowerCase();
 
 /* -------------------------------------------------------------------------- */
@@ -120,7 +118,9 @@ async function ask(question: string): Promise<string> {
 
       // Timeout reached — reject the promise with a descriptive error
       reject(
-        new Error(`Input timed out after ${CONFIG.tgAuthTimeoutMs / 1000} seconds`),
+        new Error(
+          `Input timed out after ${CONFIG.tgAuthTimeoutMs / 1000} seconds`,
+        ),
       );
     }, CONFIG.tgAuthTimeoutMs);
 
@@ -205,6 +205,7 @@ export const telegramSignal$ = telegramMessageInput$.pipe(
   //   (prev, curr) => prev.contractAddress === curr.contractAddress,
   // ),
   // Step 7: Cache the latest signal and share across subscribers
+
   shareReplay({
     bufferSize: 1,
     refCount: true,
@@ -267,9 +268,7 @@ export async function startTelegramListener(): Promise<void> {
     console.log("[Telegram] Connected");
     // Resolve the channel entity by username if not already known
     if (!channelId) {
-      const entity = await client.getEntity(
-        CONFIG.telegramChannelUserName,
-      );
+      const entity = await client.getEntity(CONFIG.telegramChannelUserName);
       channelId = Number(entity.id);
     }
     console.log(
@@ -277,7 +276,11 @@ export async function startTelegramListener(): Promise<void> {
     );
     // Remove any stale event handler before adding the new one
     if (eventHandler && eventBuilder) {
-      try { client.removeEventHandler(eventHandler, eventBuilder); } catch { /* ok */ }
+      try {
+        client.removeEventHandler(eventHandler, eventBuilder);
+      } catch {
+        /* ok */
+      }
     }
     // Create the event handler that feeds incoming messages into the RxJS stream
     eventHandler = (event: NewMessageEvent) => {
@@ -288,10 +291,7 @@ export async function startTelegramListener(): Promise<void> {
       chats: [channelId],
     });
     // Subscribe to new incoming messages from the target channel only
-    client.addEventHandler(
-      eventHandler,
-      eventBuilder,
-    );
+    client.addEventHandler(eventHandler, eventBuilder);
   } catch (err) {
     // Signal disconnection state on failure
     connectionStateInput$.next(false);
@@ -315,7 +315,11 @@ export async function stopTelegramListener(): Promise<void> {
   const client = getTelegramClient();
   // Remove the event handler so stale callbacks don't feed into the stream
   if (eventHandler && eventBuilder) {
-    try { client.removeEventHandler(eventHandler, eventBuilder); } catch { /* ok */ }
+    try {
+      client.removeEventHandler(eventHandler, eventBuilder);
+    } catch {
+      /* ok */
+    }
   }
   // Disconnect the MTProto client from Telegram servers
   await client.disconnect();
