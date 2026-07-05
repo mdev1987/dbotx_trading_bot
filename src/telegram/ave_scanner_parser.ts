@@ -44,6 +44,8 @@ export interface ExternalLinks {
   app?: string;
   /** Community/Telegram URL */
   community?: string;
+  /** Pump.fun URL */
+  pumpfun?: string;
   /** Twitter/X URL */
   twitter?: string;
 }

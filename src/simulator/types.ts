@@ -295,6 +295,8 @@ export interface PositionState {
   status: PositionStatus;
   /** Why the position was closed (null while open / closing) */
   closeReason: CloseReason | null;
+  /** Actual exit price in USD from the final sell execution (null if not captured) */
+  exitPriceUsd: number | null;
   /** The parsed signal that originally triggered this position */
   signal: ParsedSignal;
 }

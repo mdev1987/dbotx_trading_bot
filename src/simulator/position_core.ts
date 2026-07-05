@@ -525,9 +525,11 @@ const tradePairPoll$ = timer(CONFIG.tradePairPollMs, CONFIG.tradePairPollMs).pip
         if (!matching) continue;
 
         // Sync position store with latest balance and profit data from API
+        // NOTE: fullProfitPercent from the API is a fraction (e.g. -0.361 = -36.1%),
+        // so multiply by 100 to match the internal percentage convention.
         patchPositionById(matching.id, {
           remainingBalance: pair.token0Balance,
-          currentProfitPercent: pair.fullProfitPercent,
+          currentProfitPercent: pair.fullProfitPercent * 100,
           currentProfitUsd: pair.fullProfitUsd,
         });
 
@@ -608,6 +610,55 @@ const EXEC_DEFAULTS = {
 // ──────────────────────────────────────────────
 
 /**
+ * Fetch the final PnL and exit price from the trade-pairs API after a sell.
+ *
+ * Used by closePositionById to capture the true PnL after a market sell
+ * (pump_message, trailing_stop, expired).  Retries with back-off because
+ * the API may take a moment to reflect the executed trade.
+ *
+ * @param tokenAddress - The token contract address to look up.
+ * @param retries - Number of poll attempts (default 5).
+ * @param delayMs - Delay between attempts in ms (default 800).
+ * @returns Final PnL data or null if all retries are exhausted.
+ */
+interface FinalPnLData {
+  profitPct: number;
+  profitUsd: number;
+  exitPriceUsd: number | null;
+}
+
+async function fetchFinalPnLData(
+  tokenAddress: string,
+  retries = 5,
+  delayMs = 800,
+): Promise<FinalPnLData | null> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const pairs = await fetchTradePairs(false);
+      const pair = pairs.find(
+        (p) => p.tokenInfo0.contract === tokenAddress,
+      );
+      if (pair) {
+        const sellAmount = Number(pair.sellTokenAmount);
+        const exitPrice =
+          sellAmount > 0 && pair.sellReceiveUsd > 0
+            ? pair.sellReceiveUsd / sellAmount
+            : null;
+        return {
+          profitPct: pair.fullProfitPercent * 100,
+          profitUsd: pair.fullProfitUsd,
+          exitPriceUsd: exitPrice,
+        };
+      }
+    } catch {
+      // transient error — retry
+    }
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return null;
+}
+
+/**
  * Close a position by its unique ID.
  *
  * Marks the position as closing, optionally executes a market sell, emits
@@ -630,6 +681,8 @@ export async function closePositionById(
     patchPositionById(id, { status: "closing", closeReason: reason });
 
     // Execute market sell for trailing stop, expired, or pump_message positions
+    // and then fetch the final PnL from the API so the close event reflects
+    // the true result (including any TP profits realised before the final sell).
     try {
       if (reason === "trailing_stop" || reason === "expired" || reason === "pump_message") {
         const orderId = await simFastSell({
@@ -643,6 +696,17 @@ export async function closePositionById(
         );
 
         refreshAccount$.next();
+
+        // Poll the API for the updated trade-pair data so we capture the
+        // correct final PnL (including previously realised TP profits).
+        const finalData = await fetchFinalPnLData(pos.token);
+        if (finalData) {
+          patchPositionById(id, {
+            currentProfitPercent: finalData.profitPct,
+            currentProfitUsd: finalData.profitUsd,
+            exitPriceUsd: finalData.exitPriceUsd,
+          });
+        }
       }
     } catch (err) {
       console.error(`[position_core] Failed to sell ${pos.tokenName}:`, err);
@@ -841,6 +905,7 @@ export async function openPosition(
       lastUpdateAt: now,
       status: "open",
       closeReason: null,
+      exitPriceUsd: null,
       signal,
     };
 
@@ -928,7 +993,9 @@ async function recoverOpenPositions(): Promise<void> {
         peakPriceUsd: 0,
         trailingActive: false,
         tasks: new Map(),
-        currentProfitPercent: p.fullProfitPercent ?? 0,
+        // fullProfitPercent from the API is a fraction (e.g. -0.361 = -36.1%),
+        // so multiply by 100 to match the internal percentage convention.
+        currentProfitPercent: (p.fullProfitPercent ?? 0) * 100,
         currentProfitUsd: p.fullProfitUsd ?? 0,
         remainingBalance: String(Number(p.buyTokenAmount) || 0),
         openedAt: now,
@@ -936,6 +1003,7 @@ async function recoverOpenPositions(): Promise<void> {
         lastUpdateAt: now,
         status: "open",
         closeReason: null,
+        exitPriceUsd: null,
         // Build a synthetic AveScannerSignal so the recovered position
         // satisfies the PositionState.signal type expected everywhere else
         signal: {
