@@ -159,7 +159,7 @@ const parser = (() => {
       return parseSignalMonitorMessage;
 
     // Ave Solana Token Scanner → parse scanner trade signals
-    case "avesolantokenscanner":
+    case "avesolanatokenscanner":
       return parseAveScannerSignal;
 
     // Unknown channel — fail fast at import time
