@@ -196,7 +196,15 @@ export const telegramSignal$ = telegramMessageInput$.pipe(
   // Step 4: Strip Telegram MarkdownV2 formatting
   map((text) => removeMarkdown(text)),
   // Step 5: Parse the raw text into a structured signal
-  map((text) => parser(text)),
+  // Catch parse errors so a single bad signal doesn't kill the stream
+  map((text) => {
+    try {
+      return parser(text);
+    } catch (err) {
+      console.error("[telegram] Failed to parse signal:", err);
+      return null;
+    }
+  }),
   // Step 6: Filter out unparseable messages (parser returned null)
   filter((signal): signal is ParsedSignal => signal !== null),
   //Only compares with the immediately previous signal

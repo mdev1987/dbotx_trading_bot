@@ -263,6 +263,13 @@ export function parseAbbreviatedUsd(value: string): number {
  */
 export function parseAveScannerSignal(text: string): AveScannerSignal {
   try {
+    // Normalize line endings and trim trailing whitespace on each line
+    // so regex $ anchors don't fail on messages with trailing spaces
+    text = text
+      .replace(/\r\n/g, '\n')
+      .split('\n')
+      .map((l) => l.trimEnd())
+      .join('\n');
     /**
      * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
      * STEP 1: Extract token identity (name, URL, and address)
