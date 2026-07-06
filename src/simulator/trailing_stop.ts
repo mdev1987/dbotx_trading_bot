@@ -37,7 +37,8 @@
 
 import { CONFIG } from "../config";
 import { pairUpdate$ } from "../market/dbotx_data_ws";
-import { filter, map, withLatestFrom } from "rxjs/operators";
+import { filter, map, tap, withLatestFrom } from "rxjs/operators";
+import { logger } from "../utils/logger";
 import {
   openPositions$,
   patchPositionById,
@@ -81,19 +82,45 @@ export function startTrailingMonitor(): void {
       // ── Filter 1: attach open positions & require a price + matching entry ──
       // Combine every price update with the current snapshot of open positions.
       withLatestFrom(openPositions$),
+      // Log every incoming update for debugging pair format issues.
+      tap(([update, open]) => {
+        if (open.length > 0) {
+          logger.debug(
+            `[trailing] WS update: pair="${update.pair}" token="${update.token ?? "?"}" ` +
+              `price=${update.priceUsd} | open: [${open.map((p) => `${p.tokenName}(pair=${p.pair.slice(0, 8)}… token=${p.token.slice(0, 8)}…)`).join(", ")}]`,
+          );
+        }
+      }),
       // Skip updates that carry no price, or that belong to a pair we don't
       // have an open position for (or whose entry price hasn't been set yet).
+      // Matches by pair address first, then by token contract as fallback.
       filter(([update, open]) => {
-        if (!update.priceUsd) return false;
-        return open.some(
-          (p) => p.pair === update.pair && p.entryPriceUsd !== null,
+        if (!update.priceUsd) {
+          logger.debug(
+            `[trailing] Skipped (no price): pair="${update.pair}" token="${update.token ?? "?"}"`,
+          );
+          return false;
+        }
+        const matched = open.find(
+          (p) =>
+            p.entryPriceUsd !== null &&
+            (p.pair === update.pair || p.token === update.token),
         );
+        if (!matched && open.length > 0) {
+          logger.debug(
+            `[trailing] No match: pair="${update.pair}" token="${update.token ?? "?"}" — no open position with matching pair or token`,
+          );
+        }
+        return matched !== undefined;
       }),
 
       // ── Map: update peak price and (for TS) trailing activation ──
       map(([update, open]) => {
         // Find the specific position that matches this update pair.
-        const pos = open.find((p) => p.pair === update.pair);
+        // Try exact pair first, then fall back to token address match.
+        const pos = open.find(
+          (p) => p.pair === update.pair || p.token === update.token,
+        );
         if (!pos || !update.priceUsd) return null;
 
         const price = update.priceUsd;
@@ -104,6 +131,10 @@ export function startTrailingMonitor(): void {
         if (price > peakPriceUsd) {
           peakPriceUsd = price;
           patchPositionById(pos.id, { peakPriceUsd });
+          logger.debug(
+            `[trailing] New peak for ${pos.tokenName}: $${price} ` +
+              `(was $${pos.peakPriceUsd}, entry $${entryPriceUsd})`,
+          );
         }
 
         // If the trailing stop is not yet armed, check whether the price has
@@ -119,6 +150,10 @@ export function startTrailingMonitor(): void {
               `[trailing] Activated stop for ${pos.tokenName} ` +
                 `(price $${price} >= activation $${activationPrice})`,
             );
+          } else {
+            logger.debug(
+              `[trailing] ${pos.tokenName}: price $${price} < activation $${activationPrice} (${((price / (entryPriceUsd ?? 1) - 1) * 100).toFixed(2)}% gain)`,
+            );
           }
         }
 
@@ -130,23 +165,25 @@ export function startTrailingMonitor(): void {
 
       // ── Filter 3: pass through when either trailing rule is breached ──
       // Trailing stop requires the stop to be armed; trailing TP is always active.
-      filter(({ trailingActive, peakPriceUsd, price, entryPriceUsd }) => {
+      filter((v) => {
+        const { trailingActive, peakPriceUsd, price, entryPriceUsd, pos } = v;
         if (entryPriceUsd === null) return false;
 
+        const stopTrail = peakPriceUsd * (1 - trailingDistancePct);
+        const tpTrail = peakPriceUsd * (1 - trailingTpDistancePct);
+
+        logger.debug(
+          `[trailing] ${pos.tokenName}: price=$${price} peak=$${peakPriceUsd} ` +
+            `trailing=${trailingActive} stopTrail=$${stopTrail.toFixed(8)} tpTrail=$${tpTrail.toFixed(8)}`,
+        );
+
         // Trailing stop: price dropped below the stop trail.
-        if (
-          tsEnabled &&
-          trailingActive &&
-          price <= peakPriceUsd * (1 - trailingDistancePct)
-        ) {
+        if (tsEnabled && trailingActive && price <= stopTrail) {
           return true;
         }
 
         // Trailing TP: price dropped below the TP trail.
-        if (
-          tpEnabled &&
-          price <= peakPriceUsd * (1 - trailingTpDistancePct)
-        ) {
+        if (tpEnabled && price <= tpTrail) {
           return true;
         }
 

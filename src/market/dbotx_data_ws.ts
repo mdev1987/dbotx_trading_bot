@@ -20,6 +20,7 @@ import {
 } from "rxjs/operators";
 
 import { CONFIG } from "../config";
+import { logger } from "../utils/logger";
 
 import {
   acceptedSignal$,
@@ -211,7 +212,7 @@ function connect(): void {
 
     // ── Open handler ──────────────────────────────────────────────────────
     ws.addEventListener("open", () => {
-      console.log("[DBotX] Connected");
+      logger.info("[DBotX] Connected");
 
       // Clear any pending reconnect timer since we are now connected
       reconnectTimer = null;
@@ -220,9 +221,11 @@ function connect(): void {
     });
 
     // ── Close handler ─────────────────────────────────────────────────────
-    ws.addEventListener("close", () => {
+    ws.addEventListener("close", (ev) => {
       // Notify subscribers that the socket is gone (for connected$, ws$)
       wsSubject.next(null);
+
+      logger.debug("[DBotX] Close event:", ev.code, ev.reason);
 
       // Log the disconnection (throttled) and schedule an automatic retry
       logReconnect();
@@ -396,6 +399,8 @@ expiredPair$
  * (after reconnect), the previous event listener is torn down and only
  * messages from the current socket are forwarded.
  */
+let _wsMsgCount = 0;
+
 const rawMessage$ = ws$.pipe(
   // switchMap: on each new WebSocket, unsubscribe from the old socket's
   // "message" events and subscribe to the new one
@@ -409,7 +414,14 @@ const rawMessage$ = ws$.pipe(
         typeof event.data === "string" ? event.data : event.data.toString();
 
       // Attempt JSON parsing; typed as WsRawMessage at the call site
-      return JSON.parse(raw) as WsRawMessage;
+      const msg = JSON.parse(raw) as WsRawMessage;
+
+      _wsMsgCount++;
+      logger.debug(
+        `[DBotX] WS msg #${_wsMsgCount}: status=${msg.status ?? "?"} pair=${msg.pair ?? msg.result?.pair ?? "?"}`,
+      );
+
+      return msg;
     } catch (error) {
       // If JSON parsing fails, log the error and the raw payload, then
       // return null so the downstream filter can drop this message
@@ -438,8 +450,24 @@ const rawMessage$ = ws$.pipe(
  * 2. Messages that lack a pair identifier (cannot be correlated to a position).
  */
 const dataMessage$ = rawMessage$.pipe(
+  // Log ACK messages (subscription confirmations) at debug level
+  tap((msg) => {
+    if (msg.status === "ack") {
+      logger.debug(
+        `[DBotX] ACK: pair=${msg.pair ?? msg.result?.pair ?? "?"}`,
+      );
+    }
+  }),
+
   // Drop messages whose status is "ack" (server-side subscription confirmations)
   filter((msg) => msg.status !== "ack"),
+
+  // Log messages dropped for missing pair, then drop them
+  tap((msg) => {
+    if (!msg.pair && !msg.result?.pair) {
+      logger.debug("[DBotX] Dropped (no pair): status=" + msg.status);
+    }
+  }),
 
   // Drop messages that have no pair identifier at the top level or in result
   filter((msg) => {
@@ -465,9 +493,14 @@ export const pairUpdate$ = dataMessage$.pipe(
   map((msg): PairUpdate => {
     // Pair identifier: prefer top-level, fall back to result wrapper, or empty
     const pair = msg.pair ?? msg.result?.pair ?? "";
-
-    // Token address: prefer top-level, fall back to result wrapper
     const token = msg.token ?? msg.result?.token;
+
+    // Log raw server field values for debugging pair format mismatches
+    if (pair.length > 0) {
+      console.log(
+        `[DBotX] PairUpdate: pair="${pair}" token="${token ?? "?"}" price=${msg.priceUsd ?? msg.result?.priceUsd ?? "?"}`,
+      );
+    }
 
     // eslint-disable-next-line object-property-newline
     return {

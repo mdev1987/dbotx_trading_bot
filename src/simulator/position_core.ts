@@ -10,9 +10,11 @@ import {
   share,
   shareReplay,
   concatMap,
+  tap,
   withLatestFrom,
 } from "rxjs/operators";
 import { CONFIG } from "../config";
+import { logger } from "../utils/logger";
 import type { ParsedSignal } from "../telegram/telegram_listener";
 import type { AveScannerSignal } from "../telegram/ave_scanner_parser";
 import { simFastBuy, simFastSell } from "./fast_buy_sell";
@@ -446,20 +448,33 @@ export function emitEvent(event: PositionEvent): void {
 const _lastDoneCount = new Map<string, number>();
 
 const pnlTaskPoll$ = timer(CONFIG.pnlTaskPollMs, CONFIG.pnlTaskPollMs).pipe(
+  tap(() => logger.debug("[PnL] Poll tick")),
   withLatestFrom(openPositions$),
   filter(([, open]) => open.length > 0),
   concatMap(async ([, open]) => {
     // Iterate each open position and check its TP/SL task status
     for (const pos of open) {
-      if (!pos.orderId) continue;
+      if (!pos.orderId) {
+        logger.debug(`[PnL] ${pos.tokenName}: no orderId — skip`);
+        continue;
+      }
       try {
         // Fetch latest TP/SL task list from the API for this order
         const tasks = await fetchPnLTasks(pos.orderId);
-        if (tasks.length === 0) continue;
+        if (tasks.length === 0) {
+          logger.debug(`[PnL] ${pos.tokenName}: no tasks found for order ${pos.orderId.slice(0, 12)}…`);
+          continue;
+        }
+
+        logger.debug(
+          `[PnL] ${pos.tokenName}: ${tasks.length} task(s): ` +
+            `[${tasks.map((t) => `${t.sourceGroupIdx}=${t.state}(${t.triggerDirection})`).join(", ")}]`,
+        );
 
         // Build a task snapshot map keyed by source group index
         const taskMap = new Map<number, PnLTaskSnapshot>();
-        let allDone = true;
+        let anyTerminal = false;
+        let anyInit = false;
 
         for (const t of tasks) {
           taskMap.set(t.sourceGroupIdx, {
@@ -471,8 +486,14 @@ const pnlTaskPoll$ = timer(CONFIG.pnlTaskPollMs, CONFIG.pnlTaskPollMs).pipe(
             pnlPercent: t.triggerPercent,
           });
 
-          // Track if any task is still initializing
-          if (t.state === "init") allDone = false;
+          if (t.state === "init") anyInit = true;
+          if (
+            t.state === "done" ||
+            t.state === "fail" ||
+            t.state === "expired"
+          ) {
+            anyTerminal = true;
+          }
         }
 
         // Persist task data and best-known entry price to the position
@@ -495,44 +516,70 @@ const pnlTaskPoll$ = timer(CONFIG.pnlTaskPollMs, CONFIG.pnlTaskPollMs).pipe(
           });
         }
 
-        // When all tasks are finished, compute weighted profit and close.
-        // Detect the actual close reason from the task states rather than
-        // always defaulting to take_profit.
-        if (allDone && tasks.length > 0) {
-          // Calculate weighted profit percentage across completed tasks
-          let weightedProfitPct = 0;
-          for (const t of tasks) {
-            if (t.state === "done") {
-              weightedProfitPct +=
-                t.triggerPercent * (t.currencyAmountUI / 100);
-            }
-          }
-          // Derive USD profit from entry cost (or estimate from price * size)
-          const cost =
-            pos.entryCostUsd ??
-            (pos.entryPriceUsd ? pos.entryPriceUsd * pos.sizeSol : 0);
-          const profitUsd = cost * (weightedProfitPct / 100);
-          patchPositionById(pos.id, {
-            currentProfitPercent: weightedProfitPct,
-            currentProfitUsd: profitUsd,
-          });
+        // When any task has reached a terminal state, close the position.
+        // This handles two scenarios:
+        //   1. Stop-loss fired → SL task is "done", other tasks may still be
+        //      "init" (API leaves them untouched).  We close immediately.
+        //   2. All tasks completed → close with weighted profit calculation.
+        //   3. Partial TP done, remaining tasks still "init" → keep waiting,
+        //      the trade pair poll or trailing stop will manage the remainder.
+        //
+        // We skip closing when only "up" tasks are done and some remain "init"
+        // (partial TP has more room to run).
+        const hasStopLoss = tasks.some(
+          (t) => t.state === "done" && t.triggerDirection === "down",
+        );
+        const hasTakeProfit = tasks.some(
+          (t) => t.state === "done" && t.triggerDirection === "up",
+        );
 
-          // Determine close reason:
-          //   stop_loss   → a stop-loss task (down) completed
-          //   take_profit → any TP task (up) completed
-          //   expired     → no task ever reached its trigger
-          const hasStopLoss = tasks.some(
-            (t) => t.state === "done" && t.triggerDirection === "down",
-          );
-          const hasTakeProfit = tasks.some(
-            (t) => t.state === "done" && t.triggerDirection === "up",
-          );
-          const reason: CloseReason = hasStopLoss
-            ? "stop_loss"
-            : hasTakeProfit
+        logger.debug(
+          `[PnL] ${pos.tokenName}: anyTerminal=${anyTerminal} anyInit=${anyInit} ` +
+            `hasStopLoss=${hasStopLoss} hasTakeProfit=${hasTakeProfit}`,
+        );
+
+        if (anyTerminal && tasks.length > 0) {
+          // Close immediately if a stop-loss fired (all tokens sold).
+          if (hasStopLoss) {
+            console.log(`[PnL] Stop-loss fired for ${pos.tokenName}`);
+            closePositionById(pos.id, "stop_loss");
+            continue;
+          }
+
+          // Close when ALL tasks reached a terminal state (full TP execution
+          // or all tasks expired/failed).
+          if (!anyInit) {
+            // Calculate weighted profit percentage across completed tasks
+            let weightedProfitPct = 0;
+            for (const t of tasks) {
+              if (t.state === "done") {
+                weightedProfitPct +=
+                  t.triggerPercent * (t.currencyAmountUI / 100);
+              }
+            }
+            // Derive USD profit from entry cost (or estimate from price * size)
+            const cost =
+              pos.entryCostUsd ??
+              (pos.entryPriceUsd ? pos.entryPriceUsd * pos.sizeSol : 0);
+            const profitUsd = cost * (weightedProfitPct / 100);
+            patchPositionById(pos.id, {
+              currentProfitPercent: weightedProfitPct,
+              currentProfitUsd: profitUsd,
+            });
+
+            const reason: CloseReason = hasTakeProfit
               ? "take_profit"
               : "expired";
-          closePositionById(pos.id, reason);
+            console.log(
+              `[PnL] All tasks terminal for ${pos.tokenName}: ` +
+                `weightedPct=${weightedProfitPct.toFixed(2)}% reason=${reason}`,
+            );
+            closePositionById(pos.id, reason);
+          } else {
+            logger.debug(
+              `[PnL] ${pos.tokenName}: partial TP done, some tasks still init — waiting`,
+            );
+          }
         }
       } catch (err) {
         console.error(
@@ -551,6 +598,7 @@ pnlTaskPoll$.subscribe();
 // ──────────────────────────────────────────────
 
 const tradePairPoll$ = timer(CONFIG.tradePairPollMs, CONFIG.tradePairPollMs).pipe(
+  tap(() => logger.debug("[PairPoll] Tick")),
   withLatestFrom(openPositions$),
   filter(([, open]) => open.length > 0),
   concatMap(async ([, open]) => {
@@ -558,11 +606,27 @@ const tradePairPoll$ = timer(CONFIG.tradePairPollMs, CONFIG.tradePairPollMs).pip
       // Fetch all trade pairs with positive balance from the API
       const pairs = await fetchTradePairs(true);
 
+      logger.debug(`[PairPoll] ${pairs.length} pair(s) from API, ${open.length} open position(s)`);
+
       for (const pair of pairs) {
         const token = pair.tokenInfo0.contract;
         // Match each API pair to a tracked open position
         const matching = open.find((p) => p.token === token);
-        if (!matching) continue;
+        if (!matching) {
+          logger.debug(`[PairPoll] No match for token ${token.slice(0, 8)}…`);
+          continue;
+        }
+
+        const pnlPct = (pair.fullProfitPercent * 100).toFixed(2);
+        const balance = pair.token0Balance;
+        const sellPct = pair.sellProfitPercent !== null
+          ? (pair.sellProfitPercent * 100).toFixed(2)
+          : "null";
+
+        logger.debug(
+          `[PairPoll] ${matching.tokenName}: balance=${balance} profit=${pnlPct}% ` +
+            `sellProfit=${sellPct}% cost=${pair.costUsd} sellReceive=${pair.sellReceiveUsd}`,
+        );
 
         // Sync position store with latest balance and profit data from API
         // NOTE: fullProfitPercent from the API is a fraction (e.g. -0.361 = -36.1%),
@@ -573,16 +637,37 @@ const tradePairPoll$ = timer(CONFIG.tradePairPollMs, CONFIG.tradePairPollMs).pip
           currentProfitUsd: pair.fullProfitUsd,
         });
 
-        // Close position if remaining token balance has dropped to zero.
-        // Use the API's sell-profit sign to distinguish take_profit from
-        // stop_loss when the bot missed the task-level event.
+        // Close position if remaining token balance has dropped to zero
+        // (API task already executed the sell).  Use the API's sell-profit
+        // sign to distinguish take_profit from stop_loss.
         const balanceNum = Number(pair.token0Balance);
         if (balanceNum <= 0 && matching.status === "open") {
           const reason: CloseReason =
             pair.sellProfitPercent !== null && pair.sellProfitPercent < 0
               ? "stop_loss"
               : "take_profit";
+          console.log(
+            `[PairPoll] Balance zero for ${matching.tokenName}: closing as ${reason}`,
+          );
           closePositionById(matching.id, reason);
+        } else if (
+          matching.status === "open" &&
+          CONFIG.stopLossPct < 0 &&
+          pair.fullProfitPercent < CONFIG.stopLossPct
+        ) {
+          // Client-side stop-loss guard: close when PnL drops below the
+          // configured threshold even if the API's SL task hasn't fired.
+          // This catches cases where the simulator API doesn't execute
+          // tasks (common in test environments).
+          console.log(
+            `[PairPoll] Client SL triggered for ${matching.tokenName}: ` +
+              `${pnlPct}% <= ${(CONFIG.stopLossPct * 100).toFixed(2)}%`,
+          );
+          closePositionById(matching.id, "stop_loss");
+        } else {
+          logger.debug(
+            `[PairPoll] ${matching.tokenName}: open, balance=${balanceNum} pnl=${pnlPct}% — no action`,
+          );
         }
       }
     } catch (err) {
@@ -674,10 +759,12 @@ interface FinalPnLData {
   remainingBalance: string;
 }
 
+const FULL_PROFIT_SENTINEL = -0.9999;
+
 async function fetchFinalPnLData(
   tokenAddress: string,
-  retries = 5,
-  delayMs = 800,
+  retries = 10,
+  delayMs = 1000,
 ): Promise<FinalPnLData | null> {
   for (let i = 0; i < retries; i++) {
     try {
@@ -687,12 +774,28 @@ async function fetchFinalPnLData(
       );
       if (pair) {
         const sellAmount = Number(pair.sellTokenAmount);
-        const exitPrice =
-          sellAmount > 0 && pair.sellReceiveUsd > 0
-            ? pair.sellReceiveUsd / sellAmount
-            : null;
+        const rawProfitPct = pair.fullProfitPercent * 100;
+        const hasSellData = sellAmount > 0 && pair.sellReceiveUsd > 0;
+
+        // Detect sentinel fullProfitPercent (≤ -99.99%) — the API returns
+        // this when the sell hasn't been reflected yet.  If we have sell
+        // data, recompute the true PnL from sell proceeds vs total cost.
+        if (rawProfitPct <= FULL_PROFIT_SENTINEL * 100 && hasSellData && pair.costUsd > 0) {
+          const actualProfitPct = ((pair.sellReceiveUsd - pair.costUsd) / pair.costUsd) * 100;
+          const actualProfitUsd = pair.sellReceiveUsd - pair.costUsd;
+          const exitPrice = pair.sellReceiveUsd / sellAmount;
+          return {
+            profitPct: actualProfitPct,
+            profitUsd: actualProfitUsd,
+            exitPriceUsd: exitPrice,
+            remainingBalance: pair.token0Balance,
+          };
+        }
+
+        // Normal path: use API data directly
+        const exitPrice = hasSellData ? pair.sellReceiveUsd / sellAmount : null;
         return {
-          profitPct: pair.fullProfitPercent * 100,
+          profitPct: rawProfitPct,
           profitUsd: pair.fullProfitUsd,
           exitPriceUsd: exitPrice,
           remainingBalance: pair.token0Balance,
@@ -722,7 +825,16 @@ export async function closePositionById(
 ): Promise<void> {
   const pos = _latestPositions.get(id);
   // Skip if position does not exist, is already closed, or is already being closed
-  if (!pos || pos.status === "closed" || pos.status === "closing") return;
+  if (!pos || pos.status === "closed" || pos.status === "closing") {
+    logger.debug(`[Close] Skip #${id}: already ${pos?.status ?? "gone"}`);
+    return;
+  }
+
+  logger.debug(
+    `[Close] Closing #${id} ${pos.tokenName}: reason=${reason} entry=${
+      pos.entryPriceUsd ?? "?"
+    } profit=${pos.currentProfitPercent.toFixed(2)}%`,
+  );
 
   try {
     // Mark position as closing before executing any sell
@@ -734,6 +846,7 @@ export async function closePositionById(
     // API tasks already sold everything; if not, we sell the orphaned tokens.
     try {
       if (reason === "trailing_stop" || reason === "expired" || reason === "pump_message") {
+        logger.debug(`[Close] ${pos.tokenName}: executing ${reason} sell (100%)`);
         const orderId = await simFastSell({
           pair: pos.pair,
           amountOrPercent: 1,
@@ -750,6 +863,9 @@ export async function closePositionById(
         // sum to less than 100 % of the position).
         const preData = await fetchFinalPnLData(pos.token);
         const balanceNum = preData ? Number(preData.remainingBalance) : 0;
+        logger.debug(
+          `[Close] ${pos.tokenName}: take_profit, remaining balance=${balanceNum}`,
+        );
         if (balanceNum > 0) {
           const orderId = await simFastSell({
             pair: pos.pair,
@@ -769,11 +885,33 @@ export async function closePositionById(
       // correct final PnL (including previously realised TP profits).
       const finalData = await fetchFinalPnLData(pos.token);
       if (finalData) {
+        logger.debug(
+          `[Close] ${pos.tokenName}: final PnL — profit=${finalData.profitPct.toFixed(2)}% ` +
+            `exit=${finalData.exitPriceUsd ?? "null"}`,
+        );
+
         patchPositionById(id, {
           currentProfitPercent: finalData.profitPct,
           currentProfitUsd: finalData.profitUsd,
           exitPriceUsd: finalData.exitPriceUsd,
         });
+
+        // Warn if the exit price is still invalid after our sentinel-recomputation
+        // logic — this means the API sell data is genuinely missing.
+        if (
+          finalData.exitPriceUsd === null ||
+          finalData.exitPriceUsd <= 0 ||
+          finalData.profitPct <= FULL_PROFIT_SENTINEL * 100
+        ) {
+          console.warn(
+            `[position_core] Final PnL data still invalid for ${pos.tokenName}: ` +
+              `profitPct=${finalData.profitPct.toFixed(2)}% ` +
+              `exitPriceUsd=${finalData.exitPriceUsd ?? "null"} ` +
+              `— API may not have processed the sell yet`,
+          );
+        }
+      } else {
+        logger.warn(`[Close] ${pos.tokenName}: no final PnL data from API`);
       }
     } catch (err) {
       console.error(`[position_core] Failed to sell ${pos.tokenName}:`, err);
@@ -1015,13 +1153,20 @@ export async function openPosition(
     const maxPumpX = (signal as { maxPumpX?: number }).maxPumpX;
     const stopEarnGroup = buildStopEarnGroup(maxPumpX);
     const stopLossPercent = buildStopLossPercent();
+    const score = scoreSignal(signal);
 
     // Register pending buy to prevent duplicate buys for the same pair
     markPendingBuy(signal.lpAddress);
 
+    const sigInfo = signal as { walletBuyCount?: number; totalBuySol?: number };
     console.log(
-      `[position_core] Opening position for ${signal.tokenName} ` +
-        `(${signal.lpAddress}) with ${sizeSol.toFixed(4)} SOL`,
+      `[position_core] Opening ${signal.tokenName}: ` +
+        `score=${score.toFixed(3)} size=${sizeSol.toFixed(4)} SOL ` +
+        `wallets=${sigInfo.walletBuyCount ?? "?"} ` +
+        `vol=${sigInfo.totalBuySol?.toFixed(2) ?? "?"} SOL ` +
+        (maxPumpX ? `maxPump=x${maxPumpX} ` : "") +
+        `SL=${(stopLossPercent ?? 0) * 100}% ` +
+        `TP groups=${stopEarnGroup?.length ?? 0}`,
     );
 
     let orderId: string;

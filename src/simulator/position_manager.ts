@@ -32,8 +32,9 @@ export * from "./position_core";
 export type { PositionEvent } from "./types";
 
 import { timer } from "rxjs";
-import { map, withLatestFrom } from "rxjs/operators";
+import { map, tap, withLatestFrom } from "rxjs/operators";
 import { CONFIG } from "../config";
+import { logger } from "../utils/logger";
 import { startTrailingMonitor } from "./trailing_stop";
 import type { PositionState } from "./types";
 import {
@@ -61,17 +62,36 @@ const checkPositionExpiry = (open: PositionState[]): void => {
   const now = Date.now();
   const maxAge = CONFIG.maxTtlSecs * 1000;
 
+  logger.debug(
+    `[EXPIRY] Checking ${open.length} open position(s) — ` +
+      `baseTtl=${CONFIG.baseTtlSecs}s maxTtl=${CONFIG.maxTtlSecs}s extensionPct=${(CONFIG.minProfitForTtlExtensionPct * 100).toFixed(1)}%`,
+  );
+
   for (const pos of open) {
+    const ageSec = ((now - pos.openedAt) / 1000).toFixed(0);
+    const profitPct = pos.currentProfitPercent.toFixed(2);
+
+    logger.debug(
+      `[EXPIRY] ${pos.tokenName}: age=${ageSec}s profit=${profitPct}% ` +
+        `expiresAt=${new Date(pos.expiresAt).toISOString().slice(11, 19)}`,
+    );
+
     if (now - pos.openedAt >= maxAge) {
       console.log(
         `[EXPIRY] Hard cap: ${pos.tokenName} ` +
-          `(${((now - pos.openedAt) / 1000).toFixed(0)}s >= ${CONFIG.maxTtlSecs}s)`,
+          `(${ageSec}s >= ${CONFIG.maxTtlSecs}s)`,
       );
       closePositionById(pos.id, "expired");
       continue;
     }
 
-    if (now < pos.expiresAt) continue;
+    if (now < pos.expiresAt) {
+      logger.debug(
+        `[EXPIRY] ${pos.tokenName}: TTL still valid — skip ` +
+          `(${((pos.expiresAt - now) / 1000).toFixed(0)}s remaining)`,
+      );
+      continue;
+    }
 
     if (
       CONFIG.minProfitForTtlExtensionPct > 0 &&
@@ -80,7 +100,7 @@ const checkPositionExpiry = (open: PositionState[]): void => {
       patchPositionById(pos.id, { expiresAt: now + CONFIG.baseTtlSecs * 1000 });
       console.log(
         `[EXPIRY] Renewed ${pos.tokenName} ` +
-          `(profit ${(pos.currentProfitPercent * 100).toFixed(2)}% >= ` +
+          `(profit ${profitPct}% >= ` +
           `${(CONFIG.minProfitForTtlExtensionPct * 100).toFixed(2)}%)`,
       );
       continue;
@@ -88,7 +108,7 @@ const checkPositionExpiry = (open: PositionState[]): void => {
 
     console.log(
       `[EXPIRY] Expired: ${pos.tokenName} ` +
-        `(${((now - pos.openedAt) / 1000).toFixed(0)}s > ${CONFIG.baseTtlSecs}s)`,
+        `(${ageSec}s > ${CONFIG.baseTtlSecs}s, profit=${profitPct}%)`,
     );
     closePositionById(pos.id, "expired");
   }
@@ -96,6 +116,7 @@ const checkPositionExpiry = (open: PositionState[]): void => {
 
 timer(CONFIG.expiryCheckMs, CONFIG.expiryCheckMs)
   .pipe(
+    tap(() => logger.debug("[EXPIRY] Tick — checking positions...")),
     withLatestFrom(openPositions$),
     map(([, open]) => open),
   )

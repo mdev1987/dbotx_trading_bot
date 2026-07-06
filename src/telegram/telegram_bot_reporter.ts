@@ -200,16 +200,23 @@ function buildPnlLine(
 /**
  * Calculate and format the exit price based on entry price and PnL percentage.
  *
+ * Falls back to the position's exitPriceUsd when the formula-derived exit is
+ * ≤ 0 (e.g. from a sentinel -100 % PnL before the API reflects the sell).
+ *
  * @param entryPriceUsd - Entry price in USD (nullable — returns empty if null).
  * @param profit - Profit percentage used to derive the exit price.
+ * @param exitPriceUsd - Actual exit price from the position store (nullable).
  * @returns Formatted exit price line or empty string if entry is unknown.
  */
 function buildExitPrice(
   entryPriceUsd: number | null,
   profit: number,
+  exitPriceUsd?: number | null,
 ): string {
   if (entryPriceUsd === null) return "";
-  const exitPrice = entryPriceUsd * (1 + profit / 100);
+  const computed = entryPriceUsd * (1 + profit / 100);
+  const exitPrice = computed > 0 ? computed : (exitPriceUsd ?? 0);
+  if (exitPrice <= 0) return "";
   return `\u{1F4B4} Exit: \`$${exitPrice.toFixed(8)}\``;
 }
 
@@ -255,7 +262,7 @@ function closedMessage(
     p.entryPriceUsd !== null
       ? `\u{1F4B5} Entry: \`$${p.entryPriceUsd.toFixed(8)}\``
       : "",
-    buildExitPrice(p.entryPriceUsd, profit),
+    buildExitPrice(p.entryPriceUsd, profit, p.exitPriceUsd),
     buildPnlLine(profit, profitUsd, chartIcon),
     `\u{1F517} Reason: ${closeIcon(reason)} **${reasonLabel(reason)}**`,
     `\u{23F1}\uFE0F Duration: \`${duration}\``,
@@ -402,7 +409,12 @@ class TelegramReporter {
         .pipe(
           map((ev) => {
             if (ev.type !== "opened") return null;
-            return openedMessage(ev, latestAccount, this.openCount, generateReport());
+            try {
+              return openedMessage(ev, latestAccount, this.openCount, generateReport());
+            } catch (err) {
+              console.error("[reporter] Failed to build opened message:", err);
+              return null;
+            }
           }),
         )
         .subscribe((msg) => {
@@ -415,11 +427,18 @@ class TelegramReporter {
       positionClosed$
         .pipe(
           map((ev) => {
-            const report = generateReport();
-            return closedMessage(ev, latestAccount, this.openCount, report);
+            try {
+              const report = generateReport();
+              return closedMessage(ev, latestAccount, this.openCount, report);
+            } catch (err) {
+              console.error("[reporter] Failed to build closed message:", err);
+              return null;
+            }
           }),
         )
-        .subscribe((msg) => this.send$.next(msg)),
+        .subscribe((msg) => {
+          if (msg) this.send$.next(msg);
+        }),
     );
 
     // Subscribe 3: periodic summary report (if interval is configured > 0)
@@ -428,14 +447,29 @@ class TelegramReporter {
       this.subs.push(
         timer(intervalMs, intervalMs)
           .pipe(
-            map(() => generateReport()),
+            map(() => {
+              try {
+                return generateReport();
+              } catch (err) {
+                console.error("[reporter] Failed to generate report:", err);
+                return null;
+              }
+            }),
             // Only send if the report actually changed since last tick
             distinctUntilChanged(
-              (prev, curr) => JSON.stringify(prev) === JSON.stringify(curr),
+              (prev, curr) => {
+                if (!prev || !curr) return false;
+                return JSON.stringify(prev) === JSON.stringify(curr);
+              },
             ),
-            map((report) => summaryMessage(this.account, this.openCount, report)),
+            map((report) => {
+              if (!report) return null;
+              return summaryMessage(this.account, this.openCount, report);
+            }),
           )
-          .subscribe((msg) => this.send$.next(msg)),
+          .subscribe((msg) => {
+            if (msg) this.send$.next(msg);
+          }),
       );
     }
   }
