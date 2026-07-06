@@ -91,15 +91,18 @@ function send(payload: unknown): boolean {
  * @returns `true` if the subscription request was sent, `false` otherwise.
  */
 function subscribePair(pair: string, token?: string): boolean {
-  return send({
-    method: "subscribe",
-    type: "pairInfo",
+  const payload = {
+    method: "subscribe" as const,
+    type: "pairInfo" as const,
     args: {
       pair,
-      // Only include token when it is provided (avoids sending null / undefined)
       ...(token ? { token } : {}),
     },
-  });
+  };
+  logger.debug(
+    `[DBotX] Sending subscribe: pair="${pair.slice(0, 16)}…" token="${token?.slice(0, 16) ?? "none"}"`,
+  );
+  return send(payload);
 }
 
 /**
@@ -203,6 +206,12 @@ function scheduleReconnect(): void {
  */
 function connect(): void {
   try {
+    const url = CONFIG.wsUrl ?? "(not set)";
+    const redacted = url.length > 20
+      ? url.slice(0, 20) + "…"
+      : url;
+    logger.debug(`[DBotX] Connecting to ${redacted}`);
+
     // Attempt to create a new WebSocket with the configured URL and API key header
     const ws = new WebSocket(CONFIG.wsUrl!, {
       headers: {
@@ -213,6 +222,7 @@ function connect(): void {
     // ── Open handler ──────────────────────────────────────────────────────
     ws.addEventListener("open", () => {
       logger.info("[DBotX] Connected");
+      logger.debug(`[DBotX] WS readyState=${ws.readyState} bufferedAmount=${ws.bufferedAmount}`);
 
       // Clear any pending reconnect timer since we are now connected
       reconnectTimer = null;
@@ -417,8 +427,9 @@ const rawMessage$ = ws$.pipe(
       const msg = JSON.parse(raw) as WsRawMessage;
 
       _wsMsgCount++;
+      const rawStr = JSON.stringify(msg).slice(0, 500);
       logger.debug(
-        `[DBotX] WS msg #${_wsMsgCount}: status=${msg.status ?? "?"} pair=${msg.pair ?? msg.result?.pair ?? "?"}`,
+        `[DBotX] WS msg #${_wsMsgCount}: ${rawStr}`,
       );
 
       return msg;

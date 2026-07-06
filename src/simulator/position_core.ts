@@ -407,6 +407,9 @@ let _consecutiveLosses = 0;
 /** Timestamp (ms) until which new positions are blocked by cooldown */
 let _cooldownUntil = 0;
 
+/** Peak PnL (fraction) per position for WS-independent polling-based trailing */
+const _pnlPeakMap = new Map<number, number>();
+
 /** How long to pause after 3+ consecutive losses (ms) */
 const COOLDOWN_DURATION_MS = 20 * 60 * 1000; // 20 minutes
 
@@ -705,6 +708,7 @@ const tradePairPoll$ = timer(CONFIG.tradePairPollMs, CONFIG.tradePairPollMs).pip
         } else if (
           matching.status === "open" &&
           CONFIG.stopLossPct < 0 &&
+          pair.fullProfitPercent > FULL_PROFIT_SENTINEL &&
           pair.fullProfitPercent < CONFIG.stopLossPct
         ) {
           // Client-side stop-loss guard: close when PnL drops below the
@@ -720,6 +724,45 @@ const tradePairPoll$ = timer(CONFIG.tradePairPollMs, CONFIG.tradePairPollMs).pip
           logger.debug(
             `[PairPoll] ${matching.tokenName}: open, balance=${balanceNum} pnl=${pnlPct}% — no action`,
           );
+
+          // ── PnL-based trailing stop/TP (WS-independent) ────────────────
+          // The WS-based trailing monitor cannot fire when the simulator
+          // never pushes pairInfo messages (all WS messages are ACKs).
+          // This fallback tracks PnL% over successive pair polls and
+          // triggers a close when PnL drops a configured distance below
+          // the peak PnL seen so far.
+          const pnlFraction = pair.fullProfitPercent;
+          const prevPeak = _pnlPeakMap.get(matching.id) ?? pnlFraction;
+
+          if (pnlFraction > prevPeak) {
+            _pnlPeakMap.set(matching.id, pnlFraction);
+          }
+
+          // Trailing TP: always active once PnL has been positive
+          if (
+            CONFIG.trailingTpDistancePct > 0 &&
+            prevPeak > 0 &&
+            pnlFraction < prevPeak - CONFIG.trailingTpDistancePct
+          ) {
+            console.log(
+              `[PairPoll] PnL trailing TP triggered for ${matching.tokenName}: ` +
+                `pnl ${pnlPct}% dropped from peak ${(prevPeak * 100).toFixed(2)}%`,
+            );
+            closePositionById(matching.id, "take_profit");
+          }
+
+          // Trailing stop: requires activation threshold to be met
+          if (
+            CONFIG.trailingDistancePct > 0 &&
+            prevPeak > CONFIG.trailingActivationPct &&
+            pnlFraction < prevPeak - CONFIG.trailingDistancePct
+          ) {
+            console.log(
+              `[PairPoll] PnL trailing stop triggered for ${matching.tokenName}: ` +
+                `pnl ${pnlPct}% dropped from peak ${(prevPeak * 100).toFixed(2)}%`,
+            );
+            closePositionById(matching.id, "trailing_stop");
+          }
         }
       }
     } catch (err) {
@@ -910,13 +953,13 @@ export async function closePositionById(
         );
 
         refreshAccount$.next();
-      } else if (reason === "take_profit") {
+      } else if (reason === "take_profit" || reason === "stop_loss") {
         // Check if the API tasks left any unsold tokens (e.g. when TP tiers
         // sum to less than 100 % of the position).
         const preData = await fetchFinalPnLData(pos.token);
         const balanceNum = preData ? Number(preData.remainingBalance) : 0;
         logger.debug(
-          `[Close] ${pos.tokenName}: take_profit, remaining balance=${balanceNum}`,
+          `[Close] ${pos.tokenName}: ${reason}, remaining balance=${balanceNum}`,
         );
         if (balanceNum > 0) {
           const orderId = await simFastSell({
@@ -993,6 +1036,9 @@ export async function closePositionById(
     });
 
     refreshAccount$.next();
+
+    // Clean up PnL peak tracking for this position
+    _pnlPeakMap.delete(id);
 
     // Track consecutive losses for cooldown
     if (final.currentProfitPercent < 0) {
