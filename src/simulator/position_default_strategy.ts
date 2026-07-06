@@ -1,17 +1,12 @@
 // Default signal strategy — applies max-positions cap, signal queuing, and TTL-based position expiry.
-import { timer } from "rxjs";
-import { concatMap, map, withLatestFrom } from "rxjs/operators";
+import { concatMap } from "rxjs/operators";
 import { CONFIG } from "../config";
 import { acceptedSignal$ } from "../telegram/signals_stream";
 import {
   _latestPositions,
   openPosition,
   enqueueSignal,
-  closePositionById,
-  patchPositionById,
-  openPositions$,
 } from "./position_core";
-import type { PositionState } from "./types";
 
 // ──────────────────────────────────────────────
 // Main signal subscription with max-positions & queue
@@ -52,72 +47,4 @@ acceptedSignal$
   )
   .subscribe();
 
-// ──────────────────────────────────────────────
-// Position Expiry & TTL Renewal
-// ──────────────────────────────────────────────
-
-/**
- * Check every open position for expiry and, where configured, renew the TTL
- * if the position has accrued sufficient unrealised profit.
- *
- * The check follows a three-tier priority:
- *   1. Hard-cap max age → force close regardless of profit.
- *   2. TTL still valid   → skip (not yet due).
- *   3. Profit threshold met → extend TTL by `baseTtlSecs`.
- *   4. Otherwise         → expire the position.
- *
- * @param open - Array of currently open positions to evaluate.
- * @throws Propagation of any exception from closePosition / patchPosition.
- */
-const checkPositionExpiry = (open: PositionState[]): void => {
-  const now = Date.now();
-  // Absolute maximum age — positions older than this are always killed.
-  const maxAge = CONFIG.maxTtlSecs * 1000;
-
-  for (const pos of open) {
-    // --- Tier 1: Hard-cap enforcement --------------------------------
-    if (now - pos.openedAt >= maxAge) {
-      console.log(
-        `[EXPIRY] Hard cap: ${pos.tokenName} ` +
-          `(${((now - pos.openedAt) / 1000).toFixed(0)}s >= ${CONFIG.maxTtlSecs}s)`,
-      );
-      closePositionById(pos.id, "expired");
-      continue;
-    }
-
-    // --- Tier 2: TTL still running — nothing to do yet ---------------
-    if (now < pos.expiresAt) continue;
-
-    // --- Tier 3: Position is profitable enough → extend its life ------
-    if (
-      CONFIG.minProfitForTtlExtensionPct > 0 &&
-      pos.currentProfitPercent >= CONFIG.minProfitForTtlExtensionPct
-    ) {
-      patchPositionById(pos.id, { expiresAt: now + CONFIG.baseTtlSecs * 1000 });
-      console.log(
-        `[EXPIRY] Renewed ${pos.tokenName} ` +
-          `(profit ${(pos.currentProfitPercent * 100).toFixed(2)}% >= ` +
-          `${(CONFIG.minProfitForTtlExtensionPct * 100).toFixed(2)}%)`,
-      );
-      continue;
-    }
-
-    // --- Tier 4: TTL expired without qualifying profit — close -------
-    console.log(
-      `[EXPIRY] Expired: ${pos.tokenName} ` +
-        `(${((now - pos.openedAt) / 1000).toFixed(0)}s > ${CONFIG.baseTtlSecs}s)`,
-    );
-    closePositionById(pos.id, "expired");
-  }
-};
-
-// Poll on a fixed interval, grab the latest open positions, and feed
-// them into the expiry checker.
-timer(CONFIG.expiryCheckMs, CONFIG.expiryCheckMs)
-  .pipe(
-    // Attach the current open-positions snapshot to each tick.
-    withLatestFrom(openPositions$),
-    // We only need the positions array — discard the tick value.
-    map(([, open]) => open),
-  )
-  .subscribe(checkPositionExpiry);
+// NOTE: TTL expiry is now handled in position_manager.ts (applies to all strategies).
