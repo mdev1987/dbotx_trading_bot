@@ -122,7 +122,9 @@ export const CONFIG = {
   /** Hard cap on position TTL in seconds */
   maxTtlSecs: number("MAX_TTL_SECS", 600),
   /** Maximum number of queued signals when at max positions */
-  signalQueueSize: number("SIGNAL_QUEUE_SIZE", 20),
+  signalQueueSize: number("SIGNAL_QUEUE_SIZE", 30),
+  /** TTL (seconds) for signals in the queue before they expire */
+  signalQueueTtlSecs: number("SIGNAL_QUEUE_TTL_SECS", 600),
   /** Base position size in SOL */
   positionSize: number("POSITION_SIZE_SOL", 0.1),
   /** Minimum position size in SOL */

@@ -124,18 +124,52 @@ function isPendingBuy(pair: string): boolean {
 }
 
 // ──────────────────────────────────────────────
-// Signal queue (FIFO)
+// Signal queue (FIFO) with TTL, dedup, and expiration
 // ──────────────────────────────────────────────
 
-const _signalQueue = new Map<string, ParsedSignal>();
+interface QueuedEntry {
+  signal: ParsedSignal;
+  queuedAt: number;
+}
+
+const _signalQueue = new Map<string, QueuedEntry>();
+
+/**
+ * Evict expired queue entries (those older than queue TTL).
+ * Returns number of evicted items.
+ */
+function evictExpiredQueueEntries(): number {
+  const now = Date.now();
+  const maxAge = CONFIG.signalQueueTtlSecs * 1000;
+  let evicted = 0;
+  for (const [lp, entry] of _signalQueue) {
+    if (now - entry.queuedAt >= maxAge) {
+      _signalQueue.delete(lp);
+      evicted++;
+    }
+  }
+  return evicted;
+}
 
 /**
  * Enqueue a signal for deferred processing (FIFO queue).
  *
+ * Deduplicates by LP address (newer signal replaces older).
+ * Evicts expired entries before checking capacity.
+ * When full, removes the oldest non-expired entry.
+ *
  * @param signal - The parsed signal to enqueue.
  */
 export function enqueueSignal(signal: ParsedSignal): void {
-  _signalQueue.set(signal.lpAddress, signal);
+  // Remove expired entries first
+  const expired = evictExpiredQueueEntries();
+  if (expired > 0) {
+    console.log(
+      `[Queue] Evicted ${expired} expired signal(s) from queue`,
+    );
+  }
+
+  _signalQueue.set(signal.lpAddress, { signal, queuedAt: Date.now() });
 
   // Evict oldest signal if queue exceeds max size
   if (_signalQueue.size > CONFIG.signalQueueSize) {
@@ -143,28 +177,46 @@ export function enqueueSignal(signal: ParsedSignal): void {
     if (oldest) {
       _signalQueue.delete(oldest);
       console.log(
-        `[position_core] Queue full — dropped oldest signal ${oldest}`,
+        `[Queue] Full — dropped oldest signal ${oldest}`,
       );
     }
   }
 
   console.log(
-    `[position_core] Queued ${signal.tokenName} ` +
+    `[Queue] Queued ${signal.tokenName} ` +
       `(queue size: ${_signalQueue.size})`,
   );
 }
 
 /**
- * Dequeue the oldest signal from the FIFO queue.
+ * Dequeue the next valid signal from the FIFO queue.
  *
- * @returns The oldest signal, or undefined if the queue is empty.
+ * Skips and removes expired entries, returning the first non-expired one.
+ *
+ * @returns The oldest valid signal, or undefined if the queue is empty
+ *          or all remaining entries have expired.
  */
 function dequeueSignal(): ParsedSignal | undefined {
-  const first = _signalQueue.keys().next().value;
-  if (!first) return undefined;
-  const signal = _signalQueue.get(first);
-  _signalQueue.delete(first);
-  return signal;
+  // Skip expired entries — evict them and look for the next valid one
+  const now = Date.now();
+  const maxAge = CONFIG.signalQueueTtlSecs * 1000;
+
+  for (const lp of _signalQueue.keys()) {
+    const entry = _signalQueue.get(lp)!;
+    _signalQueue.delete(lp);
+
+    if (now - entry.queuedAt >= maxAge) {
+      console.log(
+        `[Queue] Skipped expired ${entry.signal.tokenName} ` +
+          `(queued ${((now - entry.queuedAt) / 1000).toFixed(0)}s ago)`,
+      );
+      continue;
+    }
+
+    return entry.signal;
+  }
+
+  return undefined;
 }
 
 // ──────────────────────────────────────────────
