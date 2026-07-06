@@ -715,11 +715,19 @@ const tradePairPoll$ = timer(CONFIG.tradePairPollMs, CONFIG.tradePairPollMs).pip
           // configured threshold even if the API's SL task hasn't fired.
           // This catches cases where the simulator API doesn't execute
           // tasks (common in test environments).
+          // Determine correct close reason: if the API's TP task already
+          // realised a profit (sellProfitPercent > 0), report take_profit
+          // even though the remaining tokens triggered the SL guard.
+          const slReason: CloseReason =
+            pair.sellProfitPercent !== null && pair.sellProfitPercent < 0
+              ? "stop_loss"
+              : "take_profit";
           console.log(
             `[PairPoll] Client SL triggered for ${matching.tokenName}: ` +
-              `${pnlPct}% <= ${(CONFIG.stopLossPct * 100).toFixed(2)}%`,
+              `${pnlPct}% <= ${(CONFIG.stopLossPct * 100).toFixed(2)}%` +
+              ` -> reason=${slReason}`,
           );
-          closePositionById(matching.id, "stop_loss");
+          closePositionById(matching.id, slReason);
         } else {
           logger.debug(
             `[PairPoll] ${matching.tokenName}: open, balance=${balanceNum} pnl=${pnlPct}% — no action`,

@@ -42,3 +42,4 @@ telegram_session/
 
 *.log
 openwiki/
+.opencode/
