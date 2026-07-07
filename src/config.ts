@@ -272,6 +272,13 @@ export const CONFIG = {
   /** Default max fee per gas for simulator orders */
   defaultMaxFeePerGas: number("DEFAULT_MAX_FEE_PER_GAS", 100),
 
+  // ──────────────────────────────────────────
+  // Live trading mode
+  // ──────────────────────────────────────────
+
+  /** When true, the application boots into live trading mode instead of simulator. */
+  liveMode: process.env.LIVE_MODE?.toLowerCase() === "true",
+
   /** Logging verbosity level */
   logLevel: process.env.LOG_LEVEL ?? "info",
 };
