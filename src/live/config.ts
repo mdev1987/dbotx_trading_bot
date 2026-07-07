@@ -119,6 +119,9 @@ export const LIVE_CONFIG = {
   maxTtlSecs: number("MAX_TTL_SECS", 3600),
 
   // ── Take-profit / Stop-loss (server-side, sent in swap order) ────────────
+  /** Enable/disable partial take-profit tiers. */
+  partialTpEnabled: (process.env.PARTIAL_TP_ENABLED ?? "false").toLowerCase() === "true",
+
   /** Partial TP tiers for scaling out (server-managed). */
   partialTpTiers: parsePartialTpTiers(process.env.PARTIAL_TP_TIERS),
 

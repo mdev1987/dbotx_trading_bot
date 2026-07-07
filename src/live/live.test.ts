@@ -155,7 +155,11 @@ describe("fast_buy_sell", () => {
     if (LIVE_CONFIG.backstopTpPct > 0) {
       expect(params.stopEarnGroup).toBeDefined();
       const lastTier = params.stopEarnGroup![params.stopEarnGroup!.length - 1]!;
-      expect(lastTier.amountPercent).toBe(1); // Backstop sells remaining
+      const soldSoFar = LIVE_CONFIG.partialTpTiers.reduce((sum, t) => sum + t.pct, 0);
+      const expectedRemaining = LIVE_CONFIG.partialTpEnabled
+        ? Math.round((1 - soldSoFar) * 1000) / 1000
+        : 1;
+      expect(lastTier.amountPercent).toBe(expectedRemaining);
     }
   });
 

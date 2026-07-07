@@ -20,6 +20,7 @@ import type {
   LiveTradeType,
   LiveOrderState,
 } from "./types";
+import type { ParsedSignal } from "../telegram/telegram_listener";
 
 // ---------------------------------------------------------------------------
 // Request types
@@ -132,26 +133,44 @@ export interface LiveSwapOrderParams {
  *
  * @param pair      - Token or pair address.
  * @param amountSol - SOL amount to spend.
+ * @param signal    - Optional parsed signal for signal-aware TP scaling.
  * @returns Fully populated swap order params.
  */
 export function buildBuyOrderParams(
   pair: string,
   amountSol: number,
+  signal?: ParsedSignal,
 ): LiveSwapOrderParams {
-  /** Determine the backstop TP tier (sell remaining at backstop level). */
-  const backstopTier: PnLTier | null = LIVE_CONFIG.backstopTpPct > 0
-    ? { pricePercent: LIVE_CONFIG.backstopTpPct, amountPercent: 1 }
-    : null;
+  const { partialTpEnabled, partialTpTiers, backstopTpPct } = LIVE_CONFIG;
 
-  /** Build TP tiers: partial tiers from config + optional backstop. */
+  /** Build TP tiers. */
   const stopEarnGroup: PnLTier[] = [];
 
-  for (const tier of LIVE_CONFIG.partialTpTiers) {
-    stopEarnGroup.push({ pricePercent: tier.at, amountPercent: tier.pct });
-  }
+  if (partialTpEnabled) {
+    for (const tier of partialTpTiers) {
+      stopEarnGroup.push({ pricePercent: tier.at, amountPercent: tier.pct });
+    }
 
-  if (backstopTier) {
-    stopEarnGroup.push(backstopTier);
+    /** Signal-aware backstop TP scaling. */
+    const maxPumpX = (signal as { maxPumpX?: number })?.maxPumpX;
+    const effectiveBackstopTpPct =
+      maxPumpX && maxPumpX > 0
+        ? (maxPumpX - 1) * 0.7
+        : backstopTpPct;
+
+    if (effectiveBackstopTpPct > 0) {
+      const soldSoFar = partialTpTiers.reduce((sum, t) => sum + t.pct, 0);
+      const remaining = 1 - soldSoFar;
+      if (remaining > 0.001) {
+        stopEarnGroup.push({
+          pricePercent: effectiveBackstopTpPct,
+          amountPercent: remaining,
+        });
+      }
+    }
+  } else if (backstopTpPct > 0) {
+    /** When partial TP is disabled, use only backstop (sell full position). */
+    stopEarnGroup.push({ pricePercent: backstopTpPct, amountPercent: 1 });
   }
 
   /** Build the trailing stop group (client-side equivalent configured server-side too). */
@@ -296,13 +315,15 @@ export async function createSwapOrder(
  *
  * @param pair      - Token or pair address.
  * @param amountSol - SOL amount to spend.
+ * @param signal    - Optional parsed signal for signal-aware TP scaling.
  * @returns The order ID.
  */
 export async function liveFastBuy(
   pair: string,
   amountSol: number,
+  signal?: ParsedSignal,
 ): Promise<string> {
-  const params = buildBuyOrderParams(pair, amountSol);
+  const params = buildBuyOrderParams(pair, amountSol, signal);
   return createSwapOrder(params);
 }
 

@@ -29,6 +29,7 @@ import type {
 } from "./types";
 import { liveFastBuy, liveFastSell, pollSwapOrderUntilDone, querySwapOrders, querySwapOrder } from "./fast_buy_sell";
 import { computePositionSize } from "./account";
+import { refreshBalance$ } from "./wallet";
 import {
   tradeResultEvent$,
   buySuccessEvent$,
@@ -288,6 +289,20 @@ export function markPositionClosed(
     persistDailyLoss();
   }
 
+  /** Track consecutive losses for cooldown. */
+  if (pos.currentProfitPercent < 0) {
+    _consecutiveLosses++;
+    if (_consecutiveLosses >= COOLDOWN_THRESHOLD) {
+      _cooldownUntil = Date.now() + COOLDOWN_DURATION_MS;
+      console.log(
+        `[live/core] ${_consecutiveLosses} consecutive losses — ` +
+          `cooling down for ${COOLDOWN_DURATION_MS / 1000}s`,
+      );
+    }
+  } else {
+    _consecutiveLosses = 0;
+  }
+
   /** Release SOL from exposure tracking. */
   _totalSolDeployed = Math.max(0, _totalSolDeployed - pos.sizeSol);
 
@@ -445,6 +460,18 @@ let _totalSolDeployed = 0;
 export function totalSolDeployed(): number {
   return _totalSolDeployed;
 }
+
+/** Consecutive losing trades — triggers cooldown after threshold. */
+let _consecutiveLosses = 0;
+
+/** Timestamp (ms) until which new positions are blocked by cooldown. */
+let _cooldownUntil = 0;
+
+/** Cooldown duration after consecutive losses (20 minutes). */
+const COOLDOWN_DURATION_MS = 20 * 60 * 1000;
+
+/** Consecutive losses needed to trigger cooldown. */
+const COOLDOWN_THRESHOLD = 3;
 
 /** Timestamps of recent buy orders for rate limiting. */
 const _buyTimestamps: number[] = [];
@@ -667,6 +694,16 @@ export async function openPosition(signal: ParsedSignal): Promise<number> {
     }
   }
 
+  /** Guard: consecutive loss cooldown. */
+  const remaining = _cooldownUntil - Date.now();
+  if (remaining > 0) {
+    console.log(
+      `[live/core] Cooldown active (${Math.ceil(remaining / 1000)}s remaining) — ` +
+        `skipping ${signal.tokenName}`,
+    );
+    return 0;
+  }
+
   /** Compute position size. */
   const sizeSol = computePositionSize();
 
@@ -678,7 +715,7 @@ export async function openPosition(signal: ParsedSignal): Promise<number> {
 
   try {
     /** Create the live BUY order. */
-    const orderId = await liveFastBuy(signal.lpAddress, sizeSol);
+    const orderId = await liveFastBuy(signal.lpAddress, sizeSol, signal);
 
     /** Reset consecutive failure counter on success. */
     resetApiFailures();
@@ -688,6 +725,9 @@ export async function openPosition(signal: ParsedSignal): Promise<number> {
 
     /** Record buy for rate limiting. */
     recordBuyTimestamp();
+
+    /** Refresh wallet balance after the buy. */
+    refreshBalance$.next();
 
     console.log(
       `[live/core] Position opened: id=${position.id} token=${signal.tokenName} ` +
@@ -975,7 +1015,9 @@ export function subscribeToTradeEvents(): Subscription {
  * @returns A Subscription that can be unsubscribed to stop the checker.
  */
 export function startTtlChecker(): Subscription {
-  return timer(LIVE_CONFIG.expiryCheckMs, LIVE_CONFIG.expiryCheckMs)
+  const { baseTtlSecs, minProfitForTtlExtensionPct, maxTtlSecs, expiryCheckMs } = LIVE_CONFIG;
+
+  return timer(expiryCheckMs, expiryCheckMs)
     .pipe(
       withLatestFrom(openPositions$),
       tap(([, positions]) => {
@@ -984,16 +1026,48 @@ export function startTtlChecker(): Subscription {
         for (const pos of positions) {
           /** Skip positions that are already closing or have no entry price yet. */
           if (pos.status !== "open") continue;
-          if (!pos.entryPriceUsd) continue; // Wait for entry price before TTL applies
+          if (!pos.entryPriceUsd) continue;
 
-          /** Check if the position has exceeded its TTL. */
+          const age = now - pos.openedAt;
+          const maxAge = maxTtlSecs * 1000;
+
+          /** Hard cap: close if position exceeds maxTtlSecs. */
+          if (maxTtlSecs > 0 && age >= maxAge) {
+            console.log(
+              `[live/core] Hard TTL cap reached for position ${pos.id} (${pos.tokenName}) ` +
+                `— closing`,
+            );
+            closePositionById(pos.id, "expired").catch((err) => {
+              console.error(`[live/core] TTL hard cap close failed for position ${pos.id}:`, err);
+            });
+            continue;
+          }
+
+          /** TTL extension: if profitable and extension configured, reset the TTL. */
+          if (
+            minProfitForTtlExtensionPct > 0 &&
+            pos.currentProfitPercent >= minProfitForTtlExtensionPct
+          ) {
+            const newExpiry = now + baseTtlSecs * 1000;
+            const wouldExceedCap = maxTtlSecs > 0 && newExpiry - pos.openedAt > maxAge;
+
+            if (!wouldExceedCap) {
+              patchPositionById(pos.id, { expiresAt: newExpiry });
+              console.log(
+                `[live/core] TTL extended for position ${pos.id} (${pos.tokenName}) ` +
+                  `— profit ${(pos.currentProfitPercent * 100).toFixed(1)}% >= ` +
+                  `${(minProfitForTtlExtensionPct * 100).toFixed(1)}%`,
+              );
+              continue;
+            }
+          }
+
+          /** Normal TTL expiry check. */
           if (now >= pos.expiresAt) {
             console.log(
               `[live/core] TTL expired for position ${pos.id} (${pos.tokenName}) ` +
                 `— closing`,
             );
-
-            /** Close the position asynchronously (fire-and-forget). */
             closePositionById(pos.id, "expired").catch((err) => {
               console.error(`[live/core] TTL close failed for position ${pos.id}:`, err);
             });
@@ -1053,84 +1127,83 @@ export function subscribeToPriceUpdates(): Subscription {
 }
 
 // ---------------------------------------------------------------------------
-// Signal queue
+// Signal queue (FIFO, Map-based with LP dedup, full-scan TTL eviction)
 // ---------------------------------------------------------------------------
 
-/**
- * Queue of signals that arrived while at max positions.
- * FIFO — processed as positions become available.
- *
- * Each entry stores the signal and its arrival timestamp for TTL checks.
- */
-const _signalQueue: Array<{ signal: ParsedSignal; timestamp: number }> = [];
+const _signalQueue = new Map<string, { signal: ParsedSignal; timestamp: number }>();
+
+function evictExpiredQueueEntries(): number {
+  const now = Date.now();
+  const maxAge = LIVE_CONFIG.signalQueueTtlSecs * 1000;
+  let evicted = 0;
+  for (const [lp, entry] of _signalQueue) {
+    if (now - entry.timestamp >= maxAge) {
+      _signalQueue.delete(lp);
+      evicted++;
+    }
+  }
+  return evicted;
+}
 
 /**
  * Enqueue a signal for later processing.
- * Removes oldest expired entries first.
- *
- * @param signal - The parsed signal to enqueue.
+ * Deduplicates by LP address: removes the old entry first so the new
+ * signal goes to the back of the FIFO order with a fresh TTL.
+ * Evicts expired entries before checking capacity.
+ * When full, removes the oldest non-expired entry.
  */
 export function enqueueSignal(signal: ParsedSignal): void {
-  /** Prune expired entries. */
-  const now = Date.now();
-  while (
-    _signalQueue.length > 0 &&
-    now - _signalQueue[0]!.timestamp > LIVE_CONFIG.signalQueueTtlSecs * 1000
-  ) {
-    const expired = _signalQueue.shift()!;
-    console.log(
-      `[live/core] Queue: expired signal for ${expired.signal.tokenName}`,
-    );
+  const expired = evictExpiredQueueEntries();
+  if (expired > 0) {
+    console.log(`[live/core] Queue: evicted ${expired} expired signal(s)`);
   }
 
-  /** Enforce max queue size. */
-  if (_signalQueue.length >= LIVE_CONFIG.signalQueueSize) {
-    console.log(
-      `[live/core] Queue: full (${_signalQueue.length}) — dropping signal for ${signal.tokenName}`,
-    );
-    return;
+  /** Remove old entry for this LP (if any) so the new one lands at the back of the FIFO. */
+  if (_signalQueue.has(signal.lpAddress)) {
+    _signalQueue.delete(signal.lpAddress);
   }
 
-  _signalQueue.push({ signal, timestamp: now });
-  console.log(
-    `[live/core] Queue: enqueued ${signal.tokenName} (${_signalQueue.length} queued)`,
-  );
+  _signalQueue.set(signal.lpAddress, { signal, timestamp: Date.now() });
+
+  if (_signalQueue.size > LIVE_CONFIG.signalQueueSize) {
+    const oldest = _signalQueue.keys().next().value;
+    if (oldest) {
+      _signalQueue.delete(oldest);
+      console.log(`[live/core] Queue: full — dropped oldest signal ${oldest}`);
+    }
+  }
+
+  console.log(`[live/core] Queue: enqueued ${signal.tokenName} (${_signalQueue.size} queued)`);
 }
 
 /**
- * Dequeue the next pending signal, if any.
- * Checks TTL before returning — expired signals are skipped.
- *
- * @returns The next valid signal, or null if the queue is empty.
+ * Dequeue the next valid signal, skipping expired entries.
  */
 export function dequeueSignal(): ParsedSignal | null {
-  /** Prune expired entries at the front. */
   const now = Date.now();
-  while (
-    _signalQueue.length > 0 &&
-    now - _signalQueue[0]!.timestamp > LIVE_CONFIG.signalQueueTtlSecs * 1000
-  ) {
-    const expired = _signalQueue.shift()!;
-    console.log(`[live/core] Queue: expired signal for ${expired.signal.tokenName}`);
+  const maxAge = LIVE_CONFIG.signalQueueTtlSecs * 1000;
+
+  for (const lp of _signalQueue.keys()) {
+    const entry = _signalQueue.get(lp)!;
+    _signalQueue.delete(lp);
+
+    if (now - entry.timestamp >= maxAge) {
+      console.log(`[live/core] Queue: expired signal for ${entry.signal.tokenName}`);
+      continue;
+    }
+
+    return entry.signal;
   }
 
-  if (_signalQueue.length === 0) return null;
-
-  return _signalQueue.shift()!.signal;
+  return null;
 }
 
-/**
- * Get the current queue length.
- */
 export function queueLength(): number {
-  return _signalQueue.length;
+  return _signalQueue.size;
 }
 
-/**
- * Clear the signal queue (used in tests to reset state).
- */
 export function _clearQueueForTest(): void {
-  _signalQueue.length = 0;
+  _signalQueue.clear();
 }
 
 // ---------------------------------------------------------------------------
