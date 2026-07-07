@@ -59,7 +59,7 @@ export const LIVE_CONFIG = {
   liveMode: process.env.LIVE_MODE?.toLowerCase() === "true",
 
   /** Master kill switch: when false, no new buy orders are created (env override). */
-  liveEnabled: (process.env.LIVE_ENABLED ?? "true").toLowerCase() === "true",
+  liveBuyEnabled: (process.env.LIVE_BUY_ENABLED ?? "true").toLowerCase() === "true",
 
   // ── API keys ──────────────────────────────────────────────────────────────
   /** API key used for authentication against both bot and data endpoints. */

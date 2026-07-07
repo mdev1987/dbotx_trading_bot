@@ -632,9 +632,9 @@ export function resetDailyLoss(): void {
  * @returns The position ID, or 0 if the position could not be opened.
  */
 export async function openPosition(signal: ParsedSignal): Promise<number> {
-  /** Guard: LIVE_ENABLED kill switch. */
-  if (!LIVE_CONFIG.liveEnabled) {
-    console.warn("[live/core] LIVE_ENABLED is false — rejecting new position");
+  /** Guard: LIVE_BUY_ENABLED kill switch. */
+  if (!LIVE_CONFIG.liveBuyEnabled) {
+    console.warn("[live/core] LIVE_BUY_ENABLED is false — rejecting new position");
     return 0;
   }
 
