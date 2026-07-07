@@ -1163,33 +1163,27 @@ function scoreSignal(signal: ParsedSignal): number {
 }
 
 /**
- * Compute the position size in SOL based on signal quality, config, and risk limits.
+ * Compute the position size in SOL based on config and risk limits.
  *
- * When a signal is provided the position size is scaled linearly between
- * minPositionSol and maxPositionSol according to the signal's composite score
- * (wallet count, buy volume, max pump).  The result is then capped by the
- * configured risk percentage of the account balance and clamped to bounds.
+ * Starts at maxPositionSol, then caps by the configured percentage of the
+ * account balance (converted from USD to SOL).  Finally clamps to the
+ * configured min/max bounds.
  *
- * @param signal - Optional parsed signal used to compute a quality score.
+ * @param signal - Unused (kept for signature compatibility).
  * @returns The final position size in SOL.
  */
-function computePositionSize(signal?: ParsedSignal): number {
+function computePositionSize(_signal?: ParsedSignal): number {
   const { minPositionSol, maxPositionSol, maxRiskPct } = CONFIG;
   let size = maxPositionSol;
 
-  // Scale size by signal quality when signal data is available
-  if (signal) {
-    const score = scoreSignal(signal);
-    size = minPositionSol + (maxPositionSol - minPositionSol) * score;
-  }
-
-  // Cap size by risk percentage of current account balance
+  // Cap by risk percentage of account balance (converted from USD to SOL)
   if (maxRiskPct > 0 && latestAccount?.balance) {
-    const riskCap = (latestAccount.balance * maxRiskPct) / 100;
-    size = Math.min(size, riskCap);
+    const riskCapUsd = (latestAccount.balance * maxRiskPct) / 100;
+    const riskCapSol = riskCapUsd / CONFIG.solPriceUsd;
+    size = Math.min(size, riskCapSol);
   }
 
-  // Clamp to configured min/max position size bounds
+  // Clamp to configured min/max bounds
   size = Math.max(size, minPositionSol);
   size = Math.min(size, maxPositionSol);
 
