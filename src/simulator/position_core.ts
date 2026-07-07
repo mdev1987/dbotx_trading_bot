@@ -1179,8 +1179,7 @@ function computePositionSize(_signal?: ParsedSignal): number {
   // Cap by risk percentage of account balance (converted from USD to SOL)
   if (maxRiskPct > 0 && latestAccount?.balance) {
     const riskCapUsd = (latestAccount.balance * maxRiskPct) / 100;
-    const riskCapSol = riskCapUsd / CONFIG.solPriceUsd;
-    size = Math.min(size, riskCapSol);
+    size = Math.min(size, riskCapUsd);
   }
 
   // Clamp to configured min/max bounds

@@ -280,7 +280,7 @@ export function markPositionClosed(
   /** Update profit before final close. */
   if (pos.entryPriceUsd && exitPriceUsd) {
     pos.currentProfitPercent = (exitPriceUsd - pos.entryPriceUsd) / pos.entryPriceUsd;
-    pos.currentProfitUsd = pos.currentProfitPercent * pos.sizeSol * LIVE_CONFIG.solPriceUsd;
+    pos.currentProfitUsd = pos.currentProfitPercent * pos.sizeSol;
   }
 
   /** Track daily loss (persisted to SQLite). */
@@ -1118,7 +1118,7 @@ export function subscribeToPriceUpdates(): Subscription {
           /** Update current profit. */
           pos.currentProfitPercent =
             (currentPrice - pos.entryPriceUsd) / pos.entryPriceUsd;
-          pos.currentProfitUsd = pos.currentProfitPercent * pos.sizeSol * LIVE_CONFIG.solPriceUsd;
+          pos.currentProfitUsd = pos.currentProfitPercent * pos.sizeSol;
           pos.lastUpdateAt = Date.now();
         }
       }),

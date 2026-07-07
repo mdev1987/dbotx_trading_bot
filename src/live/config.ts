@@ -95,9 +95,6 @@ export const LIVE_CONFIG = {
   /** Maximum percentage of the wallet SOL balance that may be risked on a single position. */
   maxRiskPct: number("MAX_RISK_PCT", 10) / 100,
 
-  /** Estimated SOL/USD price used for converting USD-denominated caps to SOL amounts. */
-  solPriceUsd: number("SOL_PRICE_USD", 150),
-
   // ── Limits ────────────────────────────────────────────────────────────────
   /** Maximum number of concurrently open positions. */
   maxPositions: number("MAX_POSITIONS", 20),

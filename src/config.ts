@@ -133,9 +133,6 @@ export const CONFIG = {
   maxPositionSol: number("MAX_POSITION_SOL", 0.1),
   /** Maximum percentage of account balance to risk per position */
   maxRiskPct: number("MAX_RISK_PCT", 1),
-  /** Estimated SOL price in USD used to convert USD balance caps to SOL amounts */
-  solPriceUsd: number("SOL_PRICE_USD", 150),
-
   /** Stop-loss threshold as a fraction (e.g., 0.05 = 5% below entry) */
   stopLossPct: number("PAPER_STOP_LOSS_PERCENT") / 100,
   /** Price increase fraction needed to activate trailing stop */
