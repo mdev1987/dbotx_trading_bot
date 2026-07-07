@@ -13,6 +13,11 @@ import { simulatorAccount$, latestAccount } from "../simulator/account";
 import type { SimulatorAccount } from "../simulator/account";
 import { generateReport } from "../analytics/reports";
 import type { PerformanceReport } from "../analytics/reports";
+import {
+  pauseSignals,
+  resumeSignals,
+  isSignalPaused,
+} from "./signal_control";
 
 const bot = new Bot(CONFIG.telegramBotToken!);
 const CHAT_ID = CONFIG.telegramChatId!;
@@ -372,7 +377,7 @@ class TelegramReporter {
   /** Cached snapshot of the latest simulator account state. */
   private account: SimulatorAccount | null = null;
   /** Cached count of currently open positions. */
-  private openCount = 0;
+  openCount = 0;
 
   constructor() {
     // Serialize outbound messages — process one at a time in FIFO order
@@ -524,12 +529,45 @@ class TelegramReporter {
 
 const reporter = new TelegramReporter();
 
+// ── Bot commands ──────────────────────────────────────────────────────────
+// Register command handlers AFTER creating the reporter but BEFORE starting
+// polling so that commands are available immediately on connect.
+bot.command("start", async (ctx) => {
+  resumeSignals();
+  await ctx.reply("\u25B6\uFE0F Signal processing resumed"); // ▶️
+});
+
+bot.command("pause", async (ctx) => {
+  pauseSignals();
+  await ctx.reply(
+    "\u23F8\uFE0F Signal processing paused.\n" + // ⏸️
+      "Existing positions continue with TP/SL/trailing.",
+  );
+});
+
+bot.command("status", async (ctx) => {
+  const paused = isSignalPaused();
+  const lines = [
+    paused
+      ? "\u23F8\uFE0F Signal: **Paused**"   // ⏸️
+      : "\u25B6\uFE0F Signal: **Active**",    // ▶️
+    `\u{1F4CC} Open positions: ${reporter.openCount}`, // 📌
+  ];
+  await ctx.reply(lines.join("\n"));
+});
+
+// Non-blocking long-polling so the bot can receive commands.
+bot.start({
+  onStart: () => console.log("[reporter] Bot command polling started"),
+}).catch((err) => console.error("[reporter] Bot polling failed:", err));
+
 export function startReporter(): void {
   reporter.start();
 }
 
 export function stopReporter(): void {
   reporter.stop();
+  bot.stop();
 }
 
 export function sendMessage(text: string): void {

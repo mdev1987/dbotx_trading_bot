@@ -1,7 +1,8 @@
 // Default signal strategy — applies max-positions cap, signal queuing, and TTL-based position expiry.
-import { concatMap } from "rxjs/operators";
+import { concatMap, filter, map, withLatestFrom } from "rxjs/operators";
 import { CONFIG } from "../config";
 import { acceptedSignal$ } from "../telegram/signals_stream";
+import { signalPaused$ } from "../telegram/signal_control";
 import {
   _latestPositions,
   openPosition,
@@ -21,6 +22,13 @@ import {
  */
 acceptedSignal$
   .pipe(
+    // Skip new signals when paused (TP/SL/trailing still manages open positions)
+    withLatestFrom(signalPaused$),
+    filter(([, paused]) => {
+      if (paused) console.log("[strategy] Paused — skipping signal");
+      return !paused;
+    }),
+    map(([signal]) => signal),
     // concatMap guarantees signals are handled one-at-a-time in FIFO order,
     // naturally forming a queue without an explicit data structure.
     concatMap(async (signal) => {

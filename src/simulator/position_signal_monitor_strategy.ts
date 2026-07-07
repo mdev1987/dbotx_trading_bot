@@ -13,8 +13,9 @@
 //   • Partial TP      (simulator API partial-take-profit tiers)
 //   • Pump message    (ave_monitor_pump — closes the **oldest** matching
 //                      position for that contract address)
-import { concatMap, filter } from "rxjs/operators";
+import { concatMap, filter, map, withLatestFrom } from "rxjs/operators";
 import { telegramSignal$ } from "../telegram/telegram_listener";
+import { signalPaused$ } from "../telegram/signal_control";
 import type {
   AveSignalMonitorSignal,
   AveSignalMonitorPump,
@@ -54,6 +55,13 @@ const signalMonitorSignal$ = telegramSignal$.pipe(
 
 signalMonitorSignal$
   .pipe(
+    // Skip new signals when paused (pump messages still manage existing positions)
+    withLatestFrom(signalPaused$),
+    filter(([, paused]) => {
+      if (paused) console.log("[strategy] Paused — skipping monitor signal");
+      return !paused;
+    }),
+    map(([signal]) => signal),
     concatMap(async (signal) => {
       // Open a new position with force=true to bypass the pair-exists guard.
       // The old position (if any) for the same token is **not** closed —
