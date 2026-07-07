@@ -43,8 +43,10 @@ import {
   savePositionToDb,
   loadNonClosedPositions,
   markPositionDeletedFromDb,
+  getLiveDb,
 } from "./persistence";
 import { isPanicMode, enablePanic } from "./panic";
+import { markPriceUpdate } from "./watchdog";
 import type { DbPositionRow } from "./persistence";
 
 // ---------------------------------------------------------------------------
@@ -190,6 +192,8 @@ function addPosition(
     tokenSymbol: "",
     entryPriceUsd: null,
     sizeSol,
+    filledSol: 0,
+    avgFillPriceUsd: null,
     peakPriceUsd: 0,
     trailingActive: false,
     currentProfitPercent: 0,
@@ -204,6 +208,7 @@ function addPosition(
   };
 
   _positionStore.set(position.id, position);
+  _totalSolDeployed += sizeSol;
   _latestPositions = _positionStore;
 
   /** Persist to SQLite before emitting events. */
@@ -277,10 +282,14 @@ export function markPositionClosed(
     pos.currentProfitUsd = pos.currentProfitPercent * pos.sizeSol * LIVE_CONFIG.solPriceUsd;
   }
 
-  /** Track daily loss. */
+  /** Track daily loss (persisted to SQLite). */
   if (pos.currentProfitUsd < 0) {
     recordDailyLoss(pos.currentProfitUsd);
+    persistDailyLoss();
   }
+
+  /** Release SOL from exposure tracking. */
+  _totalSolDeployed = Math.max(0, _totalSolDeployed - pos.sizeSol);
 
   /** Persist to SQLite before emitting events. */
   savePositionToDb(pos);
@@ -406,6 +415,74 @@ export function unlockPair(pair: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Price cache from pairUpdate$ stream
+// ---------------------------------------------------------------------------
+
+/**
+ * Map<pair, { priceUsd: number, timestamp: number }> — caches the latest
+ * price from pairUpdate$ for price sanity checks and profit tracking.
+ */
+const _priceCache = new Map<string, { priceUsd: number; timestamp: number }>();
+
+/** Update the price cache with a new value (called from subscribeToPriceUpdates). */
+export function updatePriceCache(pair: string, priceUsd: number): void {
+  _priceCache.set(pair, { priceUsd, timestamp: Date.now() });
+}
+
+/** Get a cached price for a pair. */
+export function getCachedPrice(pair: string): { priceUsd: number; timestamp: number } | undefined {
+  return _priceCache.get(pair);
+}
+
+// ---------------------------------------------------------------------------
+// Exposure tracking
+// ---------------------------------------------------------------------------
+
+/** Total SOL deployed across all open positions. */
+let _totalSolDeployed = 0;
+
+/** Get total SOL currently in open positions. */
+export function totalSolDeployed(): number {
+  return _totalSolDeployed;
+}
+
+/** Timestamps of recent buy orders for rate limiting. */
+const _buyTimestamps: number[] = [];
+
+/** Count buys in a rolling window (ms). */
+function countBuysInWindow(windowMs: number): number {
+  const cutoff = Date.now() - windowMs;
+  let count = 0;
+  for (const ts of _buyTimestamps) {
+    if (ts >= cutoff) count++;
+  }
+  return count;
+}
+
+/** Check if the rate limit for buys is exceeded. */
+export function isBuyRateLimited(): boolean {
+  if (countBuysInWindow(60_000) >= LIVE_CONFIG.maxBuysPerMinute) {
+    console.warn(`[live/core] Buy rate limit exceeded: ${countBuysInWindow(60_000)}/min`);
+    return true;
+  }
+  if (countBuysInWindow(3_600_000) >= LIVE_CONFIG.maxBuysPerHour) {
+    console.warn(`[live/core] Buy rate limit exceeded: ${countBuysInWindow(3_600_000)}/hour`);
+    return true;
+  }
+  return false;
+}
+
+/** Record a buy timestamp for rate limiting. */
+export function recordBuyTimestamp(): void {
+  _buyTimestamps.push(Date.now());
+  /** Prune old entries. */
+  const cutoff = Date.now() - 3_600_000;
+  while (_buyTimestamps.length > 0 && _buyTimestamps[0]! < cutoff) {
+    _buyTimestamps.shift();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Consecutive API failure tracking
 // ---------------------------------------------------------------------------
 
@@ -462,10 +539,52 @@ export function recordDailyLoss(pnlUsd: number): void {
 }
 
 /**
- * Reset the daily loss counter (called at midnight or on startup).
+ * Persist the current daily loss to SQLite.
+ */
+function persistDailyLoss(): void {
+  try {
+    const db = getLiveDb();
+    const today = new Date().toISOString().slice(0, 10);
+    db.prepare(`
+      INSERT INTO live_daily_loss (date, loss_usd)
+      VALUES ($date, $loss_usd)
+      ON CONFLICT(date) DO UPDATE SET
+        loss_usd = loss_usd + $loss_usd,
+        updated_at = (unixepoch() * 1000)
+    `).run({
+      $date: today,
+      $loss_usd: _dailyLossUsd > 0 ? _dailyLossUsd : 0,
+    });
+  } catch (err) {
+    console.error("[live/core] Failed to persist daily loss:", err);
+  }
+}
+
+/**
+ * Load today's daily loss from SQLite.
+ */
+export function loadDailyLossFromDb(): void {
+  try {
+    const db = getLiveDb();
+    const today = new Date().toISOString().slice(0, 10);
+    const row = db.prepare(
+      "SELECT loss_usd FROM live_daily_loss WHERE date = $date",
+    ).get({ $date: today }) as { loss_usd: number } | undefined;
+    if (row) {
+      _dailyLossUsd = row.loss_usd;
+      console.log(`[live/core] Loaded daily loss from DB: $${_dailyLossUsd.toFixed(2)}`);
+    }
+  } catch (err) {
+    console.error("[live/core] Failed to load daily loss from DB:", err);
+  }
+}
+
+/**
+ * Reset the daily loss counter (called at startup or when a new day begins).
  */
 export function resetDailyLoss(): void {
   _dailyLossUsd = 0;
+  persistDailyLoss();
 }
 
 // ---------------------------------------------------------------------------
@@ -486,6 +605,12 @@ export function resetDailyLoss(): void {
  * @returns The position ID, or 0 if the position could not be opened.
  */
 export async function openPosition(signal: ParsedSignal): Promise<number> {
+  /** Guard: LIVE_ENABLED kill switch. */
+  if (!LIVE_CONFIG.liveEnabled) {
+    console.warn("[live/core] LIVE_ENABLED is false — rejecting new position");
+    return 0;
+  }
+
   /** Guard: panic mode — reject all new buys. */
   if (isPanicMode()) {
     console.warn("[live/core] Panic mode active — rejecting new position");
@@ -496,6 +621,20 @@ export async function openPosition(signal: ParsedSignal): Promise<number> {
   if (isDailyLossExceeded()) {
     console.warn(
       `[live/core] Daily loss limit ($${LIVE_CONFIG.dailyLossLimitUsd}) exceeded — rejecting new position`,
+    );
+    return 0;
+  }
+
+  /** Guard: buy rate limit. */
+  if (isBuyRateLimited()) {
+    console.warn("[live/core] Buy rate limit exceeded — rejecting new position");
+    return 0;
+  }
+
+  /** Guard: max total SOL deployed. */
+  if (LIVE_CONFIG.maxTotalSolDeployed > 0 && _totalSolDeployed >= LIVE_CONFIG.maxTotalSolDeployed) {
+    console.warn(
+      `[live/core] Max total SOL deployed (${LIVE_CONFIG.maxTotalSolDeployed}) reached — rejecting new position`,
     );
     return 0;
   }
@@ -519,6 +658,15 @@ export async function openPosition(signal: ParsedSignal): Promise<number> {
     return 0;
   }
 
+  /** Guard: price sanity check. */
+  const cached = getCachedPrice(signal.lpAddress);
+  if (cached && LIVE_CONFIG.maxPriceDeviationPct > 0) {
+    if (cached.priceUsd <= 0) {
+      console.warn(`[live/core] Cached price for ${signal.tokenName} is ${cached.priceUsd} — aborting`);
+      return 0;
+    }
+  }
+
   /** Compute position size. */
   const sizeSol = computePositionSize();
 
@@ -537,6 +685,9 @@ export async function openPosition(signal: ParsedSignal): Promise<number> {
 
     /** Add the position to the store. */
     const position = addPosition(signal, orderId, sizeSol);
+
+    /** Record buy for rate limiting. */
+    recordBuyTimestamp();
 
     console.log(
       `[live/core] Position opened: id=${position.id} token=${signal.tokenName} ` +
@@ -868,6 +1019,15 @@ export function subscribeToPriceUpdates(): Subscription {
     .pipe(
       withLatestFrom(openPositions$),
       tap(([update, positions]) => {
+        /** Skip updates without a price. */
+        if (update.priceUsd == null || update.priceUsd <= 0) return;
+
+        /** Mark the price feed as alive. */
+        markPriceUpdate();
+
+        /** Update the global price cache. */
+        updatePriceCache(update.pair, update.priceUsd);
+
         for (const pos of positions) {
           /** Match by LP address (pair). */
           if (pos.pair !== update.pair) continue;
@@ -1050,6 +1210,8 @@ async function recoverSinglePosition(row: DbPositionRow): Promise<void> {
     tokenSymbol: row.token_symbol,
     entryPriceUsd: row.entry_price_usd,
     sizeSol: row.size_sol,
+    filledSol: row.filled_sol ?? 0,
+    avgFillPriceUsd: row.avg_fill_price_usd ?? null,
     peakPriceUsd: row.peak_price_usd,
     trailingActive: row.trailing_active === 1,
     currentProfitPercent: row.current_profit_pct,

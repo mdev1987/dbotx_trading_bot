@@ -1,38 +1,27 @@
 /**
- * Account module — re-exports wallet primitives and provides position-sizing helpers.
+ * Account module — simple balance-based position sizing.
  *
- * Position sizing logic:
- *   1. Start with LIVE_CONFIG.positionSize (default 0.1 SOL).
- *   2. Clamp to [minPositionSol, maxPositionSol].
- *   3. Apply risk cap: position must not exceed maxRiskPct of wallet balance,
- *      converted via solPriceUsd to SOL.
- *   4. Return the final size.
+ * Formula: clamp(0.01 SOL, 10 % of wallet balance, 0.05 SOL)
+ *
+ * If no balance snapshot is available, returns the conservative minimum of 0.01 SOL.
  */
-import { LIVE_CONFIG } from "./config";
 import { latestBalance } from "./wallet";
 
+const MIN_POSITION_SOL = 0.01;
+const MAX_POSITION_SOL = 0.05;
+const BALANCE_FRACTION = 0.10;
+
 /**
- * Compute the SOL amount to spend on the next position.
+ * Compute the SOL amount for the next position.
  *
- * Respects absolute caps (min/max) and the relative risk cap (% of wallet balance).
- * The configured minimum position size is ALWAYS enforced as a floor.
- *
- * @returns Position size in SOL.
+ * @returns Position size in SOL, never below 0.01 or above 0.05.
  */
 export function computePositionSize(): number {
-  /** Start with the configured default. */
-  let size = LIVE_CONFIG.positionSize;
-
-  /** Apply %-of-balance risk cap if we have a balance snapshot and the cap is active. */
-  if (latestBalance && LIVE_CONFIG.maxRiskPct > 0) {
-    /** The risk limit in raw SOL terms = balance * maxRiskPct. */
-    const rawRiskLimitSol = latestBalance.balanceSol * LIVE_CONFIG.maxRiskPct;
-    size = Math.min(size, rawRiskLimitSol);
+  if (!latestBalance || latestBalance.balanceSol <= 0) {
+    return MIN_POSITION_SOL;
   }
 
-  /** Clamp to configured min/max bounds — MIN is always the absolute floor. */
-  size = Math.max(size, LIVE_CONFIG.minPositionSol);
-  size = Math.min(size, LIVE_CONFIG.maxPositionSol);
-
-  return size;
+  const bal = latestBalance.balanceSol;
+  const tenPct = bal * BALANCE_FRACTION;
+  return Math.max(MIN_POSITION_SOL, Math.min(tenPct, MAX_POSITION_SOL));
 }

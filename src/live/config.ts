@@ -58,6 +58,9 @@ export const LIVE_CONFIG = {
   /** Master switch: when true the application boots into live trading mode. */
   liveMode: process.env.LIVE_MODE?.toLowerCase() === "true",
 
+  /** Master kill switch: when false, no new buy orders are created (env override). */
+  liveEnabled: (process.env.LIVE_ENABLED ?? "true").toLowerCase() === "true",
+
   // ── API keys ──────────────────────────────────────────────────────────────
   /** API key used for authentication against both bot and data endpoints. */
   dbotxApiKey: required("DBOTX_API_KEY"),
@@ -234,16 +237,49 @@ export const LIVE_CONFIG = {
   /** Path to the STOP_TRADING sentinel file (create to halt new buys). */
   stopTradingPath: process.env.STOP_TRADING_PATH ?? "./STOP_TRADING_LIVE",
 
-  /** Maximum number of consecutive API failures before auto-pause. */
+  /** Maximum number of consecutive API failures before auto-panic. */
   maxConsecutiveApiFailures: number("MAX_CONSECUTIVE_API_FAILURES", 5),
 
+  /** Maximum number of consecutive WS disconnects before auto-panic. */
+  maxWsDisconnects: number("MAX_WS_DISCONNECTS", 5),
+
   // ── Portfolio limits ──────────────────────────────────────────────────────
+  /** Maximum SOL that can be deployed across all open positions. */
+  maxTotalSolDeployed: number("MAX_TOTAL_SOL_DEPLOYED", 0.5),
+
   /** Maximum percentage of wallet balance that can be deployed across all positions. */
   maxPortfolioExposurePct: number("MAX_PORTFOLIO_EXPOSURE_PCT", 100) / 100,
+
+  /** Maximum buys per minute (rolling window). */
+  maxBuysPerMinute: number("MAX_BUYS_PER_MINUTE", 3),
+
+  /** Maximum buys per hour (rolling window). */
+  maxBuysPerHour: number("MAX_BUYS_PER_HOUR", 20),
 
   // ── Daily loss ────────────────────────────────────────────────────────────
   /** Daily realised loss limit in USD (0 = disabled). */
   dailyLossLimitUsd: number("DAILY_LOSS_LIMIT_USD", 20),
+
+  // ── Reconciliation ────────────────────────────────────────────────────────
+  /** Interval (ms) for periodic exchange reconciliation. */
+  reconciliationIntervalMs: number("RECONCILIATION_INTERVAL_MS", 60_000),
+
+  // ── Watchdog ──────────────────────────────────────────────────────────────
+  /** Interval (ms) for watchdog heartbeat checks. */
+  watchdogIntervalMs: number("WATCHDOG_INTERVAL_MS", 15_000),
+
+  /** Max age (ms) of last WS message before watchdog flags it as stale. */
+  watchdogWsStaleMs: number("WATCHDOG_WS_STALE_MS", 60_000),
+
+  /** Max age (ms) of last balance update before watchdog flags it as stale. */
+  watchdogBalanceStaleMs: number("WATCHDOG_BALANCE_STALE_MS", 120_000),
+
+  /** Max age (ms) of last price update before watchdog flags it as stale. */
+  watchdogPriceStaleMs: number("WATCHDOG_PRICE_STALE_MS", 60_000),
+
+  // ── Price sanity ──────────────────────────────────────────────────────────
+  /** Max price deviation fraction from reference before buy is aborted. */
+  maxPriceDeviationPct: number("MAX_PRICE_DEVIATION_PCT", 0) / 100,
 
   // ── Telegram ──────────────────────────────────────────────────────────────
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,

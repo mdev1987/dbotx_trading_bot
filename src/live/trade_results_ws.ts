@@ -13,6 +13,7 @@
 import { Subject, Observable, timer, merge } from "rxjs";
 import { filter, map, share, tap } from "rxjs/operators";
 import { LIVE_CONFIG } from "./config";
+import { markWsMessage } from "./watchdog";
 import type { TradeResultEvent, TradeResultSource, TradeResultSubSource } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -115,6 +116,19 @@ let intentionalClose = false;
 /** Counter for exponential backoff on reconnect. */
 let reconnectAttempt = 0;
 
+/** Consecutive WS disconnect counter for circuit breaker. */
+let _wsDisconnectCount = 0;
+
+/** Get the current WS disconnect count. */
+export function wsDisconnectCount(): number {
+  return _wsDisconnectCount;
+}
+
+/** Reset the WS disconnect counter (called on successful connect). */
+export function resetWsDisconnectCount(): void {
+  _wsDisconnectCount = 0;
+}
+
 /**
  * Timer handle for the heartbeat interval.
  */
@@ -143,6 +157,7 @@ export function connectTradeResultsWs(): Promise<void> {
 
       ws.addEventListener("open", () => {
         console.log("[live/ws] Trade results WS connected");
+        _wsDisconnectCount = 0;
 
         /** Send the subscription message. */
         const subscribeMsg = {
@@ -189,6 +204,7 @@ export function connectTradeResultsWs(): Promise<void> {
 
           /** It is a trade result notification. */
           if (data.method === "tradeResultNotify") {
+            markWsMessage();
             tradeResultEvent$.next(data as TradeResultEvent);
           }
         } catch (err) {
@@ -206,6 +222,18 @@ export function connectTradeResultsWs(): Promise<void> {
         stopHeartbeat();
 
         if (!intentionalClose) {
+          _wsDisconnectCount++;
+          console.warn(
+            `[live/ws] WS disconnect count: ${_wsDisconnectCount}/${LIVE_CONFIG.maxWsDisconnects}`,
+          );
+
+          if (_wsDisconnectCount >= LIVE_CONFIG.maxWsDisconnects) {
+            console.error(
+              `[live/ws] ${_wsDisconnectCount} disconnects — enabling panic`,
+            );
+            import("./panic").then((m) => m.enablePanic());
+          }
+
           scheduleReconnect();
         }
       });

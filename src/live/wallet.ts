@@ -10,6 +10,7 @@ import { Subject, from, merge, timer, EMPTY } from "rxjs";
 import { switchMap, shareReplay, catchError, tap } from "rxjs/operators";
 import { LIVE_CONFIG } from "./config";
 import { getJson } from "./http";
+import { markBalanceUpdate } from "./watchdog";
 import type { LiveWalletInfo, LiveWalletBalanceResponse, LiveBalance } from "./types";
 
 /**
@@ -68,6 +69,8 @@ export async function fetchBalance(): Promise<LiveBalance> {
   const body = await getJson<LiveWalletBalanceResponse>(url);
 
   if (body.err) throw new Error("Balance API returned err: true");
+
+  markBalanceUpdate();
 
   return {
     balanceSol: body.res.uiAmount,

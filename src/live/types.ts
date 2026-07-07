@@ -269,6 +269,10 @@ export interface PositionState {
   entryPriceUsd: number | null;
   /** Position size in SOL. */
   sizeSol: number;
+  /** Actually filled SOL amount (may differ from sizeSol on partial fill). */
+  filledSol: number;
+  /** Average fill price in USD (may differ from entryPriceUsd on partial fill). */
+  avgFillPriceUsd: number | null;
   /** Highest price reached since position was opened. */
   peakPriceUsd: number;
   /** Whether the trailing stop has been activated (price >= entry + activation%). */

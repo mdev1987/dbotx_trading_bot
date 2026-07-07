@@ -27,6 +27,8 @@ function migrate(db: Database): void {
       token_name        TEXT NOT NULL DEFAULT '',
       token_symbol      TEXT NOT NULL DEFAULT '',
       size_sol          REAL NOT NULL,
+      filled_sol        REAL DEFAULT 0,
+      avg_fill_price_usd REAL,
       entry_price_usd   REAL,
       peak_price_usd    REAL DEFAULT 0,
       trailing_active   INTEGER DEFAULT 0,
@@ -57,10 +59,23 @@ function migrate(db: Database): void {
       updated_at      INTEGER
     );
 
+    CREATE TABLE IF NOT EXISTS live_daily_loss (
+      date      TEXT PRIMARY KEY,
+      loss_usd  REAL NOT NULL DEFAULT 0,
+      trade_count INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_live_positions_order_id ON live_positions(order_id);
     CREATE INDEX IF NOT EXISTS idx_live_positions_status ON live_positions(status);
     CREATE INDEX IF NOT EXISTS idx_live_audit_log_status ON live_audit_log(status);
   `);
+
+  /** Migration: add filled_sol column if missing. */
+  try { db.run("ALTER TABLE live_positions ADD COLUMN filled_sol REAL DEFAULT 0"); } catch {}
+  /** Migration: add avg_fill_price_usd column if missing. */
+  try { db.run("ALTER TABLE live_positions ADD COLUMN avg_fill_price_usd REAL"); } catch {}
 }
 
 export function savePositionToDb(pos: PositionState): void {
@@ -68,13 +83,15 @@ export function savePositionToDb(pos: PositionState): void {
   db.prepare(`
     INSERT OR REPLACE INTO live_positions
       (id, order_id, pair, token, token_name, token_symbol,
-       size_sol, entry_price_usd, peak_price_usd, trailing_active,
+       size_sol, filled_sol, avg_fill_price_usd,
+       entry_price_usd, peak_price_usd, trailing_active,
        status, close_reason, exit_price_usd,
        current_profit_pct, current_profit_usd,
        opened_at, expires_at, last_update_at, signal_json, updated_at)
     VALUES
       ($id, $order_id, $pair, $token, $token_name, $token_symbol,
-       $size_sol, $entry_price_usd, $peak_price_usd, $trailing_active,
+       $size_sol, $filled_sol, $avg_fill_price_usd,
+       $entry_price_usd, $peak_price_usd, $trailing_active,
        $status, $close_reason, $exit_price_usd,
        $current_profit_pct, $current_profit_usd,
        $opened_at, $expires_at, $last_update_at, $signal_json,
@@ -87,6 +104,8 @@ export function savePositionToDb(pos: PositionState): void {
     $token_name: pos.tokenName,
     $token_symbol: pos.tokenSymbol,
     $size_sol: pos.sizeSol,
+    $filled_sol: pos.filledSol,
+    $avg_fill_price_usd: pos.avgFillPriceUsd,
     $entry_price_usd: pos.entryPriceUsd,
     $peak_price_usd: pos.peakPriceUsd,
     $trailing_active: pos.trailingActive ? 1 : 0,
@@ -110,6 +129,8 @@ export interface DbPositionRow {
   token_name: string;
   token_symbol: string;
   size_sol: number;
+  filled_sol: number;
+  avg_fill_price_usd: number | null;
   entry_price_usd: number | null;
   peak_price_usd: number;
   trailing_active: number;
@@ -134,6 +155,21 @@ export function loadNonClosedPositions(): DbPositionRow[] {
 export function markPositionDeletedFromDb(positionId: number): void {
   const db = getLiveDb();
   db.prepare("DELETE FROM live_positions WHERE id = $id").run({ $id: positionId });
+}
+
+/** Get all tracked order IDs (for reconciliation). */
+export function getAllOrderIds(): string[] {
+  const db = getLiveDb();
+  const rows = db.prepare(
+    "SELECT order_id FROM live_positions WHERE status IN ('open', 'closing')",
+  ).all() as { order_id: string }[];
+  return rows.map((r) => r.order_id);
+}
+
+/** Get all positions from the database (including closed). */
+export function loadAllPositions(): DbPositionRow[] {
+  const db = getLiveDb();
+  return db.prepare("SELECT * FROM live_positions ORDER BY id").all() as DbPositionRow[];
 }
 
 export function appendAuditLog(

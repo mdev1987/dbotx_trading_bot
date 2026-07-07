@@ -27,11 +27,14 @@ import {
   subscribeToPriceUpdates,
   recoverOpenPositions,
   resetDailyLoss,
+  loadDailyLossFromDb,
 } from "./position_core";
 import { startTrailingMonitor } from "./trailing_stop";
 import { resolveConfiguredWallet, refreshBalance$ } from "./wallet";
 import { Subscription } from "rxjs";
-import { getLiveDb } from "./persistence";
+import { getLiveDb, loadAllPositions } from "./persistence";
+import { startWatchdog, markWsMessage, markBalanceUpdate, markPriceUpdate } from "./watchdog";
+import { startReconciliation } from "./reconciliation";
 
 /** Handle for cleaning up all subscriptions on shutdown. */
 const _subscriptions: Subscription[] = [];
@@ -55,8 +58,9 @@ export async function startLiveTrading(): Promise<void> {
     throw err;
   }
 
-  /** Reset the daily loss tracker on startup. */
+  /** Reset and reload the daily loss tracker on startup. */
   resetDailyLoss();
+  loadDailyLossFromDb();
 
   /** Step 1: Verify the configured wallet exists. */
   try {
@@ -107,14 +111,20 @@ export async function startLiveTrading(): Promise<void> {
   const trailingSub = startTrailingMonitor();
   _subscriptions.push(trailingSub);
 
-  /** Step 8: Run startup recovery (best-effort). */
-  try {
-    await recoverOpenPositions();
-  } catch (err) {
-    console.error("[live/manager] Recovery error:", err);
-  }
+  /** Step 8: Run startup recovery (hard stop on failure). */
+  console.log("[live/manager] Running startup recovery...");
+  await recoverOpenPositions();
+  console.log("[live/manager] Recovery complete");
 
-  /** Step 9: Load the channel-appropriate strategy. */
+  /** Step 9: Start the watchdog heartbeat monitor. */
+  const watchdogSub = startWatchdog();
+  _subscriptions.push(watchdogSub);
+
+  /** Step 10: Start periodic exchange reconciliation. */
+  const reconcileSub = startReconciliation();
+  _subscriptions.push(reconcileSub);
+
+  /** Step 11: Load the channel-appropriate strategy. */
   loadStrategy();
 
   console.log("[live/manager] Live trading started successfully");
