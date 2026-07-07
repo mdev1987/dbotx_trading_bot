@@ -7,8 +7,8 @@ RxJS-based bot that listens to Telegram channels for trading signals (`@AveSolan
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │  src/entry.ts  (bootstrap)                                          │
-│    Checks for DBOTX_API_KEY_SEALED, prompts password, decrypts       │
-│    into process.env.DBOTX_API_KEY, then imports src/main.ts          │
+│    Checks for .env.encrypted, prompts password, decrypts             │
+│    entire .env into process.env, then imports src/main.ts            │
 └──────────────────────┬───────────────────────────────────────────────┘
                        │
                        ▼
@@ -29,10 +29,10 @@ Telegram (MTProto) ──► main.ts ──► telegram_listener.ts ──► si
 
 | Layer | File | Role |
 |-------|------|------|
-| **Bootstrap** | `entry.ts` | Decrypt `DBOTX_API_KEY_SEALED` on startup before any app module loads |
-| **Crypto** | `crypto/crypto.ts` | AES-256-GCM encrypt/decrypt via `@notifycode/hash-it`, password prompt via `@inquirer/prompts` |
-| **Encrypt CLI** | `crypto/cli_encrypt.ts` | `bun run encrypt` — replace `DBOTX_API_KEY` with `DBOTX_API_KEY_SEALED` in `.env` |
-| **Decrypt CLI** | `crypto/cli_decrypt.ts` | `bun run decrypt` — decrypt `DBOTX_API_KEY_SEALED` and print to stdout |
+| **Bootstrap** | `entry.ts` | Decrypt `.env.encrypted` at startup, load all vars into `process.env` before any module reads them |
+| **Crypto** | `crypto/crypto.ts` | AES-256-GCM encrypt/decrypt via `@notifycode/hash-it`, password prompt via `@inquirer/prompts`, env file loader |
+| **Encrypt CLI** | `crypto/cli_encrypt.ts` | `bun run encrypt` — encrypt full `.env` → `.env.encrypted` with password |
+| **Decrypt CLI** | `crypto/cli_decrypt.ts` | `bun run decrypt` — decrypt `.env.encrypted` to stdout |
 | **Telegram client** | `telegram_listener.ts` | MTProto connection, message stream, parser routing |
 | **AVE Scanner parser** | `ave_scanner_parser.ts` | Parses `@Ave_Scanner_Bot` pool-launch format |
 | **Signal Monitor parser** | `ave_signal_monitor_parser.ts` | Parses `@AveSignalMonitor` buy signals + pump proofs |
@@ -68,27 +68,29 @@ The bot auto-detects its channel from `TELEGRAM_CHANNEL_USERNAME`:
 | `monitor` | `AveSignalMonitor` | No position limit, no TTL. TP derived from signal's `Max Pump` field. Closes on 🚀 pump proof. |
 | `ave` | `AveSolanaTokenScanner` | Max positions cap (`MAX_POSITIONS`), TTL expiry/renewal, signal queue (TTL + dedup + overflow eviction). TP from config `PARTIAL_TP_TIERS`. |
 
-## API Key Encryption
+## Env File Encryption
 
-The bot supports AES-256-GCM encrypting the DBotX API key via `@notifycode/hash-it`:
+The bot supports AES-256-GCM encrypting the entire `.env` file via `@notifycode/hash-it`:
 
 ```bash
-# 1. Start with plaintext DBOTX_API_KEY in .env
+# 1. Start with a plaintext .env file
 # 2. Encrypt it (prompts for password twice):
 bun run encrypt
 
-# After encryption, DBOTX_API_KEY is replaced by DBOTX_API_KEY_SEALED in .env
+# Encrypted output written to .env.encrypted (self-contained JSON blob)
+# You may now delete .env in production — entry.ts reads .env.encrypted at startup
+
 # 3. On next startup, bot prompts for the decryption password:
 bun start
 
-# 4. To view the decrypted key (e.g., for debugging):
+# 4. To view the decrypted content (e.g., for debugging):
 bun run decrypt
 ```
 
 - The sealed blob is a self-contained JSON: `{"ciphertext":"...","iv":"...","tag":"...","algorithm":"aes-256-gcm"}`
 - Wrong password or tampered data is detected via GCM auth tag
 - The password prompt uses `@inquirer/prompts` with masked input (cross-platform)
-- In non-TTY environments (e.g., Docker), `DBOTX_API_KEY` (plaintext) can be used directly instead
+- In non-TTY environments (e.g., Docker), the plaintext `.env` file can be used directly instead
 
 ## Live Mode (`LIVE_MODE=true`)
 
@@ -183,13 +185,12 @@ All settings via environment variables (see `.env.example`).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `DBOTX_API_KEY` | Yes* | — | API key (plaintext; not needed if `DBOTX_API_KEY_SEALED` is used) |
-| `DBOTX_API_KEY_SEALED` | No | — | AES-256-GCM encrypted API key JSON blob |
+| `DBOTX_API_KEY` | Yes* | — | API key |
 | `DBOTX_WS_URL` | Yes | — | WebSocket URL |
 | `DBOTX_BASE_URL` | Yes | — | REST API base URL |
 | `DBOTX_SERVAPI_BASE_URL` | Yes | — | Service API base URL |
 
-\* Either `DBOTX_API_KEY` (plaintext) or `DBOTX_API_KEY_SEALED` (encrypted) must be set. When `DBOTX_API_KEY_SEALED` is present, the bot prompts for the decryption password at startup and sets `process.env.DBOTX_API_KEY` before any module reads it.
+\* `DBOTX_API_KEY` must be set either in plaintext `.env` or encrypted via `.env.encrypted`. When `.env.encrypted` exists, the bot prompts for the decryption password at startup and loads all env vars into `process.env` before any module reads them.
 
 ### Position Sizing & Limits
 
@@ -315,7 +316,7 @@ cp .env.example .env
 # Install dependencies
 bun install
 
-# Encrypt your API key (optional, recommended for security)
+# Encrypt .env to .env.encrypted (optional, recommended for production)
 bun run encrypt
 
 # Run (info level)
@@ -327,7 +328,7 @@ bun run dev   # LOG_LEVEL=DEBUG bun run ./src/entry.ts | tee bot.log
 # Build standalone binary
 bun run build   # produces ./dbotx_bot
 
-# Decrypt the sealed API key (debugging)
+# Decrypt .env.encrypted to stdout (debugging)
 bun run decrypt
 ```
 
