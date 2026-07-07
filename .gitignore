@@ -5,6 +5,8 @@ node_modules
 out
 dist
 *.tgz
+dbotx_bot
+*.js.map
 
 # code coverage
 coverage

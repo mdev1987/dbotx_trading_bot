@@ -1,11 +1,14 @@
 {
   "name": "dbotx_trade_ts",
-  "module": "src/main.ts",
+  "module": "src/entry.ts",
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "bun run src/main.ts",
-    "dev": "LOG_LEVEL=DEBUG bun run ./src/main.ts | tee bot.log"
+    "start": "bun run src/entry.ts",
+    "dev": "LOG_LEVEL=DEBUG bun run ./src/entry.ts | tee bot.log",
+    "encrypt": "bun run src/crypto/cli_encrypt.ts",
+    "decrypt": "bun run src/crypto/cli_decrypt.ts",
+    "build": "bun build --compile --minify --sourcemap --bytecode src/entry.ts --outfile dbotx_bot"
   },
   "devDependencies": {
     "@types/bun": "latest"
@@ -15,6 +18,7 @@
   },
   "dependencies": {
     "@dotenvx/dotenvx": "^1.75.1",
+    "@inquirer/prompts": "^8.5.2",
     "@notifycode/hash-it": "^1.0.0",
     "grammy": "^1.44.0",
     "remove-markdown": "^0.6.4",

@@ -5,23 +5,34 @@ RxJS-based bot that listens to Telegram channels for trading signals (`@AveSolan
 ## Architecture
 
 ```
-Telegram (MTProto) ──► telegram_listener.ts ──► signals_stream.ts
-                           │                         │
-                           ├─ ave_scanner_parser.ts   ├── (LIVE_MODE=false) ──► simulator/position_manager ──► DBotX servAPI
-                           └─ ave_signal_monitor_parser.ts                   │
-                                    │                                       ├── (LIVE_MODE=true)  ──► live/position_manager ──► DBotX bot REST/WS
-                                    ▼                                       │
-                              signalMonitorPump$                              │
-                                    │                                        │
-                                    ▼                                        │
-                              position_manager.ts ◄──────────────────────────┘
-                              (closes matching position)
+┌──────────────────────────────────────────────────────────────────────┐
+│  src/entry.ts  (bootstrap)                                          │
+│    Checks for DBOTX_API_KEY_SEALED, prompts password, decrypts       │
+│    into process.env.DBOTX_API_KEY, then imports src/main.ts          │
+└──────────────────────┬───────────────────────────────────────────────┘
+                       │
+                       ▼
+Telegram (MTProto) ──► main.ts ──► telegram_listener.ts ──► signals_stream.ts
+                            │                         │
+                            ├─ ave_scanner_parser.ts   ├── (LIVE_MODE=false) ──► simulator/position_manager ──► DBotX servAPI
+                            └─ ave_signal_monitor_parser.ts                   │
+                                     │                                       ├── (LIVE_MODE=true)  ──► live/position_manager ──► DBotX bot REST/WS
+                                     ▼                                       │
+                               signalMonitorPump$                              │
+                                     │                                        │
+                                     ▼                                        │
+                               position_manager.ts ◄──────────────────────────┘
+                               (closes matching position)
 ```
 
 ### Module Map
 
 | Layer | File | Role |
 |-------|------|------|
+| **Bootstrap** | `entry.ts` | Decrypt `DBOTX_API_KEY_SEALED` on startup before any app module loads |
+| **Crypto** | `crypto/crypto.ts` | AES-256-GCM encrypt/decrypt via `@notifycode/hash-it`, password prompt via `@inquirer/prompts` |
+| **Encrypt CLI** | `crypto/cli_encrypt.ts` | `bun run encrypt` — replace `DBOTX_API_KEY` with `DBOTX_API_KEY_SEALED` in `.env` |
+| **Decrypt CLI** | `crypto/cli_decrypt.ts` | `bun run decrypt` — decrypt `DBOTX_API_KEY_SEALED` and print to stdout |
 | **Telegram client** | `telegram_listener.ts` | MTProto connection, message stream, parser routing |
 | **AVE Scanner parser** | `ave_scanner_parser.ts` | Parses `@Ave_Scanner_Bot` pool-launch format |
 | **Signal Monitor parser** | `ave_signal_monitor_parser.ts` | Parses `@AveSignalMonitor` buy signals + pump proofs |
@@ -56,6 +67,28 @@ The bot auto-detects its channel from `TELEGRAM_CHANNEL_USERNAME`:
 |------|---------|-----------|
 | `monitor` | `AveSignalMonitor` | No position limit, no TTL. TP derived from signal's `Max Pump` field. Closes on 🚀 pump proof. |
 | `ave` | `AveSolanaTokenScanner` | Max positions cap (`MAX_POSITIONS`), TTL expiry/renewal, signal queue (TTL + dedup + overflow eviction). TP from config `PARTIAL_TP_TIERS`. |
+
+## API Key Encryption
+
+The bot supports AES-256-GCM encrypting the DBotX API key via `@notifycode/hash-it`:
+
+```bash
+# 1. Start with plaintext DBOTX_API_KEY in .env
+# 2. Encrypt it (prompts for password twice):
+bun run encrypt
+
+# After encryption, DBOTX_API_KEY is replaced by DBOTX_API_KEY_SEALED in .env
+# 3. On next startup, bot prompts for the decryption password:
+bun start
+
+# 4. To view the decrypted key (e.g., for debugging):
+bun run decrypt
+```
+
+- The sealed blob is a self-contained JSON: `{"ciphertext":"...","iv":"...","tag":"...","algorithm":"aes-256-gcm"}`
+- Wrong password or tampered data is detected via GCM auth tag
+- The password prompt uses `@inquirer/prompts` with masked input (cross-platform)
+- In non-TTY environments (e.g., Docker), `DBOTX_API_KEY` (plaintext) can be used directly instead
 
 ## Live Mode (`LIVE_MODE=true`)
 
@@ -150,10 +183,13 @@ All settings via environment variables (see `.env.example`).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `DBOTX_API_KEY` | Yes | — | API key |
+| `DBOTX_API_KEY` | Yes* | — | API key (plaintext; not needed if `DBOTX_API_KEY_SEALED` is used) |
+| `DBOTX_API_KEY_SEALED` | No | — | AES-256-GCM encrypted API key JSON blob |
 | `DBOTX_WS_URL` | Yes | — | WebSocket URL |
 | `DBOTX_BASE_URL` | Yes | — | REST API base URL |
 | `DBOTX_SERVAPI_BASE_URL` | Yes | — | Service API base URL |
+
+\* Either `DBOTX_API_KEY` (plaintext) or `DBOTX_API_KEY_SEALED` (encrypted) must be set. When `DBOTX_API_KEY_SEALED` is present, the bot prompts for the decryption password at startup and sets `process.env.DBOTX_API_KEY` before any module reads it.
 
 ### Position Sizing & Limits
 
@@ -193,6 +229,13 @@ All settings via environment variables (see `.env.example`).
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DAILY_LOSS_LIMIT_USD` | No | `0` | Daily loss limit (0 = disabled) |
+
+### Data & Analytics
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SQLITE_PATH` | No | `./data/paper_trading.sqlite` | Analytics database path |
+| `CLEAR_ANALYTICS_ON_START` | No | `false` | Drop all data on startup |
 
 ### Telegram
 
@@ -261,8 +304,6 @@ All settings via environment variables (see `.env.example`).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `SQLITE_PATH` | No | `./data/paper_trading.sqlite` | Analytics database path |
-| `CLEAR_ANALYTICS_ON_START` | No | `false` | Drop all data on startup |
 | `LOG_LEVEL` | No | `info` | Log verbosity (`info` / `debug`) |
 
 ## Running
@@ -274,11 +315,20 @@ cp .env.example .env
 # Install dependencies
 bun install
 
+# Encrypt your API key (optional, recommended for security)
+bun run encrypt
+
 # Run (info level)
 bun start
 
 # Run with verbose debug tracing + log file
-bun run dev   # LOG_LEVEL=DEBUG bun run ./src/main.ts | tee bot.log
+bun run dev   # LOG_LEVEL=DEBUG bun run ./src/entry.ts | tee bot.log
+
+# Build standalone binary
+bun run build   # produces ./dbotx_bot
+
+# Decrypt the sealed API key (debugging)
+bun run decrypt
 ```
 
 On first run the Telegram client prompts for:
@@ -349,17 +399,17 @@ Close ──► closePositionById()
 ## Development
 
 ```bash
-# Run all tests (43 simulator + 43 live = 86 total)
+# Run all tests (93 total)
 bun test
 
 # Type check
 bun run tsc --noEmit
 
 # Watch mode
-bun --watch run src/main.ts
+bun --watch run src/entry.ts
 
 # Live mode
-LIVE_MODE=true bun run src/main.ts
+LIVE_MODE=true bun run src/entry.ts
 
 # Debug mode (verbose logs + file output)
 bun run dev
