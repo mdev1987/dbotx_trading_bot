@@ -1,13 +1,3 @@
-/**
- * Application entry point.
- *
- * Initializes in order:
- *   1. Analytics persistence (SQLite).
- *   2. Telegram bot reporter.
- *   3. Telegram signal listener.
- *   4. Simulator or Live position manager (based on LIVE_MODE).
- *   5. Shutdown handlers.
- */
 import { CONFIG } from "./config";
 import {
   startPersistence,
@@ -27,8 +17,9 @@ import {
 import { timer, Subscription } from "rxjs";
 import { tap } from "rxjs/operators";
 import { convert } from "telegram-markdown-v2";
+import { initBridge } from "./shared/trade_bridge";
+import type { BridgeConfig } from "./shared/trade_bridge";
 
-/** Determine the signal-source mode from the configured Telegram channel name. */
 let channel_mode: "ave" | "monitor";
 
 if (CONFIG.telegramChannelUserName === "avesignalmonitor") {
@@ -41,52 +32,47 @@ if (CONFIG.telegramChannelUserName === "avesignalmonitor") {
   );
 }
 
-/** Reference to the live trading stop function (set after dynamic import). */
 let stopLiveTradingFn: (() => void) | undefined;
 
-/**
- * Initialize all systems and start the bot.
- */
 async function start(): Promise<void> {
-  // Step 1: Start persisting position lifecycle events to SQLite.
-  startPersistence();
-
-  // Step 2: Start the Telegram bot reporter.
-  startReporter();
-
-  // Step 3: Connect to Telegram and begin listening for trade signals.
+  // Step 1: Connect to Telegram and begin listening for trade signals.
   try {
     await startTelegramListener();
   } catch (err) {
     console.error("[main] Telegram listener failed to start:", err);
   }
 
-  // Step 4: Start the position manager (simulator or live).
+  // Step 2: Start the position manager (simulator or live) and capture events.
+  let bridgeConfig: BridgeConfig;
+
   if (CONFIG.liveMode) {
-    await startLiveMode();
+    bridgeConfig = await startLiveMode();
   } else {
-    await startSimulatorMode();
+    bridgeConfig = await startSimulatorMode();
   }
 
-  // Step 5: Start Telegram health check watchdog.
+  // Step 3: Wire the bridge so reporter & persistence read from the active mode.
+  initBridge(bridgeConfig);
+
+  // Step 4: Start persisting position lifecycle events.
+  startPersistence();
+
+  // Step 5: Start the Telegram bot reporter.
+  startReporter();
+
+  // Step 6: Start Telegram health check watchdog.
   startTelegramWatchdog();
 
-  // Step 6: Send the startup notification.
+  // Step 7: Send the startup notification.
   await sendStartedMessage();
 }
 
-/**
- * Start the simulator position manager.
- * Side-effect import wires up its own subscriptions at module load time.
- */
-async function startSimulatorMode(): Promise<void> {
+async function startSimulatorMode(): Promise<BridgeConfig> {
   console.log("[main] Starting simulator mode...");
 
-  // Import creates all subscriptions as module-level side effects.
-  await import("./simulator/position_manager");
+  const simModule = await import("./simulator/position_manager");
 
-  // Subscribe to simulator account updates for console logging.
-  const { simulatorAccount$ } = await import("./simulator/account");
+  const { simulatorAccount$, latestAccount } = await import("./simulator/account");
   simulatorAccount$
     .pipe(
       tap((acct) => {
@@ -98,24 +84,67 @@ async function startSimulatorMode(): Promise<void> {
       }),
     )
     .subscribe();
+
+  const { generateReport } = await import("./analytics/reports");
+
+  return {
+    positionEvent$: simModule.positionEvent$,
+    positionClosed$: simModule.positionClosed$,
+    openPositions$: simModule.openPositions$,
+    getReport: generateReport,
+    getBalanceStr: () => {
+      if (latestAccount) {
+        const change = latestAccount.changeAll;
+        const icon = change >= 0 ? "\u{1F7E2}" : "\u{1F534}";
+        const sign = change >= 0 ? "+" : "";
+        return `${icon} \u{1F4B0} Balance: \`$${latestAccount.balance.toFixed(2)}\` (\`${sign}${(change * 100).toFixed(2)}%\`)`;
+      }
+      return "";
+    },
+  };
 }
 
-/**
- * Start the live trading position manager.
- * Calls the exported init function explicitly.
- */
-async function startLiveMode(): Promise<void> {
+async function startLiveMode(): Promise<BridgeConfig> {
   console.log("[main] Starting live mode...");
 
   const liveModule = await import("./live/position_manager");
   stopLiveTradingFn = liveModule.stopLiveTrading;
 
   await liveModule.startLiveTrading();
+
+  const wallet = await import("./live/wallet");
+
+  return {
+    positionEvent$: liveModule.positionEvent$,
+    positionClosed$: liveModule.positionClosed$,
+    openPositions$: liveModule.openPositions$,
+    getReport: () => {
+      const openCount = liveModule.countOpenPositions();
+      return {
+        totalPositions: 0,
+        closedPositions: 0,
+        openPositions: openCount,
+        winningTrades: 0,
+        losingTrades: 0,
+        winRate: 0,
+        totalProfitUsd: 0,
+        totalProfitPct: 0,
+        avgProfitPct: 0,
+        avgProfitUsd: 0,
+        bestTradePct: 0,
+        worstTradePct: 0,
+        reasons: {},
+      };
+    },
+    getBalanceStr: () => {
+      if (wallet.latestBalance) {
+        return `\u{1F4B0} Balance: \`${wallet.latestBalance.balanceSol.toFixed(2)} SOL\``;
+      }
+      return "";
+    },
+  };
 }
 
-/**
- * Format a duration in seconds to a human-readable string (e.g., "2m 30s").
- */
 function fmtDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   const m = Math.floor(seconds / 60);
@@ -123,28 +152,24 @@ function fmtDuration(seconds: number): string {
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
-/**
- * Build the startup message showing the current bot configuration.
- * @returns Telegram MarkdownV2 formatted startup message string.
- */
 function startedMessage(): string {
   const modeLabel = CONFIG.liveMode ? "Live" : "Simulate";
-  const modeIcon = CONFIG.liveMode ? "\u{1F4E1}" : "\u{1F9EA}"; // 📡 or 🧪
+  const modeIcon = CONFIG.liveMode ? "\u{1F4E1}" : "\u{1F9EA}";
 
   const lines: string[] = [
-    `\u{1F680} **Bot Started**`,              // 🚀 Bot Started
+    `\u{1F680} **Bot Started**`,
     "",
     `Mode: ${modeIcon} \`${modeLabel}\``,
   ];
 
   if (CONFIG.liveMode) {
-    lines.push(`\u{1F512} Wallet: \`${process.env.LIVE_WALLET_ID ?? "?"}\``); // 🔒
+    lines.push(`\u{1F512} Wallet: \`${process.env.LIVE_WALLET_ID ?? "?"}\``);
+    const buyEnabled = (process.env.LIVE_BUY_ENABLED ?? "true").toLowerCase() === "true";
+    lines.push(`\u{1F6E1}\uFE0F Buy: \`${buyEnabled ? "ENABLED" : "PAPER (disabled)"}\``);
   }
 
-  // Position limit
   lines.push(`\u{1F4CC} Max Positions: \`${CONFIG.maxPositions}\``);
 
-  // Position size with min/max and risk limit
   lines.push(
     `\u{1F4B0} Position: \`${CONFIG.positionSize.toFixed(2)} SOL\` ` +
       `(min \`${CONFIG.minPositionSol.toFixed(2)}\` / ` +
@@ -152,7 +177,6 @@ function startedMessage(): string {
       `risk \u{2264}\`${CONFIG.maxRiskPct.toFixed(1)}%\` of balance)`,
   );
 
-  // TTL settings
   if (channel_mode === "ave") {
     lines.push(
       `\u{23F0} Base TTL: \`${fmtDuration(CONFIG.baseTtlSecs)}\`` +
@@ -163,7 +187,6 @@ function startedMessage(): string {
     );
   }
 
-  // Exit settings
   lines.push("", "**Exit Settings**");
 
   if (channel_mode === "monitor") {
@@ -199,8 +222,6 @@ function startedMessage(): string {
   }
 
   if (CONFIG.trailingDistancePct) {
-    // Note: trailingDistancePct in config is reading PAPER_TRAILING_STOP_PERCENT
-    // We display the live equivalent
     lines.push(
       `\u{1F7E1} Trailing: \`${(CONFIG.trailingActivationPct * 100).toFixed(0)}%\` activation, ` +
         `\`${(CONFIG.trailingDistancePct * 100).toFixed(0)}%\` distance`,
@@ -210,21 +231,15 @@ function startedMessage(): string {
   return convert(lines.join("\n"));
 }
 
-/**
- * Send the startup notification (best-effort, non-critical).
- */
 async function sendStartedMessage(): Promise<void> {
   try {
     await sendMessage(startedMessage());
   } catch { /* best-effort */ }
 }
 
-/**
- * Build and send the shutdown notification with a performance summary.
- */
 async function sendStoppedMessage(error?: string): Promise<void> {
   try {
-    const { generateReport } = await import("./analytics/reports");
+    const { getReport } = await import("./shared/trade_bridge");
 
     const lines: string[] = [];
 
@@ -238,7 +253,7 @@ async function sendStoppedMessage(error?: string): Promise<void> {
       lines.push("");
     }
 
-    const report = generateReport();
+    const report = getReport();
     const balIcon = report.totalProfitUsd >= 0 ? "\u{1F7E2}" : "\u{1F534}";
     const winIcon = report.winRate >= 50 ? "\u{1F3C6}" : "\u{26A0}\uFE0F";
 
@@ -274,10 +289,6 @@ async function sendStoppedMessage(error?: string): Promise<void> {
 
 let _tgWatchdogSub: Subscription | undefined;
 
-/**
- * Periodically verify the Telegram connection and restart the listener
- * if the client is no longer authorised.
- */
 function startTelegramWatchdog(): void {
   _tgWatchdogSub = timer(CONFIG.tgRetryDelayMs, 60_000)
     .pipe(
@@ -299,9 +310,6 @@ function startTelegramWatchdog(): void {
     .subscribe();
 }
 
-/**
- * Restart the Telegram listener from scratch.
- */
 async function restartTelegram(): Promise<void> {
   try { await stopTelegramListener(); } catch { /* ok */ }
   resetTelegramClient();
@@ -322,19 +330,14 @@ start().catch((err) => {
 
 let _shuttingDown = false;
 
-/**
- * Gracefully shut down all subsystems and exit.
- */
 async function shutdown(error?: string): Promise<void> {
   if (_shuttingDown) return;
   _shuttingDown = true;
 
   console.log("\n[main] Shutting down...");
 
-  // Send shutdown notification to Telegram (best-effort).
   await sendStoppedMessage(error);
 
-  // Stop live trading if active.
   if (stopLiveTradingFn) {
     try {
       stopLiveTradingFn();
@@ -343,17 +346,28 @@ async function shutdown(error?: string): Promise<void> {
     }
   }
 
-  // Stop the Telegram watchdog health check timer.
   _tgWatchdogSub?.unsubscribe();
 
-  // Tear down subsystems in reverse order of initialization.
   stopReporter();
   stopPersistence();
   await stopTelegramListener().catch(() => {});
 
-  // Print the final performance report.
-  const { printReport, generateReport } = await import("./analytics/reports");
-  printReport(generateReport());
+  const { getReport } = await import("./shared/trade_bridge");
+  const report = getReport();
+  console.log("=".repeat(50));
+  console.log("PERFORMANCE REPORT");
+  console.log("=".repeat(50));
+  console.log(`Total positions : ${report.totalPositions}`);
+  console.log(`Open           : ${report.openPositions}`);
+  console.log(`Closed         : ${report.closedPositions}`);
+  console.log(`Wins           : ${report.winningTrades}`);
+  console.log(`Losses         : ${report.losingTrades}`);
+  console.log(`Win rate       : ${report.winRate.toFixed(1)}%`);
+  console.log(`Total PnL      : $${report.totalProfitUsd.toFixed(2)} (${report.totalProfitPct.toFixed(2)}%)`);
+  console.log(`Avg PnL        : $${report.avgProfitUsd.toFixed(2)} (${report.avgProfitPct.toFixed(2)}%)`);
+  console.log(`Best trade     : ${report.bestTradePct.toFixed(2)}%`);
+  console.log(`Worst trade    : ${report.worstTradePct.toFixed(2)}%`);
+  console.log(`Close reasons  : ${JSON.stringify(report.reasons)}`);
 
   process.exit(error ? 1 : 0);
 }

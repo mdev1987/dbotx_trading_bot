@@ -1,6 +1,6 @@
 # DBotX Trade TS — Paper-Trading & Live Trading Bot
 
-RxJS-based bot that listens to Telegram channels for trading signals (`@AveSolanaTokenScanner` or `@AveSignalMonitor`), opens simulated or live positions via the DBotX API, manages exits with partial TP / trailing stop / trailing TP / stop loss / TTL expiry, and reports results to Telegram. Use `LIVE_MODE=true` for real-money trading.
+RxJS-based bot that listens to Telegram channels for trading signals (`@AveSolanaTokenScanner` or `@AveSignalMonitor`), opens simulated or live positions via the DBotX API, manages exits with partial TP / trailing stop / trailing TP / stop loss / TTL expiry, and reports results to Telegram. A shared event bridge decouples the active trading mode (simulator or live) from analytics and reporting — no hardcoded cross-imports. Use `LIVE_MODE=true` for real-money trading.
 
 ## Architecture
 
@@ -14,15 +14,18 @@ RxJS-based bot that listens to Telegram channels for trading signals (`@AveSolan
                        ▼
 Telegram (MTProto) ──► main.ts ──► telegram_listener.ts ──► signals_stream.ts
                             │                         │
-                            ├─ ave_scanner_parser.ts   ├── (LIVE_MODE=false) ──► simulator/position_manager ──► DBotX servAPI
-                            └─ ave_signal_monitor_parser.ts                   │
-                                     │                                       ├── (LIVE_MODE=true)  ──► live/position_manager ──► DBotX bot REST/WS
-                                     ▼                                       │
-                               signalMonitorPump$                              │
-                                     │                                        │
-                                     ▼                                        │
-                               position_manager.ts ◄──────────────────────────┘
-                               (closes matching position)
+                            ├─ ave_scanner_parser.ts   ├── (LIVE_MODE=false)
+                            └─ ave_signal_monitor_parser.ts   simulator/position_manager ──► DBotX servAPI
+                                     │                                                   │
+                                     │                             (LIVE_MODE=true)       │
+                                     ▼                          live/position_manager ──► DBotX bot REST/WS
+                               signalMonitorPump$                     │                   │
+                                     │                                │                   │
+                                     ▼                                ▼                   │
+                               position_manager.ts            shared/trade_bridge.ts ◄───┘
+                               (closes matching position)            │
+                                                                     ├─ analytics/trades_repository
+                                                                     └─ telegram_bot_reporter
 ```
 
 ### Module Map
@@ -39,7 +42,8 @@ Telegram (MTProto) ──► main.ts ──► telegram_listener.ts ──► si
 | **Signal dedup** | `signals_stream.ts` | Deduplicates by LP address with TTL-based cache cleanup |
 | **Simulator position core** | `simulator/position_core.ts` | Simulated position store, TP/SL polling, trade pair polling, entry capture, signal queue |
 | **Simulator account** | `simulator/account.ts` | Simulated balance + PnL via RxJS streams |
-| **Live config** | `live/config.ts` | Live-only env var parsing (Jito, WS, fees, TTL, etc.) |
+| **Live config** | `live/config.ts` | Thin overlay over `CONFIG` — live-specific keys only (wallet, Jito, watchdog, swap-order polling) |
+| **Event bridge** | `shared/trade_bridge.ts` | RxJS relay Subjects that wire the active mode's event streams to subscribers (reporter, persistence) |
 | **Live HTTP** | `live/http.ts` | `fetchWithRetry` (standalone, no simulator deps) |
 | **Live wallet** | `live/wallet.ts` | Wallet info + SOL balance via REST + RxJS stream |
 | **Live account** | `live/account.ts` | Position sizing with min/max/risk cap |
@@ -54,8 +58,8 @@ Telegram (MTProto) ──► main.ts ──► telegram_listener.ts ──► si
 | **Account** | `account.ts` | Simulator balance stream (manual + auto-poll) |
 | **HTTP** | `http.ts` | `fetchWithRetry` with timeout + exponential backoff |
 | **WebSocket** | `dbotx_data_ws.ts` | Live pair price feed with auto-reconnect + pair re-subscription |
-| **Reporter** | `telegram_bot_reporter.ts` | GrammY messages for opened/closed/periodic report |
-| **Analytics** | `reports.ts`, `trades_repository.ts` | SQLite persistence + performance queries |
+| **Reporter** | `telegram_bot_reporter.ts` | GrammY messages for opened/closed/periodic report (subscribes via bridge) |
+| **Analytics** | `reports.ts`, `trades_repository.ts` | SQLite persistence + performance queries (subscribes via bridge) |
 | **Logger** | `logger.ts` | Level-gated logging (debug/info/warn/error) |
 | **Entry point** | `main.ts` | Startup, shutdown, crash notifications |
 
@@ -94,22 +98,22 @@ bun run decrypt
 
 ## Live Mode (`LIVE_MODE=true`)
 
-When `LIVE_MODE=true`, the bot uses `src/live/` modules instead of `src/simulator/`:
+When `LIVE_MODE=true`, the bot loads `src/live/` modules instead of `src/simulator/`:
 - **TP/SL is server-managed** — configured at buy time via `stopEarnGroup`/`stopLossGroup` in the swap order. WS events notify of completion. No client-side TP/SL task polling.
 - **Client-only trailing stop/TP** and **TTL expiry** — triggered via market sell through `POST /automation/swap_order`.
 - **Jito anti-MEV enabled by default** — auto-allocated unless `LIVE_CUSTOM_FEE_AND_TIP=true`.
 - **WS-driven lifecycle** — `tradeResultNotify` events (10 types) update position state. 30s fallback poll if WS event never arrives.
 - **Recovery on restart** — best-effort via WS re-sync after reconnect.
-- **No simulator imports** — live module is entirely standalone.
+- **No simulator imports** — live module communicates via the shared event bridge (`src/shared/trade_bridge.ts`), keeping the two modes fully decoupled.
 
 ### Live Exit Strategies
 
 | Strategy | Server/Client | Config | Description |
 |----------|--------------|--------|-------------|
-| **Partial TP** | Server | `PARTIAL_TP_TIERS`, `PAPER_BACKSTOP_TP_PERCENT` | Tiers configured in buy order; executed server-side |
-| **Stop Loss** | Server | `PAPER_STOP_LOSS_PERCENT` | Fixed SL in buy order; server triggers at threshold |
-| **Trailing Stop** | Client | `PAPER_TRAILING_ACTIVATION_PERCENT`, `PAPER_TRAILING_STOP_PERCENT` | RxJS monitor on WS price feed; triggers market sell |
-| **Trailing TP** | Client | `PAPER_TRAILING_TP_PERCENT` | Always-active monitor; locks profit on peak reversal |
+| **Partial TP** | Server | `PARTIAL_TP_TIERS`, `BACKSTOP_TP_PERCENT` | Tiers configured in buy order; executed server-side |
+| **Stop Loss** | Server | `STOP_LOSS_PERCENT` | Fixed SL in buy order; server triggers at threshold |
+| **Trailing Stop** | Client | `TRAILING_ACTIVATION_PERCENT`, `TRAILING_STOP_PERCENT` | RxJS monitor on WS price feed; triggers market sell |
+| **Trailing TP** | Client | `TRAILING_TP_PERCENT` | Always-active monitor; locks profit on peak reversal |
 | **TTL expiry** | Client | `BASE_TTL_SECS` / `MAX_TTL_SECS` | Periodic timer; close via market sell when TTL exceeded |
 
 ### Live Config
@@ -142,10 +146,10 @@ All exit strategies run concurrently on every open position:
 
 | Strategy | Config | Description |
 |----------|--------|-------------|
-| **Partial TP** | `PARTIAL_TP_TIERS` + `PAPER_BACKSTOP_TP_PERCENT` | Sells configurable percentages at configurable profit levels via simulator API. |
-| **Stop Loss** | `PAPER_STOP_LOSS_PERCENT` | Sells entire position when price drops below entry by the configured percentage. Client-side guard also checks via trade-pair poll. |
-| **Trailing Stop Loss** | `PAPER_TRAILING_ACTIVATION_PERCENT` + `PAPER_TRAILING_STOP_PERCENT` | Activates after a gain, then trails a stop below the peak price. |
-| **Trailing TP** | `PAPER_TRAILING_TP_PERCENT` | Always active from entry — locks in profit by selling when price reverses from the peak. |
+| **Partial TP** | `PARTIAL_TP_TIERS` + `BACKSTOP_TP_PERCENT` | Sells configurable percentages at configurable profit levels via simulator API. |
+| **Stop Loss** | `STOP_LOSS_PERCENT` | Sells entire position when price drops below entry by the configured percentage. Client-side guard also checks via trade-pair poll. |
+| **Trailing Stop Loss** | `TRAILING_ACTIVATION_PERCENT` + `TRAILING_STOP_PERCENT` | Activates after a gain, then trails a stop below the peak price. |
+| **Trailing TP** | `TRAILING_TP_PERCENT` | Always active from entry — locks in profit by selling when price reverses from the peak. |
 | **TTL expiry** | `BASE_TTL_SECS` / `MAX_TTL_SECS` | Hard fallback — closes after TTL expires. Extended when profit ≥ threshold. |
 
 ### Trailing Stop vs Trailing TP
@@ -187,7 +191,8 @@ All settings via environment variables (see `.env.example`).
 |----------|----------|---------|-------------|
 | `DBOTX_API_KEY` | Yes* | — | API key |
 | `DBOTX_WS_URL` | Yes | — | WebSocket URL |
-| `DBOTX_BASE_URL` | Yes | — | REST API base URL |
+| `DBOTX_BASE_URL` | Yes | — | Trading bot REST API base URL |
+| `DBOTX_DATA_BASE_URL` | No | `https://api-data-v1.dbotx.com` | Data REST API base URL (wallet balance) |
 | `DBOTX_SERVAPI_BASE_URL` | Yes | — | Service API base URL |
 
 \* `DBOTX_API_KEY` must be set either in plaintext `.env` or encrypted via `.env.encrypted`. When `.env.encrypted` exists, the bot prompts for the decryption password at startup and loads all env vars into `process.env` before any module reads them.
@@ -218,12 +223,14 @@ All settings via environment variables (see `.env.example`).
 |----------|----------|---------|-------------|
 | `PARTIAL_TP_ENABLED` | No | `false` | Enable partial take-profit tiers |
 | `PARTIAL_TP_TIERS` | No | — | Partial TP: `pct%@at%` comma-separated (e.g. `25@30,25@60,25@100`) |
-| `PAPER_BACKSTOP_TP_PERCENT` | No | `0` | Backstop TP for remainder (0 = disabled) |
-| `PAPER_STOP_LOSS_PERCENT` | Yes | — | Stop loss % (negative, e.g. `-15`) |
-| `PAPER_TRAILING_ACTIVATION_PERCENT` | No | `0` | Gain % before trailing stop arms (0 = disabled) |
-| `PAPER_TRAILING_STOP_PERCENT` | No | `0` | Trail distance % from peak (0 = disabled) |
-| `PAPER_TRAILING_TP_PERCENT` | No | `0` | Trailing TP distance % from peak (0 = disabled) |
-| `PAPER_MAX_SLIPPAGE_EXIT_PERCENT` | No | `80` | Max allowed exit slippage |
+| `BACKSTOP_TP_PERCENT` | No | `0` | Backstop TP for remainder (0 = disabled) |
+| `STOP_LOSS_PERCENT` | No | `-15` | Stop loss % (negative, e.g. `-15`; 0 = disabled) |
+| `TRAILING_ACTIVATION_PERCENT` | No | `0` | Gain % before trailing stop arms (0 = disabled) |
+| `TRAILING_STOP_PERCENT` | No | `0` | Trail distance % from peak (0 = disabled) |
+| `TRAILING_TP_PERCENT` | No | `0` | Trailing TP distance % from peak (0 = disabled) |
+| `MAX_SLIPPAGE_EXIT_PERCENT` | No | `80` | Max allowed exit slippage |
+
+> **Note:** The old `PAPER_*` names (`PAPER_STOP_LOSS_PERCENT`, etc.) are still supported as fallbacks — see `src/config.ts`.
 
 ### Risk Controls
 
