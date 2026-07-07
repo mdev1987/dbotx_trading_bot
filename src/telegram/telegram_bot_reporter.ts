@@ -18,6 +18,7 @@ import {
   resumeSignals,
   isSignalPaused,
 } from "./signal_control";
+import { enablePanic } from "../live/panic";
 
 const bot = new Bot(CONFIG.telegramBotToken!);
 const CHAT_ID = CONFIG.telegramChatId!;
@@ -554,6 +555,16 @@ bot.command("status", async (ctx) => {
     `\u{1F4CC} Open positions: ${reporter.openCount}`, // 📌
   ];
   await ctx.reply(lines.join("\n"));
+});
+
+bot.command("panic", async (ctx) => {
+  await ctx.reply(
+    "\u{1F6A8} **PANIC MODE**\n" + // 🚨
+      "Enabling panic. No new positions will be opened.\n" +
+      "A `STOP_TRADING_LIVE` file has been created.",
+  );
+  pauseSignals();
+  enablePanic();
 });
 
 // Non-blocking long-polling so the bot can receive commands.

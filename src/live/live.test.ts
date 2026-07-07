@@ -4,8 +4,9 @@
  * Tests each module in isolation with mocked dependencies.
  * All modules are imported fresh for each test via dynamic import.
  */
-import { expect, test, mock, describe, beforeEach, afterEach } from "bun:test";
+import { expect, test, mock, describe, beforeEach, afterEach, beforeAll } from "bun:test";
 import { LIVE_CONFIG } from "./config";
+import { unlinkSync, existsSync } from "fs";
 
 // =============================================================================
 // config.ts
@@ -559,5 +560,113 @@ describe("edge cases", () => {
   test("countOpenPositions returns accurate count", () => {
     const core = require("./position_core");
     expect(core.countOpenPositions()).toBe(0);
+  });
+});
+
+// =============================================================================
+// panic.ts
+// =============================================================================
+
+describe("panic", () => {
+  const panicPath = "./STOP_TRADING_LIVE_TEST";
+
+  beforeAll(() => {
+    // Clean up any leftover test file
+    try { unlinkSync(panicPath); } catch {}
+  });
+
+  afterEach(() => {
+    try { unlinkSync(panicPath); } catch {}
+    const panic = require("./panic");
+    panic.disablePanic();
+  });
+
+  test("isPanicMode returns false by default", async () => {
+    const panic = await import("./panic");
+    expect(panic.isPanicMode()).toBe(false);
+  });
+
+  test("enablePanic sets panic mode", async () => {
+    const panic = await import("./panic");
+    panic.enablePanic();
+    expect(panic.isPanicMode()).toBe(true);
+  });
+
+  test("disablePanic clears panic mode", async () => {
+    const panic = await import("./panic");
+    panic.enablePanic();
+    expect(panic.isPanicMode()).toBe(true);
+    panic.disablePanic();
+    expect(panic.isPanicMode()).toBe(false);
+  });
+
+  test("isPanicMode detects STOP_TRADING file", async () => {
+    // Create the file manually (simulates touch STOP_TRADING)
+    const { writeFileSync } = require("fs");
+    writeFileSync(panicPath, "test");
+    const panic = await import("./panic");
+    expect(panic.isPanicMode()).toBe(true);
+  });
+});
+
+// =============================================================================
+// persistence.ts
+// =============================================================================
+
+describe("persistence", () => {
+  test("getLiveDb returns a database instance", async () => {
+    const pers = await import("./persistence");
+    const db = pers.getLiveDb();
+    expect(db).toBeDefined();
+    expect(typeof db.prepare).toBe("function");
+  });
+
+  test("savePositionToDb and loadNonClosedPositions round-trip", async () => {
+    const pers = await import("./persistence");
+    const core = await import("./position_core");
+
+    // Create a minimal position state
+    const pos = {
+      id: 999001,
+      orderId: "test-order-999001",
+      pair: "test-pair-999001",
+      token: "test-token-999001",
+      tokenName: "TestToken",
+      tokenSymbol: "TT",
+      sizeSol: 0.1,
+      entryPriceUsd: null,
+      peakPriceUsd: 0,
+      trailingActive: false,
+      currentProfitPercent: 0,
+      currentProfitUsd: 0,
+      openedAt: Date.now(),
+      expiresAt: Date.now() + 300000,
+      lastUpdateAt: Date.now(),
+      status: "open",
+      closeReason: null,
+      exitPriceUsd: null,
+      signal: { type: "test" } as any,
+    };
+
+    pers.savePositionToDb(pos as any);
+
+    // Load back
+    const loaded = pers.loadNonClosedPositions();
+    const found = loaded.find((r: any) => r.id === 999001);
+    expect(found).toBeDefined();
+    expect(found!.order_id).toBe("test-order-999001");
+    expect(found!.status).toBe("open");
+
+    // Clean up
+    pers.markPositionDeletedFromDb(999001);
+  });
+
+  test("appendAuditLog and updateAuditLog round-trip", async () => {
+    const pers = await import("./persistence");
+    const logId = pers.appendAuditLog("buy", "test-pair-audit", 0.1, '{"test":true}');
+    expect(logId).toBeGreaterThan(0);
+
+    pers.updateAuditLog(logId, "sent", "order-123", '{"ok":true}');
+    // No error means success
   });
 });

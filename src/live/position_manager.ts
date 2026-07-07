@@ -26,10 +26,12 @@ import {
   startTtlChecker,
   subscribeToPriceUpdates,
   recoverOpenPositions,
+  resetDailyLoss,
 } from "./position_core";
 import { startTrailingMonitor } from "./trailing_stop";
 import { resolveConfiguredWallet, refreshBalance$ } from "./wallet";
 import { Subscription } from "rxjs";
+import { getLiveDb } from "./persistence";
 
 /** Handle for cleaning up all subscriptions on shutdown. */
 const _subscriptions: Subscription[] = [];
@@ -43,6 +45,18 @@ const _subscriptions: Subscription[] = [];
  */
 export async function startLiveTrading(): Promise<void> {
   console.log("[live/manager] Starting live trading mode...");
+
+  /** Step 0: Initialize persistence (creates SQLite database + runs migrations). */
+  try {
+    getLiveDb();
+    console.log("[live/manager] Live state database ready");
+  } catch (err) {
+    console.error("[live/manager] Failed to initialize database:", err);
+    throw err;
+  }
+
+  /** Reset the daily loss tracker on startup. */
+  resetDailyLoss();
 
   /** Step 1: Verify the configured wallet exists. */
   try {

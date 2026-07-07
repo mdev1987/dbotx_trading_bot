@@ -220,8 +220,30 @@ export const LIVE_CONFIG = {
   httpTimeoutMs: number("HTTP_TIMEOUT_MS", 30_000),
 
   // ── Recovery ──────────────────────────────────────────────────────────────
-  /** When true, scan open swap orders on startup to recover positions. */
+  /** When true, recover positions from SQLite on startup. */
   recoveryOnStart: (process.env.LIVE_RECOVERY_ON_START ?? "true").toLowerCase() === "true",
+
+  /** Path to the live-trading SQLite database file. */
+  liveDbPath: process.env.LIVE_DB_PATH ?? "./data/live_trading.sqlite",
+
+  // ── Duplicate protection ──────────────────────────────────────────────────
+  /** Window (ms) during which a pair+timestamp lock prevents duplicate buys. */
+  duplicateLockWindowMs: number("DUPLICATE_LOCK_WINDOW_MS", 5_000),
+
+  // ── Emergency stop ────────────────────────────────────────────────────────
+  /** Path to the STOP_TRADING sentinel file (create to halt new buys). */
+  stopTradingPath: process.env.STOP_TRADING_PATH ?? "./STOP_TRADING_LIVE",
+
+  /** Maximum number of consecutive API failures before auto-pause. */
+  maxConsecutiveApiFailures: number("MAX_CONSECUTIVE_API_FAILURES", 5),
+
+  // ── Portfolio limits ──────────────────────────────────────────────────────
+  /** Maximum percentage of wallet balance that can be deployed across all positions. */
+  maxPortfolioExposurePct: number("MAX_PORTFOLIO_EXPOSURE_PCT", 100) / 100,
+
+  // ── Daily loss ────────────────────────────────────────────────────────────
+  /** Daily realised loss limit in USD (0 = disabled). */
+  dailyLossLimitUsd: number("DAILY_LOSS_LIMIT_USD", 20),
 
   // ── Telegram ──────────────────────────────────────────────────────────────
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,

@@ -13,6 +13,7 @@
  */
 import { LIVE_CONFIG } from "./config";
 import { postJson, getJson } from "./http";
+import { appendAuditLog, updateAuditLog } from "./persistence";
 import type {
   LiveSwapOrderResponse,
   LiveSwapOrderInfo,
@@ -248,23 +249,46 @@ export async function createSwapOrder(
   params: LiveSwapOrderParams,
 ): Promise<string> {
   const url = `${LIVE_CONFIG.baseUrl}/automation/swap_order`;
-  const body = await postJson<LiveSwapOrderResponse>(url, params);
 
-  if (body.err) {
-    throw new Error(
-      `Live API rejected ${params.type} order for ${params.pair} (pair=${params.pair})`,
-    );
-  }
-
-  if (!body.res?.id) {
-    throw new Error("Live API returned an invalid response (no order ID).");
-  }
-
-  console.info(
-    `[live/swap] ${params.type.toUpperCase()} ${params.pair} size=${params.amountOrPercent} SOL -> orderId=${body.res.id}`,
+  /** Write audit log BEFORE the API call. */
+  const auditId = appendAuditLog(
+    params.type,
+    params.pair,
+    params.type === "buy" ? params.amountOrPercent : undefined,
+    JSON.stringify(params),
   );
 
-  return body.res.id;
+  try {
+    /** Disable blind POST retry — a timeout could mean the order was placed. */
+    const body = await postJson<LiveSwapOrderResponse>(url, params, {
+      retryNonIdempotent: false,
+    });
+
+    if (body.err) {
+      const errMsg = `Live API rejected ${params.type} order for ${params.pair}`;
+      updateAuditLog(auditId, "failed", undefined, JSON.stringify(body), errMsg);
+      throw new Error(errMsg);
+    }
+
+    if (!body.res?.id) {
+      const errMsg = "Live API returned an invalid response (no order ID).";
+      updateAuditLog(auditId, "failed", undefined, JSON.stringify(body), errMsg);
+      throw new Error(errMsg);
+    }
+
+    /** Update audit log with the order ID. */
+    updateAuditLog(auditId, "sent", body.res.id, JSON.stringify(body));
+
+    console.info(
+      `[live/swap] ${params.type.toUpperCase()} ${params.pair} size=${params.amountOrPercent} SOL -> orderId=${body.res.id}`,
+    );
+
+    return body.res.id;
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    updateAuditLog(auditId, "error", undefined, undefined, errMsg);
+    throw err;
+  }
 }
 
 /**

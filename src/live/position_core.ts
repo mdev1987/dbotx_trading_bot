@@ -25,8 +25,9 @@ import type {
   PositionStatus,
   TradeResultEvent,
   LiveSwapOrderInfo,
+  LiveBalance,
 } from "./types";
-import { liveFastBuy, liveFastSell, pollSwapOrderUntilDone, querySwapOrders } from "./fast_buy_sell";
+import { liveFastBuy, liveFastSell, pollSwapOrderUntilDone, querySwapOrders, querySwapOrder } from "./fast_buy_sell";
 import { computePositionSize } from "./account";
 import {
   tradeResultEvent$,
@@ -38,6 +39,13 @@ import {
   tradeFailEvent$,
 } from "./trade_results_ws";
 import { pairUpdate$ } from "../market/dbotx_data_ws";
+import {
+  savePositionToDb,
+  loadNonClosedPositions,
+  markPositionDeletedFromDb,
+} from "./persistence";
+import { isPanicMode, enablePanic } from "./panic";
+import type { DbPositionRow } from "./persistence";
 
 // ---------------------------------------------------------------------------
 // Position ID counter — auto-incremented for each new position.
@@ -198,6 +206,9 @@ function addPosition(
   _positionStore.set(position.id, position);
   _latestPositions = _positionStore;
 
+  /** Persist to SQLite before emitting events. */
+  savePositionToDb(position);
+
   emitEvent({ type: "opened", position });
 
   return position;
@@ -219,6 +230,7 @@ export function patchPositionById(
   if (!pos) return undefined;
 
   Object.assign(pos, patch, { lastUpdateAt: Date.now() });
+  savePositionToDb(pos);
   emitEvent({ type: "updated", position: pos });
   return pos;
 }
@@ -235,6 +247,7 @@ export function markPositionClosing(id: number): void {
   if (!pos || pos.status !== "open") return;
   pos.status = "closing";
   pos.lastUpdateAt = Date.now();
+  savePositionToDb(pos);
   emitEvent({ type: "closing", position: pos });
 }
 
@@ -261,7 +274,16 @@ export function markPositionClosed(
   /** Update profit before final close. */
   if (pos.entryPriceUsd && exitPriceUsd) {
     pos.currentProfitPercent = (exitPriceUsd - pos.entryPriceUsd) / pos.entryPriceUsd;
+    pos.currentProfitUsd = pos.currentProfitPercent * pos.sizeSol * LIVE_CONFIG.solPriceUsd;
   }
+
+  /** Track daily loss. */
+  if (pos.currentProfitUsd < 0) {
+    recordDailyLoss(pos.currentProfitUsd);
+  }
+
+  /** Persist to SQLite before emitting events. */
+  savePositionToDb(pos);
 
   emitEvent({ type: "closed", position: pos, closeReason: reason });
 }
@@ -326,6 +348,127 @@ export function removePendingBuy(token: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Pair+timestamp duplicate lock
+// ---------------------------------------------------------------------------
+
+/**
+ * Set of "pair:rounded_timestamp" strings that prevents two buys for the
+ * same pair within the configurable window (DUPLICATE_LOCK_WINDOW_MS).
+ */
+const _pairLockSet = new Set<string>();
+
+/** Timer handles for auto-cleaning pair locks. */
+const _pairLockTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Check if a pair is locked against duplicate buys.
+ * @param pair - LP/pair address.
+ * @returns True if the pair was recently bought.
+ */
+export function isPairLocked(pair: string): boolean {
+  return _pairLockSet.has(pair);
+}
+
+/**
+ * Lock a pair against duplicate buys for the configured window.
+ * @param pair - LP/pair address.
+ */
+export function lockPair(pair: string): void {
+  const windowMs = LIVE_CONFIG.duplicateLockWindowMs;
+  const bucket = Math.floor(Date.now() / windowMs);
+  const key = `${pair}:${bucket}`;
+
+  _pairLockSet.add(key);
+
+  const timer = setTimeout(() => {
+    _pairLockSet.delete(key);
+    _pairLockTimers.delete(key);
+  }, windowMs + 100);
+
+  _pairLockTimers.set(key, timer);
+}
+
+/**
+ * Remove a pair lock (called after the buy order completes).
+ * @param pair - LP/pair address.
+ */
+export function unlockPair(pair: string): void {
+  const windowMs = LIVE_CONFIG.duplicateLockWindowMs;
+  const bucket = Math.floor(Date.now() / windowMs);
+  const key = `${pair}:${bucket}`;
+
+  _pairLockSet.delete(key);
+  const timer = _pairLockTimers.get(key);
+  if (timer) {
+    clearTimeout(timer);
+    _pairLockTimers.delete(key);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Consecutive API failure tracking
+// ---------------------------------------------------------------------------
+
+let _consecutiveApiFailures = 0;
+
+/** Get the current consecutive failure count. */
+export function consecutiveApiFailures(): number {
+  return _consecutiveApiFailures;
+}
+
+/** Reset the consecutive failure counter (called on successful API call). */
+export function resetApiFailures(): void {
+  _consecutiveApiFailures = 0;
+}
+
+/** Increment and check the consecutive failure threshold. */
+export function incrementApiFailures(): void {
+  _consecutiveApiFailures++;
+  if (_consecutiveApiFailures >= LIVE_CONFIG.maxConsecutiveApiFailures) {
+    console.error(
+      `[live/core] ${_consecutiveApiFailures} consecutive API failures — enabling panic`,
+    );
+    enablePanic();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Daily loss limit
+// ---------------------------------------------------------------------------
+
+let _dailyLossUsd = 0;
+
+/**
+ * Check if the daily loss limit has been exceeded.
+ * Reloads from the database on each call.
+ */
+export function isDailyLossExceeded(): boolean {
+  if (LIVE_CONFIG.dailyLossLimitUsd <= 0) return false;
+  return _dailyLossUsd >= LIVE_CONFIG.dailyLossLimitUsd;
+}
+
+/**
+ * Update the daily loss tracker with a realised PnL value.
+ * Called when a position closes at a loss.
+ */
+export function recordDailyLoss(pnlUsd: number): void {
+  if (pnlUsd >= 0) return;
+  _dailyLossUsd += Math.abs(pnlUsd);
+  if (isDailyLossExceeded()) {
+    console.error(
+      `[live/core] Daily loss limit reached: $${_dailyLossUsd.toFixed(2)} >= $${LIVE_CONFIG.dailyLossLimitUsd.toFixed(2)}`,
+    );
+  }
+}
+
+/**
+ * Reset the daily loss counter (called at midnight or on startup).
+ */
+export function resetDailyLoss(): void {
+  _dailyLossUsd = 0;
+}
+
+// ---------------------------------------------------------------------------
 // Open position — main entry point for strategies
 // ---------------------------------------------------------------------------
 
@@ -343,6 +486,20 @@ export function removePendingBuy(token: string): void {
  * @returns The position ID, or 0 if the position could not be opened.
  */
 export async function openPosition(signal: ParsedSignal): Promise<number> {
+  /** Guard: panic mode — reject all new buys. */
+  if (isPanicMode()) {
+    console.warn("[live/core] Panic mode active — rejecting new position");
+    return 0;
+  }
+
+  /** Guard: daily loss limit exceeded. */
+  if (isDailyLossExceeded()) {
+    console.warn(
+      `[live/core] Daily loss limit ($${LIVE_CONFIG.dailyLossLimitUsd}) exceeded — rejecting new position`,
+    );
+    return 0;
+  }
+
   /** Guard: check for existing open position on this token. */
   const existing = getPositionByToken(signal.contractAddress);
   if (existing && existing.status !== "closed") {
@@ -356,15 +513,27 @@ export async function openPosition(signal: ParsedSignal): Promise<number> {
     return 0;
   }
 
+  /** Guard: pair+timestamp duplicate lock. */
+  if (isPairLocked(signal.lpAddress)) {
+    console.log(`[live/core] Pair ${signal.lpAddress} is locked (duplicate window) — skipping`);
+    return 0;
+  }
+
   /** Compute position size. */
   const sizeSol = computePositionSize();
 
   /** Mark as pending buy immediately. */
   addPendingBuy(signal.contractAddress);
 
+  /** Lock the pair against duplicates. */
+  lockPair(signal.lpAddress);
+
   try {
     /** Create the live BUY order. */
     const orderId = await liveFastBuy(signal.lpAddress, sizeSol);
+
+    /** Reset consecutive failure counter on success. */
+    resetApiFailures();
 
     /** Add the position to the store. */
     const position = addPosition(signal, orderId, sizeSol);
@@ -383,6 +552,10 @@ export async function openPosition(signal: ParsedSignal): Promise<number> {
   } catch (err) {
     /** Clean up pending buy on failure. */
     removePendingBuy(signal.contractAddress);
+
+    /** Track API failure for circuit breaker. */
+    incrementApiFailures();
+
     console.error(`[live/core] Failed to open position for ${signal.tokenName}:`, err);
     return 0;
   }
@@ -478,11 +651,14 @@ export async function closePositionById(
     /** We do NOT mark the position closed here — the WS trade result event will do that. */
     /** However, we set a fallback timer in case the WS event never arrives. */
     scheduleSellFallback(id, sellOrderId, reason);
-  } catch (err) {
+    } catch (err) {
     console.error(`[live/core] Failed to sell position ${id}:`, err);
+    /** Track API failure for circuit breaker. */
+    incrementApiFailures();
     /** Revert to open so the next attempt can try again. */
     pos.status = "open";
     pos.lastUpdateAt = Date.now();
+    savePositionToDb(pos);
     emitEvent({ type: "updated", position: pos, detail: `Sell failed: ${err}` });
   }
 }
@@ -802,12 +978,19 @@ export function _clearQueueForTest(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Scan live swap orders on startup to discover positions that were created
- * before a restart and are still open (state = init/processing).
+ * Recover positions from SQLite on startup.
  *
- * This prevents losing track of positions after a crash.
+ * Loads all non-closed (open/closing) positions from the database,
+ * queries the exchange for their current state, and updates the
+ * in-memory store accordingly.
  *
- * Only recovers orders placed within the configured TTL window.
+ * Steps:
+ *   1. Load rows from SQLite where status != 'closed'.
+ *   2. For each recovered position, query GET /automation/swap_orders
+ *      for the current order state.
+ *   3. If the order is done/fail/expired, update our state accordingly.
+ *   4. If still pending, restore it as open.
+ *   5. If order not found on exchange, keep it as open with a warning.
  */
 export async function recoverOpenPositions(): Promise<void> {
   if (!LIVE_CONFIG.recoveryOnStart) {
@@ -815,28 +998,118 @@ export async function recoverOpenPositions(): Promise<void> {
     return;
   }
 
-  console.log("[live/core] Recovery: scanning open swap orders...");
+  console.log("[live/core] Recovery: loading positions from SQLite...");
 
   try {
-    /**
-     * We query for recent orders that are in non-terminal states.
-     * The API does not support filtering by wallet ID directly on the
-     * swap_orders endpoint, so we query by known order IDs — but we
-     * don't have any yet on a fresh start.
-     *
-     * Instead, we rely on the fact that our orders were created recently
-     * and poll the PnL tasks to find active positions.
-     *
-     * For a more robust recovery, we would need persistent storage of
-     * order IDs.  For now, recovery is best-effort: we log a warning
-     * and rely on the trade results WS to pick up events that arrive
-     * after we connect.
-     */
+    const rows = loadNonClosedPositions();
+
+    if (rows.length === 0) {
+      console.log("[live/core] Recovery: no non-closed positions found");
+      return;
+    }
+
+    console.log(`[live/core] Recovery: found ${rows.length} non-closed positions`);
+
+    for (const row of rows) {
+      try {
+        await recoverSinglePosition(row);
+      } catch (err) {
+        console.error(`[live/core] Recovery failed for position ${row.id}:`, err);
+      }
+    }
+
     console.log(
-      "[live/core] Recovery: WS trade results will re-sync positions after connect. " +
-        "For persistent recovery, enable SQLite tracking in a future iteration.",
+      `[live/core] Recovery complete: ${countOpenPositions()} open positions restored`,
     );
   } catch (err) {
     console.error("[live/core] Recovery scan failed:", err);
+  }
+}
+
+/**
+ * Recover a single position from a database row.
+ */
+async function recoverSinglePosition(row: DbPositionRow): Promise<void> {
+  /** Parse the signal JSON if available. */
+  let signal: ParsedSignal | undefined;
+  if (row.signal_json) {
+    try {
+      signal = JSON.parse(row.signal_json) as ParsedSignal;
+    } catch {
+      console.warn(`[live/core] Recovery: failed to parse signal JSON for position ${row.id}`);
+    }
+  }
+
+  /** Build the PositionState from the DB row. */
+  const pos: PositionState = {
+    id: row.id,
+    orderId: row.order_id,
+    pair: row.pair,
+    token: row.token,
+    tokenName: row.token_name,
+    tokenSymbol: row.token_symbol,
+    entryPriceUsd: row.entry_price_usd,
+    sizeSol: row.size_sol,
+    peakPriceUsd: row.peak_price_usd,
+    trailingActive: row.trailing_active === 1,
+    currentProfitPercent: row.current_profit_pct,
+    currentProfitUsd: row.current_profit_usd,
+    openedAt: row.opened_at,
+    expiresAt: row.expires_at ?? row.opened_at + LIVE_CONFIG.baseTtlSecs * 1000,
+    lastUpdateAt: row.last_update_at,
+    status: row.status as PositionStatus,
+    closeReason: row.close_reason as CloseReason | null,
+    exitPriceUsd: row.exit_price_usd,
+    signal: signal ?? ({} as ParsedSignal),
+  };
+
+  /** Query the exchange for the current order state. */
+  try {
+    const orderInfo = await querySwapOrder(pos.orderId);
+
+    if (!orderInfo) {
+      console.warn(
+        `[live/core] Recovery: order ${pos.orderId} not found on exchange — keeping as open`,
+      );
+    } else if (orderInfo.state === "done") {
+      pos.entryPriceUsd = orderInfo.txPriceUsd ?? pos.entryPriceUsd;
+      pos.status = "closed";
+      pos.closeReason = "manual";
+      pos.exitPriceUsd = orderInfo.txPriceUsd ?? null;
+      console.log(
+        `[live/core] Recovery: order ${pos.orderId} is done — marking closed @ $${orderInfo.txPriceUsd}`,
+      );
+    } else if (orderInfo.state === "fail" || orderInfo.state === "expired") {
+      pos.status = "closed";
+      pos.closeReason = orderInfo.state === "expired" ? "expired" : "stop_loss";
+      console.log(
+        `[live/core] Recovery: order ${pos.orderId} is ${orderInfo.state} — marking closed`,
+      );
+    } else {
+      console.log(
+        `[live/core] Recovery: order ${pos.orderId} is ${orderInfo.state} — restoring as open`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `[live/core] Recovery: failed to query order ${pos.orderId}: ${err} — restoring as open`,
+    );
+  }
+
+  /** Update the position ID counter so new positions don't collide. */
+  if (pos.id >= nextPositionId) {
+    nextPositionId = pos.id + 1;
+  }
+
+  /** Store in memory. */
+  _positionStore.set(pos.id, pos);
+  _latestPositions = _positionStore;
+  savePositionToDb(pos);
+
+  /** Emit events for restored positions. */
+  if (pos.status === "closed") {
+    emitEvent({ type: "closed", position: pos, closeReason: pos.closeReason ?? "manual" });
+  } else {
+    emitEvent({ type: "opened", position: pos, detail: "Recovered from SQLite" });
   }
 }
