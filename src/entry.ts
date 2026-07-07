@@ -1,12 +1,18 @@
-import { loadSealedFromEnv, decrypt, promptPassword } from "./crypto/crypto";
+import {
+  readEncryptedEnvFile,
+  decrypt,
+  promptPassword,
+  loadEnvContentIntoProcess,
+} from "./crypto/crypto";
 
 async function main() {
-  const sealed = loadSealedFromEnv();
+  const sealed = readEncryptedEnvFile();
+
   if (sealed) {
     const pw = await promptPassword("Enter decryption password");
     try {
-      const apiKey = decrypt(pw, sealed);
-      process.env.DBOTX_API_KEY = apiKey;
+      const content = decrypt(pw, sealed);
+      loadEnvContentIntoProcess(content);
     } catch {
       console.error("Decryption failed — wrong password or corrupted data");
       process.exit(1);
