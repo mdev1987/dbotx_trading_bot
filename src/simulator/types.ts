@@ -267,12 +267,18 @@ export interface PositionState {
   token: string;
   /** Human-readable token name */
   tokenName: string;
+  /** Token symbol */
+  tokenSymbol: string;
   /** Entry price in USD (null until captured) */
   entryPriceUsd: number | null;
   /** Total cost of entry in USD (null until captured) */
   entryCostUsd: number | null;
   /** Position size in SOL */
   sizeSol: number;
+  /** Actually filled SOL amount (may differ from sizeSol on partial fill) */
+  filledSol: number;
+  /** Average fill price in USD (may differ from entryPriceUsd on partial fill) */
+  avgFillPriceUsd: number | null;
   /** Highest price reached since position was opened */
   peakPriceUsd: number;
   /** Whether the trailing stop has been activated */

@@ -5,8 +5,23 @@
  * All modules are imported fresh for each test via dynamic import.
  */
 import { expect, test, mock, describe, beforeEach, afterEach, beforeAll } from "bun:test";
-import { LIVE_CONFIG } from "./config";
-import { unlinkSync, existsSync } from "fs";
+import { unlinkSync } from "fs";
+
+let LIVE_CONFIG: any;
+
+beforeAll(async () => {
+  process.env.DBOTX_API_KEY = "test-key";
+  process.env.DBOTX_WS_URL = "wss://test.example.com/ws";
+  process.env.DBOTX_BASE_URL = "https://test.example.com";
+  process.env.DBOTX_SERVAPI_BASE_URL = "https://test.example.com";
+  process.env.TELEGRAM_CHANNEL_USERNAME = "AveSolanaTokenScanner";
+  process.env.STOP_TRADING_PATH = "./STOP_TRADING_LIVE_TEST";
+  process.env.LIVE_WALLET_ID = "test-wallet";
+  process.env.LIVE_WALLET_ADDRESS = "test-address";
+
+  const config = await import("./config");
+  LIVE_CONFIG = config.LIVE_CONFIG;
+});
 
 // =============================================================================
 // config.ts

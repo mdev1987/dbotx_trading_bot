@@ -20,29 +20,33 @@ import { convert } from "telegram-markdown-v2";
 import { initBridge } from "./shared/trade_bridge";
 import type { BridgeConfig } from "./shared/trade_bridge";
 
-let channel_mode: "ave" | "monitor";
+// ── Mode ─────────────────────────────────────────────────────────────────────
 
-if (CONFIG.telegramChannelUserName === "avesignalmonitor") {
-  channel_mode = "monitor";
-} else if (CONFIG.telegramChannelUserName === "avesolanatokenscanner") {
-  channel_mode = "ave";
-} else {
-  throw new Error(
-    `Unsupported telegram channel username: ${CONFIG.telegramChannelUserName}`,
-  );
-}
+const channelMode: "ave" | "monitor" = (() => {
+  const ch = CONFIG.telegramChannelUserName;
+  if (ch === "avesignalmonitor") return "monitor";
+  if (ch === "avesolanatokenscanner") return "ave";
+  throw new Error(`Unsupported telegram channel username: ${ch}`);
+})();
 
+// ── Shutdown State ──────────────────────────────────────────────────────────
+
+let _shuttingDown = false;
 let stopLiveTradingFn: (() => void) | undefined;
+let stopSimTradingFn: (() => void) | undefined;
+let _tgWatchdogSub: Subscription | undefined;
+
+// ── Bootstrap ───────────────────────────────────────────────────────────────
 
 async function start(): Promise<void> {
-  // Step 1: Connect to Telegram and begin listening for trade signals.
+  // Step 1: Connect to Telegram
   try {
     await startTelegramListener();
   } catch (err) {
     console.error("[main] Telegram listener failed to start:", err);
   }
 
-  // Step 2: Start the position manager (simulator or live) and capture events.
+  // Step 2: Start position manager (live or simulator)
   let bridgeConfig: BridgeConfig;
 
   if (CONFIG.liveMode) {
@@ -51,65 +55,29 @@ async function start(): Promise<void> {
     bridgeConfig = await startSimulatorMode();
   }
 
-  // Step 3: Wire the bridge so reporter & persistence read from the active mode.
+  // Step 3: Wire the shared event bridge
   initBridge(bridgeConfig);
 
-  // Step 4: Start persisting position lifecycle events.
+  // Step 4: Analytics persistence
   startPersistence();
 
-  // Step 5: Start the Telegram bot reporter.
+  // Step 5: Telegram bot reporter
   startReporter();
 
-  // Step 6: Start Telegram health check watchdog.
+  // Step 6: Telegram health watchdog
   startTelegramWatchdog();
 
-  // Step 7: Send the startup notification.
+  // Step 7: Startup notification
   await sendStartedMessage();
 }
 
-async function startSimulatorMode(): Promise<BridgeConfig> {
-  console.log("[main] Starting simulator mode...");
-
-  const simModule = await import("./simulator/position_manager");
-
-  const { simulatorAccount$, latestAccount } = await import("./simulator/account");
-  simulatorAccount$
-    .pipe(
-      tap((acct) => {
-        console.log(
-          `[ACCT] Balance=\$${acct.balance.toFixed(2)}` +
-            ` | PnL=${(acct.changeAll * 100).toFixed(2)}%` +
-            ` | Tokens=${acct.holdTokens}`,
-        );
-      }),
-    )
-    .subscribe();
-
-  const { generateReport } = await import("./analytics/reports");
-
-  return {
-    positionEvent$: simModule.positionEvent$,
-    positionClosed$: simModule.positionClosed$,
-    openPositions$: simModule.openPositions$,
-    getReport: generateReport,
-    getBalanceStr: () => {
-      if (latestAccount) {
-        const change = latestAccount.changeAll;
-        const icon = change >= 0 ? "\u{1F7E2}" : "\u{1F534}";
-        const sign = change >= 0 ? "+" : "";
-        return `${icon} \u{1F4B0} Balance: \`$${latestAccount.balance.toFixed(2)}\` (\`${sign}${(change * 100).toFixed(2)}%\`)`;
-      }
-      return "";
-    },
-  };
-}
+// ── Live Mode ───────────────────────────────────────────────────────────────
 
 async function startLiveMode(): Promise<BridgeConfig> {
   console.log("[main] Starting live mode...");
 
   const liveModule = await import("./live/position_manager");
   stopLiveTradingFn = liveModule.stopLiveTrading;
-
   await liveModule.startLiveTrading();
 
   const wallet = await import("./live/wallet");
@@ -145,6 +113,49 @@ async function startLiveMode(): Promise<BridgeConfig> {
   };
 }
 
+// ── Simulator Mode ──────────────────────────────────────────────────────────
+
+async function startSimulatorMode(): Promise<BridgeConfig> {
+  console.log("[main] Starting simulator mode...");
+
+  const simModule = await import("./simulator/position_manager");
+  stopSimTradingFn = simModule.stopSimulatorTrading;
+  await simModule.startSimulatorTrading();
+
+  const { simulatorAccount$, latestAccount } = await import("./simulator/account");
+  simulatorAccount$
+    .pipe(
+      tap((acct) => {
+        console.log(
+          `[ACCT] Balance=\$${acct.balance.toFixed(2)}` +
+            ` | PnL=${(acct.changeAll * 100).toFixed(2)}%` +
+            ` | Tokens=${acct.holdTokens}`,
+        );
+      }),
+    )
+    .subscribe();
+
+  const { generateReport } = await import("./analytics/reports");
+
+  return {
+    positionEvent$: simModule.positionEvent$,
+    positionClosed$: simModule.positionClosed$,
+    openPositions$: simModule.openPositions$,
+    getReport: generateReport,
+    getBalanceStr: () => {
+      if (latestAccount) {
+        const change = latestAccount.changeAll;
+        const icon = change >= 0 ? "\u{1F7E2}" : "\u{1F534}";
+        const sign = change >= 0 ? "+" : "";
+        return `${icon} \u{1F4B0} Balance: \`$${latestAccount.balance.toFixed(2)}\` (\`${sign}${(change * 100).toFixed(2)}%\`)`;
+      }
+      return "";
+    },
+  };
+}
+
+// ── Startup / Shutdown Messages ─────────────────────────────────────────────
+
 function fmtDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   const m = Math.floor(seconds / 60);
@@ -169,7 +180,6 @@ function startedMessage(): string {
   }
 
   lines.push(`\u{1F4CC} Max Positions: \`${CONFIG.maxPositions}\``);
-
   lines.push(
     `\u{1F4B0} Position: \`${CONFIG.positionSize.toFixed(2)} SOL\` ` +
       `(min \`${CONFIG.minPositionSol.toFixed(2)}\` / ` +
@@ -177,7 +187,7 @@ function startedMessage(): string {
       `risk \u{2264}\`${CONFIG.maxRiskPct.toFixed(1)}%\` of balance)`,
   );
 
-  if (channel_mode === "ave") {
+  if (channelMode === "ave") {
     lines.push(
       `\u{23F0} Base TTL: \`${fmtDuration(CONFIG.baseTtlSecs)}\`` +
         (CONFIG.minProfitForTtlExtensionPct > 0
@@ -189,17 +199,15 @@ function startedMessage(): string {
 
   lines.push("", "**Exit Settings**");
 
-  if (channel_mode === "monitor") {
+  if (channelMode === "monitor") {
     lines.push(`\u{1F7E2} TP: \`from signal maxPumpX\``);
   }
 
   if (CONFIG.stopLossPct) {
-    lines.push(
-      `\u{1F534} Stop Loss: \`${(CONFIG.stopLossPct * 100).toFixed(1)}%\``,
-    );
+    lines.push(`\u{1F534} Stop Loss: \`${(CONFIG.stopLossPct * 100).toFixed(1)}%\``);
   }
 
-  if (channel_mode === "ave") {
+  if (channelMode === "ave") {
     if (CONFIG.partialTpTiers.length > 0) {
       const tiers = CONFIG.partialTpTiers
         .map((t) => `${(t.pct * 100).toFixed(0)}%@${(t.at * 100).toFixed(0)}%`)
@@ -207,14 +215,7 @@ function startedMessage(): string {
       lines.push(`\u{1F7E2} Partial TP: \`${tiers}\``);
     }
     if (CONFIG.backstopTpPct) {
-      lines.push(
-        `\u{1F7E2} Backstop TP: \`${(CONFIG.backstopTpPct * 100).toFixed(0)}%\``,
-      );
-    }
-    if (CONFIG.minProfitForTtlExtensionPct > 0) {
-      lines.push(
-        `\u{1F504} TTL Extension: \u{2265}\`${(CONFIG.minProfitForTtlExtensionPct * 100).toFixed(1)}%\` profit to renew`,
-      );
+      lines.push(`\u{1F7E2} Backstop TP: \`${(CONFIG.backstopTpPct * 100).toFixed(0)}%\``);
     }
     if (CONFIG.signalQueueSize > 0) {
       lines.push(`\u{1F4E6} Signal Queue: \`${CONFIG.signalQueueSize}\` slots`);
@@ -261,7 +262,7 @@ async function sendStoppedMessage(error?: string): Promise<void> {
     lines.push(`\u{1F4CB} Total: \`${report.totalPositions}\``);
     lines.push(
       `\u{1F4CC} Open: \`${report.openPositions}\`` +
-        (channel_mode === "ave" ? ` / ${CONFIG.maxPositions}` : ""),
+        (channelMode === "ave" ? ` / ${CONFIG.maxPositions}` : ""),
     );
     lines.push(`\u{2705} Closed: \`${report.closedPositions}\``);
     lines.push(
@@ -283,11 +284,7 @@ async function sendStoppedMessage(error?: string): Promise<void> {
   } catch { /* best-effort */ }
 }
 
-// ──────────────────────────────────────────────
-// Telegram Watchdog
-// ──────────────────────────────────────────────
-
-let _tgWatchdogSub: Subscription | undefined;
+// ── Telegram Watchdog ───────────────────────────────────────────────────────
 
 function startTelegramWatchdog(): void {
   _tgWatchdogSub = timer(CONFIG.tgRetryDelayMs, 60_000)
@@ -319,16 +316,12 @@ async function restartTelegram(): Promise<void> {
   }
 }
 
-// ══════════════════════════════════════════════
-// Application entry
-// ══════════════════════════════════════════════
+// ── Application Entry ───────────────────────────────────────────────────────
 
 start().catch((err) => {
   console.error("[main] Startup failed:", err);
   process.exit(1);
 });
-
-let _shuttingDown = false;
 
 async function shutdown(error?: string): Promise<void> {
   if (_shuttingDown) return;
@@ -339,15 +332,18 @@ async function shutdown(error?: string): Promise<void> {
   await sendStoppedMessage(error);
 
   if (stopLiveTradingFn) {
-    try {
-      stopLiveTradingFn();
-    } catch (err) {
+    try { stopLiveTradingFn(); } catch (err) {
       console.error("[main] Live trading stop failed:", err);
     }
   }
 
-  _tgWatchdogSub?.unsubscribe();
+  if (stopSimTradingFn) {
+    try { stopSimTradingFn(); } catch (err) {
+      console.error("[main] Simulator trading stop failed:", err);
+    }
+  }
 
+  _tgWatchdogSub?.unsubscribe();
   stopReporter();
   stopPersistence();
   await stopTelegramListener().catch(() => {});

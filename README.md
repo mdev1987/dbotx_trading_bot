@@ -61,6 +61,15 @@ Telegram (MTProto) ──► main.ts ──► telegram_listener.ts ──► si
 | **Reporter** | `telegram_bot_reporter.ts` | GrammY messages for opened/closed/periodic report (subscribes via bridge) |
 | **Analytics** | `reports.ts`, `trades_repository.ts` | SQLite persistence + performance queries (subscribes via bridge) |
 | **Logger** | `logger.ts` | Level-gated logging (debug/info/warn/error) |
+| **Core types** | `core/types.ts` | Shared type definitions for positions, signals, queue entries |
+| **Core position store** | `core/position-store.ts` | Generic in-memory position store with CRUD + event emission |
+| **Core signal queue** | `core/signal-queue.ts` | FIFO signal queue with TTL-based expiry, dedup, overflow eviction |
+| **Core interfaces** | `core/interfaces.ts` | Abstract service contracts (exchange, persistence, account) |
+| **Core errors** | `core/error-factory.ts` | Typed error construction utilities |
+| **Live exchange service** | `live/services/exchange-service.ts` | Live DBotX API exchange operations (implements core interfaces) |
+| **Live persistence service** | `live/services/persistence-service.ts` | Live SQLite persistence (implements core interfaces) |
+| **Live account service** | `live/services/account-service.ts` | Live account/balance service (implements core interfaces) |
+| **Simulator exchange service** | `simulator/services/exchange-service.ts` | Simulated exchange operations (implements core interfaces) |
 | **Entry point** | `main.ts` | Startup, shutdown, crash notifications |
 
 ## Signal Source Modes
