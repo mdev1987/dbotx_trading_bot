@@ -65,6 +65,41 @@ store.openPositions$.subscribe(() => {
   _latestPositions = store.latestPositions;
 });
 
+// ── Paper Wallet State ──────────────────────────────────────────────────────
+
+/**
+ * Starting capital for the paper wallet (in SOL).
+ * This is the virtual balance the bot starts with for paper trading.
+ * Increased from the default 5 SOL position size to allow multiple concurrent positions.
+ */
+const PAPER_STARTING_BALANCE_SOL = 50;
+
+/** Current paper wallet balance (SOL). Starts at PAPER_STARTING_BALANCE_SOL and accrues realized P&L. */
+let _paperBalanceSol = PAPER_STARTING_BALANCE_SOL;
+/** Cumulative realized P&L across all closed paper positions (SOL). */
+let _paperRealizedPnLSol = 0;
+/** Count of paper positions that closed with a profit. */
+let _paperWins = 0;
+/** Count of paper positions that closed with a loss. */
+let _paperLosses = 0;
+
+/** Retrieve the current paper wallet balance in SOL. */
+export function getPaperBalanceSol(): number {
+  return _paperBalanceSol;
+}
+/** Retrieve the cumulative realized P&L from all closed paper positions (SOL). */
+export function getPaperRealizedPnLSol(): number {
+  return _paperRealizedPnLSol;
+}
+/** Retrieve the number of profitable paper trades. */
+export function getPaperWins(): number {
+  return _paperWins;
+}
+/** Retrieve the number of losing paper trades. */
+export function getPaperLosses(): number {
+  return _paperLosses;
+}
+
 /** Observable stream of all position events (opened, updated, closed, etc.). */
 export const positionEvent$: Observable<PositionEvent> = store.positionEvent$;
 
@@ -280,6 +315,7 @@ export async function openPosition(signal: ParsedSignal): Promise<number> {
     persistence.savePosition(position);
     store.emitEvent({ type: "opened", position, detail: "paper" });
     store.recordBuyTimestamp();
+    _paperBalanceSol -= paperSize;
     accountService.refreshBalance();
     return paperId;
   }
@@ -460,6 +496,17 @@ export async function closePositionById(
       : pos.entryPriceUsd ?? undefined;
     store.markClosed(id, reason, exitPrice ?? undefined);
     handlePositionClosed(id);
+
+    // Update paper wallet stats
+    const closed = store.get(id);
+    if (closed) {
+      const pnlSol = closed.currentProfitPercent * closed.sizeSol;
+      _paperBalanceSol += closed.sizeSol + pnlSol;
+      _paperRealizedPnLSol += pnlSol;
+      if (pnlSol >= 0) _paperWins++;
+      else _paperLosses++;
+    }
+
     if (cb) cb(`paper_sell_${id}_${Date.now()}`);
     return;
   }

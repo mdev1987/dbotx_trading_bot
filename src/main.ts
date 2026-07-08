@@ -1,4 +1,5 @@
 import { CONFIG } from "./config";                                          // Application configuration
+import { LIVE_CONFIG } from "./live/config";                                // Live trading configuration
 import {
   startPersistence,
   stopPersistence,
@@ -112,6 +113,26 @@ async function startLiveMode(): Promise<BridgeConfig> {
     // Stub report — live mode does not yet generate detailed analytics
     getReport: () => {                                // Generate a placeholder performance report
       const openCount = liveModule.countOpenPositions();  // Count currently open positions
+      if (!LIVE_CONFIG.liveBuyEnabled) {
+        const wins = liveModule.getPaperWins();
+        const losses = liveModule.getPaperLosses();
+        const total = wins + losses;
+        return {
+          totalPositions: total,
+          closedPositions: total,
+          openPositions: openCount,
+          winningTrades: wins,
+          losingTrades: losses,
+          winRate: total > 0 ? wins / total * 100 : 0,
+          totalProfitUsd: liveModule.getPaperRealizedPnLSol(),
+          totalProfitPct: 0,
+          avgProfitPct: 0,
+          avgProfitUsd: total > 0 ? liveModule.getPaperRealizedPnLSol() / total : 0,
+          bestTradePct: 0,
+          worstTradePct: 0,
+          reasons: {},
+        };
+      }
       return {
         totalPositions: 0,                           // Not tracked in live mode yet
         closedPositions: 0,                          // Not tracked in live mode yet
@@ -130,6 +151,12 @@ async function startLiveMode(): Promise<BridgeConfig> {
     },
     // Format wallest balance string for bot messages
     getBalanceStr: () => {                            // Build formatted balance string for Telegram
+      if (!LIVE_CONFIG.liveBuyEnabled) {
+        const bal = liveModule.getPaperBalanceSol();
+        const pnl = liveModule.getPaperRealizedPnLSol();
+        const sign = pnl >= 0 ? "+" : "";
+        return `\u{1F4DD} Paper: \`${bal.toFixed(2)} SOL\` (PnL: \`${sign}${pnl.toFixed(2)} SOL\`)`;
+      }
       if (wallet.latestBalance) {                    // Check if balance data is available
         return `\u{1F4B0} Balance: \`${wallet.latestBalance.balanceSol.toFixed(2)} SOL\``;
       }
