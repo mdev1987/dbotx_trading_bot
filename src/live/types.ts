@@ -300,7 +300,7 @@ export interface PositionState {
 /** Events emitted during the position lifecycle. */
 export interface PositionEvent {
   /** Type of lifecycle event. */
-  type: "opened" | "updated" | "closing" | "closed" | "skipped";
+  type: "opened" | "updated" | "closing" | "closed";
   /** The position state at the time of the event. */
   position: PositionState;
   /** Reason for closure (only set when type is "closed"). */

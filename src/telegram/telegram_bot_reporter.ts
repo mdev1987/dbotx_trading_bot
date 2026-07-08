@@ -85,14 +85,18 @@ function openedMessage(
   report: PerformanceReport,
 ): string {
   const p = ev.position;
+  const isPaper = ev.detail === "paper";
   const sig = p.signal as { maxPumpX?: number; fromDEX?: string; nVibeSignal?: number; walletBuyCount?: number; totalBuySol?: number };
   const lines: string[] = [
-    "\u{1F7E2} **Position Opened**",
+    isPaper ? "\u{1F4DD} **Paper Position Opened**" : "\u{1F7E2} **Position Opened**",
     "",
     `\u{1F512} Token: \`${p.tokenName}\``,
     `\u{1F4B0} Size: **${p.sizeSol.toFixed(2)} SOL**`,
     `\u{23F0} Time: \`${new Date(p.openedAt).toLocaleTimeString()}\``,
   ];
+  if (isPaper) {
+    lines.push("\u{1F504} Mode: `Paper (no exchange)`");
+  }
 
   if (sig.fromDEX) lines.push(`\u{1F4E1} From: \`${sig.fromDEX}\``);
   if (sig.maxPumpX !== undefined && sig.maxPumpX > 0) {
@@ -134,20 +138,6 @@ function buildExitPrice(
   const exitPrice = computed > 0 ? computed : (exitPriceUsd ?? 0);
   if (exitPrice <= 0) return "";
   return `\u{1F4B4} Exit: \`$${exitPrice.toFixed(8)}\``;
-}
-
-function skippedMessage(ev: any): string {
-  const p = ev.position;
-  const sig = p.signal;
-  const lines: string[] = [
-    "\u{1F7E1} **Buy Skipped \u2014 Paper Mode**",
-    "",
-    `\u{1F512} Token: \`${p.tokenName}\``,
-    `\u{1F4B0} Size: **${p.sizeSol.toFixed(2)} SOL**`,
-  ];
-  if (sig?.fromDEX) lines.push(`\u{1F4E1} From: \`${sig.fromDEX}\``);
-  lines.push(`\u{1F504} Reason: \`LIVE_BUY_ENABLED=false\``);
-  return convert(lines.join("\n"));
 }
 
 function closedMessage(
@@ -299,24 +289,6 @@ class TelegramReporter {
               return closedMessage(ev, this.openCount, getReport());
             } catch (err) {
               console.error("[reporter] Failed to build closed message:", err);
-              return null;
-            }
-          }),
-        )
-        .subscribe((msg) => {
-          if (msg) this.send$.next(msg);
-        }),
-    );
-
-    this.subs.push(
-      positionEvent$
-        .pipe(
-          map((ev) => {
-            if (ev.type !== "skipped") return null;
-            try {
-              return skippedMessage(ev);
-            } catch (err) {
-              console.error("[reporter] Failed to build skipped message:", err);
               return null;
             }
           }),

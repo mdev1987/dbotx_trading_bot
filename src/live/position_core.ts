@@ -229,40 +229,59 @@ export function resetDailyLoss(): void {
  * Returns the new position ID on success, or 0 if rejected/failed.
  */
 export async function openPosition(signal: ParsedSignal): Promise<number> {
-  // Reject if live trading is disabled in config
+  // Paper mode: create a virtual position without calling the exchange
   if (!LIVE_CONFIG.liveBuyEnabled) {
-    console.warn("[live/core] LIVE_BUY_ENABLED is false — rejecting new position");
-    const sizeSol = accountService.computePositionSize(signal);
-    store.emitEvent({
-      type: "skipped",
-      position: {
-        id: 0,
-        orderId: "",
-        pair: signal.lpAddress,
-        token: signal.contractAddress,
-        tokenName: signal.tokenName ?? "",
-        tokenSymbol: "",
-        entryPriceUsd: null,
-        entryCostUsd: null,
-        sizeSol,
-        filledSol: 0,
-        avgFillPriceUsd: null,
-        peakPriceUsd: 0,
-        trailingActive: false,
-        tasks: new Map(),
-        currentProfitPercent: 0,
-        currentProfitUsd: 0,
-        remainingBalance: "0",
-        openedAt: Date.now(),
-        expiresAt: 0,
-        lastUpdateAt: Date.now(),
-        status: "open",
-        closeReason: null,
-        exitPriceUsd: null,
-        signal,
-      },
-    });
-    return 0;
+    console.log("[live/core] LIVE_BUY_ENABLED is false — opening paper position");
+
+    // Simple dedup checks for paper mode
+    const existingPaper = store.getByToken(signal.contractAddress);
+    if (existingPaper && existingPaper.status !== "closed") return 0;
+    if (store.hasPendingBuy(signal.contractAddress)) return 0;
+    if (store.isPairLocked(signal.lpAddress)) return 0;
+
+    const cachedPrice = store.getCachedPrice(signal.lpAddress);
+    const entryPriceUsd = cachedPrice?.priceUsd && cachedPrice.priceUsd > 0
+      ? cachedPrice.priceUsd
+      : null;
+
+    const paperId = store.generateId();
+    const paperOrderId = `paper_${paperId}_${Date.now()}`;
+    const paperSize = 5;
+
+    const position: PositionState = {
+      id: paperId,
+      orderId: paperOrderId,
+      pair: signal.lpAddress,
+      token: signal.contractAddress,
+      tokenName: signal.tokenName ?? "",
+      tokenSymbol: "",
+      entryPriceUsd,
+      entryCostUsd: null,
+      sizeSol: paperSize,
+      filledSol: paperSize,
+      avgFillPriceUsd: null,
+      peakPriceUsd: entryPriceUsd ?? 0,
+      trailingActive: false,
+      tasks: new Map(),
+      currentProfitPercent: 0,
+      currentProfitUsd: 0,
+      remainingBalance: "0",
+      openedAt: Date.now(),
+      expiresAt: Date.now() + LIVE_CONFIG.baseTtlSecs * 1000,
+      lastUpdateAt: Date.now(),
+      status: "open",
+      closeReason: null,
+      exitPriceUsd: null,
+      signal,
+    };
+
+    store.set(position);
+    store.addExposure(paperSize);
+    persistence.savePosition(position);
+    store.emitEvent({ type: "opened", position, detail: "paper" });
+    store.recordBuyTimestamp();
+    accountService.refreshBalance();
+    return paperId;
   }
 
   // Reject if global panic mode is active (e.g. too many API failures)
@@ -431,6 +450,19 @@ export async function closePositionById(
   // Look up the position and bail if already closed or closing
   const pos = store.get(id);
   if (!pos || pos.status === "closed" || pos.status === "closing") return;
+
+  // Paper positions use a fake "paper_" order ID — skip the exchange sell
+  if (pos.orderId.startsWith("paper_")) {
+    store.markClosing(id);
+    const cached = store.getCachedPrice(pos.pair);
+    const exitPrice = cached?.priceUsd && cached.priceUsd > 0
+      ? cached.priceUsd
+      : pos.entryPriceUsd ?? undefined;
+    store.markClosed(id, reason, exitPrice ?? undefined);
+    handlePositionClosed(id);
+    if (cb) cb(`paper_sell_${id}_${Date.now()}`);
+    return;
+  }
 
   // Transition to "closing" to prevent concurrent close attempts
   store.markClosing(id);

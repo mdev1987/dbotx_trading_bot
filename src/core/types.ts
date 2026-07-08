@@ -22,8 +22,7 @@ export type PositionEventType =
   | "closing"
   | "closed"
   | "task_update"
-  | "trailing_triggered"
-  | "skipped";
+  | "trailing_triggered";
 
 /** Full snapshot of a position at a point in time */
 export interface PositionState {
