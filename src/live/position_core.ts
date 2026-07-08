@@ -72,7 +72,7 @@ store.openPositions$.subscribe(() => {
  * This is the virtual balance the bot starts with for paper trading.
  * Increased from the default 5 SOL position size to allow multiple concurrent positions.
  */
-const PAPER_STARTING_BALANCE_SOL = 50;
+const PAPER_STARTING_BALANCE_SOL = 5;
 
 /** Current paper wallet balance (SOL). Starts at PAPER_STARTING_BALANCE_SOL and accrues realized P&L. */
 let _paperBalanceSol = PAPER_STARTING_BALANCE_SOL;
@@ -281,7 +281,13 @@ export async function openPosition(signal: ParsedSignal): Promise<number> {
 
     const paperId = store.generateId();
     const paperOrderId = `paper_${paperId}_${Date.now()}`;
-    const paperSize = 5;
+    const paperSize = accountService.computePositionSize(signal);
+
+    // Check paper balance has enough capital for this position
+    if (_paperBalanceSol < paperSize) {
+      console.warn(`[live/core] Paper balance too low (${_paperBalanceSol.toFixed(2)} SOL) for ${paperSize.toFixed(4)} SOL position`);
+      return 0;
+    }
 
     const position: PositionState = {
       id: paperId,
