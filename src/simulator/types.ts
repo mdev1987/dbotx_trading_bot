@@ -1,7 +1,7 @@
 // API response types — mirrors JSON shapes from servapi.dbotx.com simulator endpoints
 
-import type { ParsedSignal } from "../telegram/telegram_listener";
-import { CONFIG } from "../config";
+import type { ParsedSignal } from "../telegram/telegram_listener";  // Parsed signal type used in PositionState
+import { CONFIG } from "../config";  // Application configuration singleton for default values
 
 /**
  * Token information from the simulator API
@@ -205,6 +205,9 @@ export interface TradeRecord {
 
 /**
  * Generic API response wrapper for simulator endpoints
+ *
+ * All simulator API calls return this shape. The `err` field indicates
+ * whether the request failed, and the payload (if successful) lives in `res`.
  */
 interface SimApiResponse<T> {
   /** Whether the API call returned an error */
@@ -337,8 +340,8 @@ export const EXEC_DEFAULTS: {
   /** Default slippage fraction (e.g., 0.1 = 10%) */
   slippage: number;
 } = {
-  chain: "solana" as const,
-  walletId: "",
-  priorityFee: "" as const,
-  slippage: CONFIG.defaultSlippage,
+  chain: "solana" as const,         // Target blockchain for swap execution
+  walletId: "",                     // Wallet identifier (empty = auto-select)
+  priorityFee: "" as const,         // Priority fee (empty = auto-estimate by API)
+  slippage: CONFIG.defaultSlippage, // Default slippage tolerance fraction from config
 };
