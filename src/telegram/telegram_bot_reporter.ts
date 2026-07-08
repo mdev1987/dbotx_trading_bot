@@ -81,11 +81,12 @@ function winsTotalWinrate(report: PerformanceReport): string {
 
 function openedMessage(
   ev: any,
-  openCount: number,
+  _openCount: number,
   report: PerformanceReport,
 ): string {
   const p = ev.position;
   const isPaper = ev.detail === "paper";
+  const openCount = report.openPositions;
   const sig = p.signal as { maxPumpX?: number; fromDEX?: string; nVibeSignal?: number; walletBuyCount?: number; totalBuySol?: number };
   const lines: string[] = [
     isPaper ? "\u{1F4DD} **Paper Position Opened**" : "\u{1F7E2} **Position Opened**",
@@ -142,9 +143,10 @@ function buildExitPrice(
 
 function closedMessage(
   ev: any,
-  openCount: number,
+  _openCount: number,
   report: PerformanceReport,
 ): string {
+  const openCount = report.openPositions;
   const p = ev.position;
   const profit = p.currentProfitPercent;
   const profitUsd = p.currentProfitUsd;
@@ -269,7 +271,8 @@ class TelegramReporter {
           map((ev) => {
             if (ev.type !== "opened") return null;
             try {
-              return openedMessage(ev, this.openCount, getReport());
+              const report = getReport();
+              return openedMessage(ev, report.openPositions, report);
             } catch (err) {
               console.error("[reporter] Failed to build opened message:", err);
               return null;
@@ -286,7 +289,8 @@ class TelegramReporter {
         .pipe(
           map((ev) => {
             try {
-              return closedMessage(ev, this.openCount, getReport());
+              const report = getReport();
+              return closedMessage(ev, report.openPositions, report);
             } catch (err) {
               console.error("[reporter] Failed to build closed message:", err);
               return null;
@@ -319,7 +323,7 @@ class TelegramReporter {
             ),
             map((report) => {
               if (!report) return null;
-              return summaryMessage(this.openCount, report);
+              return summaryMessage(report.openPositions, report);
             }),
           )
           .subscribe((msg) => {

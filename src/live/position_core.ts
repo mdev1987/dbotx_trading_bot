@@ -688,8 +688,8 @@ export function startTtlChecker(): Subscription {
         const now = Date.now();
 
         for (const pos of positions) {
-          // Skip positions that are already closing/closed or don't have an entry price yet
-          if (pos.status !== "open" || !pos.entryPriceUsd) continue;
+          // Skip positions that are already closing/closed
+          if (pos.status !== "open") continue;
 
           const age = now - pos.openedAt;
           const maxAge = maxTtlSecs * 1000;
