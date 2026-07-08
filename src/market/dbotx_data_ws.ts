@@ -508,8 +508,10 @@ export const pairUpdate$ = dataMessage$.pipe(
 
     // Log raw server field values for debugging pair format mismatches
     if (pair.length > 0) {
+      const maskedPair = pair.length > 14 ? `${pair.slice(0, 6)}...${pair.slice(-4)}` : pair;
+      const maskedToken = token && token.length > 14 ? `${token.slice(0, 6)}...${token.slice(-4)}` : token;
       console.log(
-        `[DBotX] PairUpdate: pair="${pair}" token="${token ?? "?"}" price=${msg.priceUsd ?? msg.result?.priceUsd ?? "?"}`,
+        `[DBotX] PairUpdate: pair="${maskedPair}" token="${maskedToken ?? "?"}" price=${msg.priceUsd ?? msg.result?.priceUsd ?? "?"}`,
       );
     }
 

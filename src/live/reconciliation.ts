@@ -34,6 +34,9 @@ async function reconcile(): Promise<void> {
   const exchangeMap = new Map(exchangeOrders.map((o) => [o.id, o]));
 
   for (const orderId of orderIds) {
+    // Paper positions have no real exchange order — skip reconciliation
+    if (orderId.startsWith("paper_")) continue;
+
     const exOrder = exchangeMap.get(orderId);
     if (!exOrder) {
       console.warn(`[live/reconciliation] Order ${orderId} not found on exchange`);

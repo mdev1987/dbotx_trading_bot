@@ -36,6 +36,7 @@ import { Subscription } from "rxjs";
 import { getLiveDb, loadAllPositions } from "./persistence";
 import { startWatchdog, markWsMessage, markBalanceUpdate, markPriceUpdate } from "./watchdog";
 import { startReconciliation } from "./reconciliation";
+import { maskWalletId, maskAddress } from "../shared/mask";
 
 /** Handle for cleaning up all subscriptions on shutdown. */
 const _subscriptions: Subscription[] = [];
@@ -67,14 +68,14 @@ export async function startLiveTrading(): Promise<void> {
   try {
     const wallet = await resolveConfiguredWallet();
     console.log(
-      `[live/manager] Wallet verified: id=${wallet.id} address=${wallet.address} name=${wallet.name}`,
+      `[live/manager] Wallet verified: id=${maskWalletId(wallet.id)} address=${maskAddress(wallet.address)} name=${wallet.name}`,
     );
 
     /** Check that the wallet address matches config. */
     if (wallet.address !== LIVE_CONFIG.walletAddress) {
       console.warn(
-        `[live/manager] Wallet address mismatch: config says "${LIVE_CONFIG.walletAddress}" ` +
-          `but API returns "${wallet.address}".  Update LIVE_WALLET_ADDRESS.`,
+        `[live/manager] Wallet address mismatch: config says "${maskAddress(LIVE_CONFIG.walletAddress)}" ` +
+          `but API returns "${maskAddress(wallet.address)}". Check LIVE_WALLET_ADDRESS.`,
       );
     }
   } catch (err) {

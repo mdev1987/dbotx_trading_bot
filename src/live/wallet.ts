@@ -12,6 +12,7 @@ import { LIVE_CONFIG } from "./config";
 import { getJson } from "./http";
 import { markBalanceUpdate } from "./watchdog";
 import type { LiveWalletInfo, LiveWalletBalanceResponse, LiveBalance } from "./types";
+import { maskWalletId, maskAddress } from "../shared/mask";
 
 /**
  * Response shape from GET /account/wallets.
@@ -44,8 +45,8 @@ export async function resolveConfiguredWallet(): Promise<LiveWalletInfo> {
   const wallet = wallets.find((w) => w.id === LIVE_CONFIG.walletId);
   if (!wallet) {
     throw new Error(
-      `Wallet ID "${LIVE_CONFIG.walletId}" not found in your DBotX account. ` +
-        `Available wallets: ${wallets.map((w) => `${w.id} (${w.address})`).join(", ")}`,
+      `Wallet ID "${maskWalletId(LIVE_CONFIG.walletId)}" not found. ` +
+        `Available: ${wallets.map((w) => `${maskWalletId(w.id)} (${maskAddress(w.address)})`).join(", ")}`,
     );
   }
   return wallet;

@@ -1,5 +1,6 @@
 import { CONFIG } from "./config";                                          // Application configuration
 import { LIVE_CONFIG } from "./live/config";                                // Live trading configuration
+import { maskWalletId } from "./shared/mask";                               // Wallet ID/address masking
 import {
   startPersistence,
   stopPersistence,
@@ -250,7 +251,7 @@ function startedMessage(): string {
 
   // Live-mode-specific wallet and buy-enable info
   if (CONFIG.liveMode) {
-    lines.push(`\u{1F512} Wallet: \`${process.env.LIVE_WALLET_ID ?? "?"}\``);  // Wallet ID from env
+    lines.push(`\u{1F512} Wallet: \`${maskWalletId(process.env.LIVE_WALLET_ID ?? "?")}\``);  // Wallet ID from env
     const buyEnabled = (process.env.LIVE_BUY_ENABLED ?? "true").toLowerCase() === "true";  // Buy toggle
     lines.push(`\u{1F6E1}\uFE0F Buy: \`${buyEnabled ? "ENABLED" : "PAPER (disabled)"}\``);  // Buy status
   }
