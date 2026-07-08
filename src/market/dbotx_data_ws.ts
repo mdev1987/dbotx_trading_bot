@@ -9,8 +9,9 @@
  * to transform raw message events into typed {@link PairUpdate} objects.
  */
 
-import { BehaviorSubject, fromEvent, interval, Subject } from "rxjs";
+import { BehaviorSubject, from, fromEvent, interval, Subject } from "rxjs";
 import {
+  concatMap,
   filter,
   map,
   share,
@@ -84,41 +85,41 @@ function send(payload: unknown): boolean {
 }
 
 /**
- * Subscribe to real-time market data for a given trading pair.
- *
- * @param pair  - LP address / pair identifier to subscribe to.
- * @param token - Optional token contract address (required by some API versions).
- * @returns `true` if the subscription request was sent, `false` otherwise.
+ * Map of pair address → token address for active signal pairs.
+ * Kept in sync with latestSignalState so we can batch-subscribe via pairsInfo.
  */
-function subscribePair(pair: string, token?: string): boolean {
-  const payload = {
-    method: "subscribe" as const,
-    type: "pairInfo" as const,
-    args: {
-      pair,
-      ...(token ? { token } : {}),
-    },
-  };
-  logger.debug(
-    `[DBotX] Sending subscribe: pair="${pair.slice(0, 16)}…" token="${token?.slice(0, 16) ?? "none"}"`,
-  );
-  return send(payload);
+const _activePairs = new Map<string, string | undefined>();
+
+// Seed from any already-active signals (e.g. after recovery from persistence)
+for (const pair of latestSignalState.activeSignals.keys()) {
+  _activePairs.set(pair, undefined);
 }
 
 /**
- * Unsubscribe from real-time market data for a given trading pair.
+ * Synchronise the active pair list with the server by sending a single
+ * batch `pairsInfo` subscription containing all currently tracked pairs.
  *
- * @param pair - LP address / pair identifier to unsubscribe from.
- * @returns `true` if the unsubscription request was sent, `false` otherwise.
+ * Called on reconnect, new signal, and signal expiry.
  */
-function unsubscribePair(pair: string): boolean {
-  return send({
-    method: "unsubscribe",
-    type: "pairInfo",
+function syncPairs(): boolean {
+  const entries: Array<{ pair: string; token?: string }> = [];
+
+  for (const [pair, token] of _activePairs) {
+    entries.push(token ? { pair, token } : { pair });
+  }
+
+  if (entries.length === 0) return false;
+
+  const payload = {
+    method: "subscribe" as const,
+    type: "pairsInfo" as const,
     args: {
-      pair,
+      pairs: entries,
     },
-  });
+  };
+
+  logger.debug(`[DBotX] Batch subscribe: ${entries.length} pair(s)`);
+  return send(payload);
 }
 
 /**
@@ -332,21 +333,10 @@ connected$
  */
 connected$
   .pipe(
-    // Side-effect: iterate over active signals and subscribe each pair
+    // Side-effect: re-sync all active pairs after reconnect
     tap(() => {
-      let restored = 0;
-
-      // Loop through all pairs that currently have active signals
-      for (const pair of latestSignalState.activeSignals.keys()) {
-        // Subscribe; increment counter only on success
-        if (subscribePair(pair)) {
-          restored++;
-        }
-      }
-
-      // Log summary only if at least one subscription was re-issued
-      if (restored > 0) {
-        console.log(`[DBotX] Re-subscribed ${restored} active pair(s)`);
+      if (syncPairs()) {
+        console.log(`[DBotX] Re-subscribed ${_activePairs.size} active pair(s)`);
       }
     }),
   )
@@ -362,13 +352,10 @@ connected$
  */
 acceptedSignal$
   .pipe(
-    // Side-effect: subscribe the pair of the newly accepted signal
+    // Side-effect: add to tracking and re-sync batch subscription
     tap((signal) => {
-      // Guard: skip if the send failed (e.g., socket not open)
-      if (!subscribePair(signal.lpAddress, signal.contractAddress)) {
-        return;
-      }
-
+      _activePairs.set(signal.lpAddress, signal.contractAddress);
+      syncPairs();
       console.log(`[DBotX] Subscribe ${signal.tokenName}`);
     }),
   )
@@ -384,16 +371,13 @@ acceptedSignal$
  */
 expiredPair$
   .pipe(
-    // Side-effect: unsubscribe each expired pair
+    // Side-effect: remove from tracking and re-sync batch subscription
     tap((pairs) => {
       for (const pair of pairs) {
-        // Guard: skip if the send failed (e.g., socket not open)
-        if (!unsubscribePair(pair)) {
-          continue;
-        }
-
+        _activePairs.delete(pair);
         console.log(`[DBotX] Unsubscribe ${pair}`);
       }
+      syncPairs();
     }),
   )
   .subscribe();
@@ -464,26 +448,12 @@ const dataMessage$ = rawMessage$.pipe(
   // Log ACK messages (subscription confirmations) at debug level
   tap((msg) => {
     if (msg.status === "ack") {
-      logger.debug(
-        `[DBotX] ACK: pair=${msg.pair ?? msg.result?.pair ?? "?"}`,
-      );
+      logger.debug(`[DBotX] ACK: type=${msg.type ?? "?"}`);
     }
   }),
 
   // Drop messages whose status is "ack" (server-side subscription confirmations)
   filter((msg) => msg.status !== "ack"),
-
-  // Log messages dropped for missing pair, then drop them
-  tap((msg) => {
-    if (!msg.pair && !msg.result?.pair) {
-      logger.debug("[DBotX] Dropped (no pair): status=" + msg.status);
-    }
-  }),
-
-  // Drop messages that have no pair identifier at the top level or in result
-  filter((msg) => {
-    return Boolean(msg.pair ?? msg.result?.pair);
-  }),
 
   // Multicast so every derived stream shares the same filtered source
   share(),
@@ -494,47 +464,71 @@ const dataMessage$ = rawMessage$.pipe(
 // -----------------------------------------------------------------------------
 
 /**
- * Internal stream derived from WS pairInfo messages.
- * Used as one source for the merged {@link pairUpdate$} Subject below.
+ * Internal stream derived from WS messages.
+ * Handles two response shapes:
+ * - `pairsInfo`: `result` is an array — iterate by `p`/`tpu`/`tp`
+ * - Single-object: `result` is a record — use `pair`/`result.pair` + `tpu`/`tp`
+ *
+ * Each input message may produce zero, one, or many PairUpdate values.
  */
 const _wsPairUpdate$ = dataMessage$.pipe(
-  // map: transform every raw message into a clean PairUpdate struct
-  map((msg): PairUpdate => {
-    // Pair identifier: prefer top-level, fall back to result wrapper, or empty
-    const pair = msg.pair ?? msg.result?.pair ?? "";
-    const token = msg.token ?? msg.result?.token;
+  concatMap((msg) => {
+    const updates: PairUpdate[] = [];
 
-    // Log raw server field values for debugging pair format mismatches
+    // ── pairsInfo: result is an array of per-pair objects ──────────────
+    if (Array.isArray(msg.result)) {
+      for (const item of msg.result) {
+        const pair = String(item.p ?? "");
+        if (!pair) continue;
+
+        updates.push({
+          pair,
+          token: undefined,
+          priceUsd: parseNumber(item.tpu ?? item.tp),
+          marketCapUsd: parseNumber(item.mp),
+          liquidityUsd: undefined,
+          holders: parseNumber(item.h),
+          timestamp: msg.t ?? Date.now(),
+          raw: msg,
+        });
+      }
+
+      return from(updates);
+    }
+
+    // ── Single-object result (pairInfo / tx / etc.) ────────────────────
+    if (msg.result == null || typeof msg.result !== "object") {
+      return from(updates);
+    }
+
+    const r = msg.result as Record<string, unknown>;
+    const pair = String(msg.pair ?? r.pair ?? "");
+    if (!pair) return from(updates);
+
+    const rawToken = msg.token ?? r.token;
+    const token = rawToken !== undefined && rawToken !== null ? String(rawToken) : undefined;
+
     if (pair.length > 0) {
       const maskedPair = pair.length > 14 ? `${pair.slice(0, 6)}...${pair.slice(-4)}` : pair;
       const maskedToken = token && token.length > 14 ? `${token.slice(0, 6)}...${token.slice(-4)}` : token;
-      const rawPrice = msg.priceUsd ?? msg.result?.priceUsd ?? msg.result?.tpu ?? msg.result?.tp ?? "?";
+      const rawPrice = msg.priceUsd ?? r.priceUsd ?? r.tpu ?? r.tp ?? "?";
       console.log(
         `[DBotX] PairUpdate: pair="${maskedPair}" token="${maskedToken ?? "?"}" price=${rawPrice}`,
       );
     }
 
-    // Server sends price in different fields depending on message type:
-    //   priceUsd — generic price field
-    //   result.tpu — token price in USD (pairInfo messages)
-    //   result.tp  — token price (pairInfo messages)
-    // eslint-disable-next-line object-property-newline
-    return {
+    updates.push({
       pair,
       token,
-
-      // Safely coerce each numeric field; fall back to undefined if unavailable
-      priceUsd: parseNumber(msg.priceUsd ?? msg.result?.priceUsd ?? msg.result?.tpu ?? msg.result?.tp),
-      marketCapUsd: parseNumber(msg.marketCapUsd ?? msg.result?.marketCapUsd),
-      liquidityUsd: parseNumber(msg.liquidityUsd ?? msg.result?.liquidityUsd),
-      holders: parseNumber(msg.holders ?? msg.result?.holders),
-
-      // Use the server timestamp when available, otherwise fall back to now
+      priceUsd: parseNumber(msg.priceUsd ?? r.priceUsd ?? r.tpu ?? r.tp),
+      marketCapUsd: parseNumber(msg.marketCapUsd ?? r.marketCapUsd),
+      liquidityUsd: parseNumber(msg.liquidityUsd ?? r.liquidityUsd),
+      holders: parseNumber(msg.holders ?? r.holders),
       timestamp: msg.t ?? Date.now(),
-
-      // Keep the raw message for debugging
       raw: msg,
-    };
+    });
+
+    return from(updates);
   }),
 
   // Multicast to all downstream convenience streams
@@ -632,7 +626,8 @@ export function currentSocket(): WebSocket | null {
  * @returns `true` if the subscription request was sent successfully.
  */
 export function subscribe(pair: string, token?: string): boolean {
-  return subscribePair(pair, token);
+  _activePairs.set(pair, token);
+  return syncPairs();
 }
 
 /**
@@ -642,7 +637,8 @@ export function subscribe(pair: string, token?: string): boolean {
  * @returns `true` if the unsubscription request was sent successfully.
  */
 export function unsubscribe(pair: string): boolean {
-  return unsubscribePair(pair);
+  _activePairs.delete(pair);
+  return syncPairs();
 }
 
 // -----------------------------------------------------------------------------
