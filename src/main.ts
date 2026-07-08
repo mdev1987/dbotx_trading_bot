@@ -115,24 +115,7 @@ async function startLiveMode(): Promise<BridgeConfig> {
     getReport: () => {                                // Generate a placeholder performance report
       const openCount = liveModule.countOpenPositions();  // Count currently open positions
       if (!LIVE_CONFIG.liveBuyEnabled) {
-        const wins = liveModule.getPaperWins();
-        const losses = liveModule.getPaperLosses();
-        const total = wins + losses;
-        return {
-          totalPositions: total,
-          closedPositions: total,
-          openPositions: openCount,
-          winningTrades: wins,
-          losingTrades: losses,
-          winRate: total > 0 ? wins / total * 100 : 0,
-          totalProfitUsd: liveModule.getPaperRealizedPnLSol(),
-          totalProfitPct: 0,
-          avgProfitPct: 0,
-          avgProfitUsd: total > 0 ? liveModule.getPaperRealizedPnLSol() / total : 0,
-          bestTradePct: 0,
-          worstTradePct: 0,
-          reasons: {},
-        };
+        return liveModule.getPaperReport();
       }
       return {
         totalPositions: 0,                           // Not tracked in live mode yet

@@ -101,6 +101,69 @@ export function getPaperLosses(): number {
   return _paperLosses;
 }
 
+/** Generate a full performance report from closed paper positions. */
+export function getPaperReport(): {
+  totalPositions: number;
+  closedPositions: number;
+  openPositions: number;
+  winningTrades: number;
+  losingTrades: number;
+  winRate: number;
+  totalProfitUsd: number;
+  totalProfitPct: number;
+  avgProfitPct: number;
+  avgProfitUsd: number;
+  bestTradePct: number;
+  worstTradePct: number;
+  reasons: Record<string, number>;
+} {
+  const wins = _paperWins;
+  const losses = _paperLosses;
+  const total = wins + losses;
+  const totalProfitSol = _paperRealizedPnLSol;
+
+  let bestPct = 0;
+  let worstPct = 0;
+  let totalPct = 0;
+  let avgCount = 0;
+  let totalCostSol = 0;
+  const reasons: Record<string, number> = {};
+
+  for (const pos of store.latestPositions.values()) {
+    if (pos.status !== "closed") continue;
+
+    if (pos.closeReason) {
+      reasons[pos.closeReason] = (reasons[pos.closeReason] ?? 0) + 1;
+    }
+
+    totalCostSol += pos.sizeSol;
+
+    if (pos.entryPriceUsd != null && pos.exitPriceUsd != null) {
+      const pct = ((pos.exitPriceUsd - pos.entryPriceUsd) / pos.entryPriceUsd) * 100;
+      if (avgCount === 0 || pct > bestPct) bestPct = pct;
+      if (avgCount === 0 || pct < worstPct) worstPct = pct;
+      totalPct += pct;
+      avgCount++;
+    }
+  }
+
+  return {
+    totalPositions: total,
+    closedPositions: total,
+    openPositions: store.countOpen(),
+    winningTrades: wins,
+    losingTrades: losses,
+    winRate: total > 0 ? (wins / total) * 100 : 0,
+    totalProfitUsd: totalProfitSol,
+    totalProfitPct: totalCostSol > 0 ? (totalProfitSol / totalCostSol) * 100 : 0,
+    avgProfitPct: avgCount > 0 ? totalPct / avgCount : 0,
+    avgProfitUsd: total > 0 ? totalProfitSol / total : 0,
+    bestTradePct: bestPct,
+    worstTradePct: worstPct,
+    reasons,
+  };
+}
+
 /** Observable stream of all position events (opened, updated, closed, etc.). */
 export const positionEvent$: Observable<PositionEvent> = store.positionEvent$;
 
@@ -822,7 +885,7 @@ export function startPricePolling(): Subscription {
 
   console.log(`[live/core] Starting REST price polling every ${tradePairPollMs}ms`);
 
-  return timer(tradePairPollMs, tradePairPollMs)
+  return timer(0, tradePairPollMs)
     .pipe(
       withLatestFrom(store.openPositions$),
       concatMap(async ([, positions]) => {
