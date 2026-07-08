@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "start": "bun run src/entry.ts",
-    "dev": "LOG_LEVEL=DEBUG bun run ./src/entry.ts | tee bot.log",
+    "dev": "LOG_LEVEL=DEBUG bun run ./src/entry.ts",
     "encrypt": "bun run src/crypto/cli_encrypt.ts",
     "decrypt": "bun run src/crypto/cli_decrypt.ts",
     "build": "bun build --compile --minify --sourcemap --bytecode src/entry.ts --outfile dbotx_bot"

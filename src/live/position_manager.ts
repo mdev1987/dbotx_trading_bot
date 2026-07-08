@@ -24,6 +24,7 @@ import { connectTradeResultsWs, disconnectTradeResultsWs } from "./trade_results
 import {
   subscribeToTradeEvents,
   startTtlChecker,
+  startPricePolling,
   subscribeToPriceUpdates,
   recoverOpenPositions,
   resetDailyLoss,
@@ -104,6 +105,10 @@ export async function startLiveTrading(): Promise<void> {
   /** Step 5: Subscribe to price updates for trailing and profit tracking. */
   const priceSub = subscribeToPriceUpdates();
   _subscriptions.push(priceSub);
+
+  /** Step 5b: Start REST API price polling (fallback for broken WS pairInfo feed). */
+  const pricePollSub = startPricePolling();
+  _subscriptions.push(pricePollSub);
 
   /** Step 6: Start the TTL expiry checker. */
   const ttlSub = startTtlChecker();

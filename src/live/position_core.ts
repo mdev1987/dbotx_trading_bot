@@ -1,5 +1,5 @@
 import { Subject, timer, Observable, Subscription } from "rxjs";
-import { filter, map, withLatestFrom, tap } from "rxjs/operators";
+import { filter, map, withLatestFrom, tap, concatMap } from "rxjs/operators";
 import { LIVE_CONFIG } from "./config";
 import type { ParsedSignal } from "../telegram/telegram_listener";
 import type {
@@ -23,7 +23,8 @@ import {
   trailingStopSuccessEvent$,
   tradeFailEvent$,
 } from "./trade_results_ws";
-import { pairUpdate$ } from "../market/dbotx_data_ws";
+import { pairUpdate$, pushPairUpdate } from "../market/dbotx_data_ws";
+import { getJson } from "./http";
 import { isPanicMode, enablePanic } from "./panic";
 import { markPriceUpdate } from "./watchdog";
 import type { DbPositionRow } from "./persistence";
@@ -323,6 +324,14 @@ export async function openPosition(signal: ParsedSignal): Promise<number> {
     store.recordBuyTimestamp();
     _paperBalanceSol -= paperSize;
     accountService.refreshBalance();
+
+    // Async entry price capture from the price cache (same pattern as real path)
+    if (!entryPriceUsd) {
+      capturePaperEntryPrice(paperId).catch((err) => {
+        console.error(`[live/core] Failed to capture paper entry price:`, err);
+      });
+    }
+
     return paperId;
   }
 
@@ -446,6 +455,28 @@ export async function openPosition(signal: ParsedSignal): Promise<number> {
 }
 
 // ── Entry Price Capture ─────────────────────────────────────────────────────
+
+/**
+ * Poll the in-memory price cache until a valid price is available for the
+ * given paper position, then patch the position with that entry price.
+ */
+async function capturePaperEntryPrice(positionId: number): Promise<void> {
+  for (let i = 0; i < LIVE_CONFIG.maxEntryPriceAttempts; i++) {
+    const pos = store.get(positionId);
+    if (!pos || pos.entryPriceUsd != null) return;
+
+    const cached = store.getCachedPrice(pos.pair);
+    if (cached?.priceUsd && cached.priceUsd > 0) {
+      store.patch(positionId, {
+        entryPriceUsd: cached.priceUsd,
+        peakPriceUsd: cached.priceUsd,
+      });
+      return;
+    }
+
+    await new Promise((r) => setTimeout(r, LIVE_CONFIG.entryPricePollDelayMs));
+  }
+}
 
 /**
  * Poll the exchange until the buy order is fully settled, then patch the position
@@ -677,7 +708,7 @@ function handlePositionClosed(id: number): void {
  * Returns a Subscription that should be unsubscribed on shutdown.
  */
 export function startTtlChecker(): Subscription {
-  const { baseTtlSecs, maxTtlSecs, expiryCheckMs } = LIVE_CONFIG;
+  const { baseTtlSecs, maxTtlSecs, expiryCheckMs, minProfitForTtlExtensionPct } = LIVE_CONFIG;
 
   // Poll on a fixed interval (e.g. every 10 s) defined by the config
   return timer(expiryCheckMs, expiryCheckMs)
@@ -686,28 +717,36 @@ export function startTtlChecker(): Subscription {
       withLatestFrom(store.openPositions$),
       tap(([, positions]) => {
         const now = Date.now();
+        const maxAge = maxTtlSecs * 1000;
 
         for (const pos of positions) {
           // Skip positions that are already closing/closed
           if (pos.status !== "open") continue;
 
-          const age = now - pos.openedAt;
-          const maxAge = maxTtlSecs * 1000;
-
           // Enforce the absolute maximum lifetime for any position (hard cap)
-          if (maxTtlSecs > 0 && age >= maxAge) {
+          if (now - pos.openedAt >= maxAge) {
             closePositionById(pos.id, "expired").catch((err) => {
               console.error(`[live/core] TTL hard cap close failed:`, err);
             });
             continue;
           }
 
-          // Enforce the per-position TTL (baseTtlSecs adjusted by the signal's score multiplier)
-          if (now >= pos.expiresAt) {
-            closePositionById(pos.id, "expired").catch((err) => {
-              console.error(`[live/core] TTL close failed:`, err);
-            });
+          // Skip if the position is still within its base TTL
+          if (now < pos.expiresAt) continue;
+
+          // Base TTL has expired — if profitable enough, renew it
+          if (
+            minProfitForTtlExtensionPct > 0 &&
+            pos.currentProfitPercent >= minProfitForTtlExtensionPct
+          ) {
+            store.patch(pos.id, { expiresAt: now + baseTtlSecs * 1000 });
+            continue;
           }
+
+          // Not profitable enough — close by TTL
+          closePositionById(pos.id, "expired").catch((err) => {
+            console.error(`[live/core] TTL close failed:`, err);
+          });
         }
       }),
     )
@@ -749,6 +788,85 @@ export function subscribeToPriceUpdates(): Subscription {
           pos.currentProfitPercent = (currentPrice - pos.entryPriceUsd) / pos.entryPriceUsd;
           pos.currentProfitUsd = pos.currentProfitPercent * pos.sizeSol;
           pos.lastUpdateAt = Date.now();
+        }
+      }),
+    )
+    .subscribe();
+}
+
+// ── REST Price Polling ───────────────────────────────────────────────────────
+
+/** Shape of the pair_info REST API response. */
+interface PairInfoApiData {
+  id: string;
+  token?: string;
+  tokenPrice?: number;
+  rate?: number;
+}
+
+interface PairInfoApiResponse {
+  err: boolean;
+  res: PairInfoApiData | Record<string, never>;
+}
+
+/**
+ * Periodically poll the REST pair_info endpoint for each open position,
+ * parse the current token price (tokenPrice × rate), and push the result
+ * into the shared pairUpdate$ stream so that PnL tracking, trailing monitor,
+ * price cache, and TTL renewal all receive live prices.
+ *
+ * Mirrors the simulator's startTradePairPoll() pattern.
+ */
+export function startPricePolling(): Subscription {
+  const { dataBaseUrl, tradePairPollMs } = LIVE_CONFIG;
+
+  console.log(`[live/core] Starting REST price polling every ${tradePairPollMs}ms`);
+
+  return timer(tradePairPollMs, tradePairPollMs)
+    .pipe(
+      withLatestFrom(store.openPositions$),
+      concatMap(async ([, positions]) => {
+        const open = positions.filter((p) => p.status === "open");
+        if (open.length === 0) return;
+
+        console.log(`[live/core] Price polling ${open.length} open positions...`);
+
+        for (const pos of open) {
+          try {
+            const url = `${dataBaseUrl}/kline/pair_info?chain=solana&pair=${encodeURIComponent(pos.pair)}`;
+            const body = await getJson<PairInfoApiResponse>(url);
+            if (body.err || !body.res || !("id" in body.res)) {
+              console.log(`[live/core] Poll ${pos.tokenName}: no data`);
+              continue;
+            }
+
+            const data = body.res as PairInfoApiData;
+            if (!data.tokenPrice || !data.rate) {
+              console.log(`[live/core] Poll ${pos.tokenName}: missing tokenPrice=${data.tokenPrice} rate=${data.rate}`);
+              continue;
+            }
+
+            const priceUsd = data.tokenPrice * data.rate;
+            if (priceUsd <= 0) continue;
+
+            console.log(`[live/core] Poll ${pos.tokenName}: price=${priceUsd.toFixed(8)} USD`);
+
+            markPriceUpdate();
+            store.updatePriceCache(pos.pair, priceUsd);
+
+            pushPairUpdate({
+              pair: pos.pair,
+              token: pos.token,
+              priceUsd,
+              marketCapUsd: undefined,
+              liquidityUsd: undefined,
+              holders: undefined,
+              timestamp: Date.now(),
+              raw: { source: "rest_poll", pairInfo: data },
+            });
+          } catch (err) {
+            console.log(`[live/core] Poll ${pos.tokenName} failed:`, err instanceof Error ? err.message : err);
+          }
         }
       }),
     )

@@ -48,8 +48,16 @@ export interface WsRawMessage {
     pair?: string;
     /** Token contract address */
     token?: string;
-    /** Price value (may be string or number) */
+    /** Price value (may be string or number) — server may use priceUsd */
     priceUsd?: unknown;
+    /** Token price in USD (pairInfo message field) */
+    tpu?: unknown;
+    /** Token price (pairInfo message field) */
+    tp?: unknown;
+    /** Market price of quote token in USD (pairInfo message field) */
+    mp?: unknown;
+    /** Previous price (pairInfo message field) */
+    pp?: unknown;
     /** Market cap value */
     marketCapUsd?: unknown;
     /** Liquidity value */

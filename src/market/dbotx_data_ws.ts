@@ -9,7 +9,7 @@
  * to transform raw message events into typed {@link PairUpdate} objects.
  */
 
-import { BehaviorSubject, fromEvent, interval } from "rxjs";
+import { BehaviorSubject, fromEvent, interval, Subject } from "rxjs";
 import {
   filter,
   map,
@@ -494,12 +494,10 @@ const dataMessage$ = rawMessage$.pipe(
 // -----------------------------------------------------------------------------
 
 /**
- * Stream of strongly-typed {@link PairUpdate} objects.
- *
- * Picks values from the top-level message fields first, falling back to
- * `msg.result.*` for messages that nest data in the result wrapper.
+ * Internal stream derived from WS pairInfo messages.
+ * Used as one source for the merged {@link pairUpdate$} Subject below.
  */
-export const pairUpdate$ = dataMessage$.pipe(
+const _wsPairUpdate$ = dataMessage$.pipe(
   // map: transform every raw message into a clean PairUpdate struct
   map((msg): PairUpdate => {
     // Pair identifier: prefer top-level, fall back to result wrapper, or empty
@@ -510,18 +508,23 @@ export const pairUpdate$ = dataMessage$.pipe(
     if (pair.length > 0) {
       const maskedPair = pair.length > 14 ? `${pair.slice(0, 6)}...${pair.slice(-4)}` : pair;
       const maskedToken = token && token.length > 14 ? `${token.slice(0, 6)}...${token.slice(-4)}` : token;
+      const rawPrice = msg.priceUsd ?? msg.result?.priceUsd ?? msg.result?.tpu ?? msg.result?.tp ?? "?";
       console.log(
-        `[DBotX] PairUpdate: pair="${maskedPair}" token="${maskedToken ?? "?"}" price=${msg.priceUsd ?? msg.result?.priceUsd ?? "?"}`,
+        `[DBotX] PairUpdate: pair="${maskedPair}" token="${maskedToken ?? "?"}" price=${rawPrice}`,
       );
     }
 
+    // Server sends price in different fields depending on message type:
+    //   priceUsd — generic price field
+    //   result.tpu — token price in USD (pairInfo messages)
+    //   result.tp  — token price (pairInfo messages)
     // eslint-disable-next-line object-property-newline
     return {
       pair,
       token,
 
       // Safely coerce each numeric field; fall back to undefined if unavailable
-      priceUsd: parseNumber(msg.priceUsd ?? msg.result?.priceUsd),
+      priceUsd: parseNumber(msg.priceUsd ?? msg.result?.priceUsd ?? msg.result?.tpu ?? msg.result?.tp),
       marketCapUsd: parseNumber(msg.marketCapUsd ?? msg.result?.marketCapUsd),
       liquidityUsd: parseNumber(msg.liquidityUsd ?? msg.result?.liquidityUsd),
       holders: parseNumber(msg.holders ?? msg.result?.holders),
@@ -537,6 +540,27 @@ export const pairUpdate$ = dataMessage$.pipe(
   // Multicast to all downstream convenience streams
   share(),
 );
+
+/**
+ * Merged Subject that receives PairUpdate objects from both:
+ * 1. The WebSocket pairInfo stream (_wsPairUpdate$)
+ * 2. External REST API polling via {@link pushPairUpdate}
+ *
+ * All downstream consumers (trailing monitor, price updater, etc.) subscribe
+ * to this single Subject and receive updates from both sources transparently.
+ */
+export const pairUpdate$ = new Subject<PairUpdate>();
+
+// Pipe the WS-derived source into the merged Subject
+_wsPairUpdate$.subscribe((update) => pairUpdate$.next(update));
+
+/**
+ * Push a {@link PairUpdate} from an external source (e.g. REST API polling)
+ * into the merged price stream so all subscribers receive it.
+ */
+export function pushPairUpdate(update: PairUpdate): void {
+  pairUpdate$.next(update);
+}
 
 // -----------------------------------------------------------------------------
 // Convenience streams
