@@ -125,7 +125,7 @@ export class LivePersistenceService {
         INSERT INTO live_daily_loss (date, loss_usd)
         VALUES ($date, $loss_usd)
         ON CONFLICT(date) DO UPDATE SET
-          loss_usd = loss_usd + $loss_usd
+          loss_usd = loss_usd + $loss_usd,
           updated_at = (unixepoch() * 1000)
       `).run({
         $date: today,
