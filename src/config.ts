@@ -5,10 +5,11 @@ export interface PartialTpTier {
   at: number;
 }
 
-function required(key: string): string {
-  const val = process.env[key];
+function required(key: string, altKey?: string): string {
+  const val = process.env[key] ?? (altKey ? process.env[altKey] : undefined);
   if (!val) {
-    throw new Error(`[config] Missing required environment variable: ${key}`);
+    const hint = altKey ? ` (also tried ${altKey})` : "";
+    throw new Error(`[config] Missing required environment variable: ${key}${hint}`);
   }
   return val;
 }
@@ -53,7 +54,7 @@ function parsePartialTpTiers(raw: string | undefined): PartialTpTier[] {
 
 export const CONFIG = {
   // ── DBotX API — Connection ──────────────────────────────────────────────
-  dbotxApiKey: required("DBOTX_API_KEY"),
+  dbotxApiKey: required("DBOTX_API_KEY", "DBOTX_API_KEY_SEALED"),
   wsUrl: required("DBOTX_WS_URL"),
   baseUrl: required("DBOTX_BASE_URL"),
   servapiBaseUrl: required("DBOTX_SERVAPI_BASE_URL"),

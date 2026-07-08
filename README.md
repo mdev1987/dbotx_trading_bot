@@ -204,7 +204,7 @@ All settings via environment variables (see `.env.example`).
 | `DBOTX_DATA_BASE_URL` | No | `https://api-data-v1.dbotx.com` | Data REST API base URL (wallet balance) |
 | `DBOTX_SERVAPI_BASE_URL` | Yes | — | Service API base URL |
 
-\* `DBOTX_API_KEY` must be set either in plaintext `.env` or encrypted via `.env.encrypted`. When `.env.encrypted` exists, the bot prompts for the decryption password at startup and loads all env vars into `process.env` before any module reads them.
+\* `DBOTX_API_KEY` must be set either in plaintext `.env` or encrypted via `.env.encrypted`. Config also falls back to `DBOTX_API_KEY_SEALED` if `DBOTX_API_KEY` is unset. When `.env.encrypted` exists, the bot prompts for the decryption password at startup and loads all env vars into `process.env` before any module reads them.
 
 ### Position Sizing & Limits
 
