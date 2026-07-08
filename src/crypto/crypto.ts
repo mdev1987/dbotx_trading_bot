@@ -43,24 +43,37 @@ export function readEncryptedEnvFile(): SealedData | null {
  *   empty lines
  */
 export function loadEnvContentIntoProcess(content: string): void {
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
+  for (const rawLine of content.split("\n")) {
+    const trimmed = rawLine.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
 
     const eqIdx = trimmed.indexOf("=");
     if (eqIdx === -1) continue;
 
     const key = trimmed.slice(0, eqIdx).trim();
-    let value = trimmed.slice(eqIdx + 1).trim();
 
-    if (value.startsWith('"') && value.endsWith('"')) {
-      value = value.slice(1, -1);
-    } else if (value.startsWith("'") && value.endsWith("'")) {
-      value = value.slice(1, -1);
+    let valuePart = trimmed.slice(eqIdx + 1).trim();
+
+    // Strip inline comments (# ...) — but only outside quotes
+    if (valuePart.startsWith('"')) {
+      const end = valuePart.indexOf('"', 1);
+      if (end !== -1) {
+        valuePart = valuePart.slice(1, end);
+      }
+    } else if (valuePart.startsWith("'")) {
+      const end = valuePart.indexOf("'", 1);
+      if (end !== -1) {
+        valuePart = valuePart.slice(1, end);
+      }
+    } else {
+      const commentIdx = valuePart.indexOf("#");
+      if (commentIdx !== -1) {
+        valuePart = valuePart.slice(0, commentIdx).trimEnd();
+      }
     }
 
     if (key) {
-      process.env[key] = value;
+      process.env[key] = valuePart;
     }
   }
 }
