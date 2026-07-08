@@ -114,6 +114,7 @@ function syncPairs(): boolean {
     method: "subscribe" as const,
     type: "pairsInfo" as const,
     args: {
+      pairsInfoInterval: "1m" as const,
       pairs: entries,
     },
   };

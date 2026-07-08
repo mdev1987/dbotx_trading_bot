@@ -147,10 +147,13 @@ export function getPaperReport(): {
     }
   }
 
+  const openCount = store.countOpen();
+  const closedCount = total;
+
   return {
-    totalPositions: total,
-    closedPositions: total,
-    openPositions: store.countOpen(),
+    totalPositions: closedCount + openCount,
+    closedPositions: closedCount,
+    openPositions: openCount,
     winningTrades: wins,
     losingTrades: losses,
     winRate: total > 0 ? (wins / total) * 100 : 0,
