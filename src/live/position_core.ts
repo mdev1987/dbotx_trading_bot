@@ -500,18 +500,19 @@ export async function closePositionById(
     const exitPrice = cached?.priceUsd && cached.priceUsd > 0
       ? cached.priceUsd
       : pos.entryPriceUsd ?? undefined;
+
+    // Pre-compute paper PnL so wallet stats are updated before the
+    // "closed" event fires (Telegram reporter reads them synchronously)
+    const pnlSol = exitPrice != null && pos.entryPriceUsd != null
+      ? ((exitPrice - pos.entryPriceUsd) / pos.entryPriceUsd) * pos.sizeSol
+      : pos.currentProfitPercent * pos.sizeSol;
+    _paperBalanceSol += pos.sizeSol + pnlSol;
+    _paperRealizedPnLSol += pnlSol;
+    if (pnlSol >= 0) _paperWins++;
+    else _paperLosses++;
+
     store.markClosed(id, reason, exitPrice ?? undefined);
     handlePositionClosed(id);
-
-    // Update paper wallet stats
-    const closed = store.get(id);
-    if (closed) {
-      const pnlSol = closed.currentProfitPercent * closed.sizeSol;
-      _paperBalanceSol += closed.sizeSol + pnlSol;
-      _paperRealizedPnLSol += pnlSol;
-      if (pnlSol >= 0) _paperWins++;
-      else _paperLosses++;
-    }
 
     if (cb) cb(`paper_sell_${id}_${Date.now()}`);
     return;
