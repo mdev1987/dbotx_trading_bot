@@ -481,13 +481,22 @@ const _wsPairUpdate$ = dataMessage$.pipe(
         const pair = String(item.p ?? "");
         if (!pair) continue;
 
+        const priceUsd = parseNumber(item.tpu ?? item.tp);
+        const marketCapUsd = parseNumber(item.mp);
+        const holders = parseNumber(item.h);
+
+        const maskedPair = pair.length > 14 ? `${pair.slice(0, 6)}...${pair.slice(-4)}` : pair;
+        console.log(
+          `[DBotX] PairUpdate: pair="${maskedPair}" price=${priceUsd ?? "?"}`,
+        );
+
         updates.push({
           pair,
           token: undefined,
-          priceUsd: parseNumber(item.tpu ?? item.tp),
-          marketCapUsd: parseNumber(item.mp),
+          priceUsd,
+          marketCapUsd,
           liquidityUsd: undefined,
-          holders: parseNumber(item.h),
+          holders,
           timestamp: msg.t ?? Date.now(),
           raw: msg,
         });
