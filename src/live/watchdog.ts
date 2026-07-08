@@ -44,11 +44,18 @@ function checkHealth(): void {
   _lastWatchdogTick = now;
 }
 
-export function startWatchdog(): Subscription {
+export function startWatchdog(
+  hasOpenPositions?: () => boolean,
+): Subscription {
   return timer(LIVE_CONFIG.watchdogIntervalMs, LIVE_CONFIG.watchdogIntervalMs)
     .pipe(
       tap(() => {
         if (isPanicMode()) return;
+
+        // Skip health checks when there are no open positions — stale data is
+        // expected (no WS subscriptions, no price feeds, no balance polling).
+        if (hasOpenPositions && !hasOpenPositions()) return;
+
         checkHealth();
       }),
     )

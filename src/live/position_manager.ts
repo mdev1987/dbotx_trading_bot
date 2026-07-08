@@ -28,6 +28,7 @@ import {
   recoverOpenPositions,
   resetDailyLoss,
   loadDailyLossFromDb,
+  countOpenPositions,
 } from "./position_core";
 import { startTrailingMonitor } from "./trailing_stop";
 import { resolveConfiguredWallet, refreshBalance$ } from "./wallet";
@@ -117,7 +118,7 @@ export async function startLiveTrading(): Promise<void> {
   console.log("[live/manager] Recovery complete");
 
   /** Step 9: Start the watchdog heartbeat monitor. */
-  const watchdogSub = startWatchdog();
+  const watchdogSub = startWatchdog(() => countOpenPositions() > 0);
   _subscriptions.push(watchdogSub);
 
   /** Step 10: Start periodic exchange reconciliation. */
