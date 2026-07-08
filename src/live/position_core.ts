@@ -232,6 +232,36 @@ export async function openPosition(signal: ParsedSignal): Promise<number> {
   // Reject if live trading is disabled in config
   if (!LIVE_CONFIG.liveBuyEnabled) {
     console.warn("[live/core] LIVE_BUY_ENABLED is false — rejecting new position");
+    const sizeSol = accountService.computePositionSize(signal);
+    store.emitEvent({
+      type: "skipped",
+      position: {
+        id: 0,
+        orderId: "",
+        pair: signal.lpAddress,
+        token: signal.contractAddress,
+        tokenName: signal.tokenName ?? "",
+        tokenSymbol: "",
+        entryPriceUsd: null,
+        entryCostUsd: null,
+        sizeSol,
+        filledSol: 0,
+        avgFillPriceUsd: null,
+        peakPriceUsd: 0,
+        trailingActive: false,
+        tasks: new Map(),
+        currentProfitPercent: 0,
+        currentProfitUsd: 0,
+        remainingBalance: "0",
+        openedAt: Date.now(),
+        expiresAt: 0,
+        lastUpdateAt: Date.now(),
+        status: "open",
+        closeReason: null,
+        exitPriceUsd: null,
+        signal,
+      },
+    });
     return 0;
   }
 
