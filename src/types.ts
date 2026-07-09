@@ -50,25 +50,6 @@ export interface PriceUpdate {
   timestamp: number;
 }
 
-export interface ParsedSignal {
-  tokenName: string;
-  contractAddress: string;
-  lpAddress: string;
-  chain: string;
-  initPriceRaw?: string;
-  initPrice?: number;
-  marketCapRaw?: string;
-  marketCapUsd?: number;
-  tokenAddress?: string;
-  maxPumpX?: number;
-  walletBuyCount?: number;
-  totalBuySol?: number;
-  fromDEX?: string;
-  nVibeSignal?: number;
-  type?: string;
-  raw?: string;
-}
-
 export interface PerformanceReport {
   totalPositions: number;
   closedPositions: number;
