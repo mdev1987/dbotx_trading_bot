@@ -7,7 +7,7 @@ import { concatMap, distinctUntilChanged, filter, map } from "rxjs/operators";
 import { CONFIG } from "../config";
 import { isSignalPaused, pauseSignals, resumeSignals } from "./telegram_client";
 
-import type { PerformanceReport } from "../types";
+import type { PerformanceReport } from "../dbotx/types";
 
 /* -------------------------------------------------------------------------- */
 /*                            Telegram Bot Instance                           */
@@ -200,6 +200,13 @@ export class TelegramReporter {
     this.callbacks = callbacks;
   }
 
+  /**
+   * Returns true when reporter callbacks have been injected.
+   */
+  private get isWired(): boolean {
+    return this.callbacks !== undefined;
+  }
+
   /* ------------------------------------------------------------------------ */
   /*                              Lifecycle                                   */
   /* ------------------------------------------------------------------------ */
@@ -222,6 +229,13 @@ export class TelegramReporter {
       return;
     }
 
+    if (!this.isWired) {
+      throw new Error(
+        "TelegramReporter.start() called before wire(). " +
+          "Call reporter.wire(callbacks) first.",
+      );
+    }
+
     /* ---------------------------------------------------------------------- */
     /* Outgoing message queue                                                  */
     /* ---------------------------------------------------------------------- */
@@ -234,7 +248,7 @@ export class TelegramReporter {
            *
            * Prevents Telegram Bot API flooding and preserves message order.
            */
-          concatMap((message) => this.sendWithRetry(message)),
+          concatMap((message) => this.sendWithRetry(convert(message))),
         )
         .subscribe(),
     );

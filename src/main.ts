@@ -1,224 +1,155 @@
-import { CONFIG } from "./config";
 import {
-  startTelegramListener, stopTelegramListener, resetTelegramClient,
-  startReporter, stopReporter, sendMessage,
-  getTelegramClient, reporter,
-} from "./telegram";
-import { startBot, recoverOpenPositions, getReport } from "./bot";
-import { connectTradeResultsWs, disconnectTradeResultsWs } from "./dbotx";
-import { timer, Subscription } from "rxjs";
-import { tap } from "rxjs/operators";
-import { convert } from "telegram-markdown-v2";
+  startTelegramListener,
+  stopTelegramListener,
+  acceptedSignal$,
+  expiredPair$,
+} from "./telegram/telegram_client";
 
-function maskAddress(addr: string, prefixLen = 6, suffixLen = 4): string {
-  if (addr.length <= prefixLen + suffixLen + 3) return addr;
-  return `${addr.slice(0, prefixLen)}...${addr.slice(-suffixLen)}`;
-}
+import type { PerformanceReport } from "./dbotx/types";
+import {
+  connectDataWs,
+  disconnectDataWs,
+  priceUpdate$,
+  subscribePair,
+  unsubscribePair,
+} from "./dbotx/dbotx_data_ws";
+import { TelegramReporter } from "./telegram/telegram_bot";
+import { EMPTY } from "rxjs";
 
-function maskWalletId(id: string | number): string {
-  return maskAddress(String(id), 4, 4);
-}
+async function main(): Promise<void> {
+  console.clear();
 
-let _shuttingDown = false;
-let _tgWatchdogSub: Subscription | undefined;
+  console.log("======================================");
+  console.log(" DBotX Data Integration Test");
+  console.log("======================================");
 
-async function start(): Promise<void> {
-  try {
-    await startTelegramListener();
-  } catch (err) {
-    console.error("[main] Telegram listener failed to start:", err);
-  }
+  //
+  // Reporter
+  //
 
-  startBot();
+  const reporter = new TelegramReporter();
 
-  try {
-    await recoverOpenPositions();
-  } catch (err) {
-    console.error("[main] Recovery failed:", err);
-  }
+  reporter.wire({
+    getReport: (): PerformanceReport => ({
+      openPositions: 0,
+      closedPositions: 0,
+      totalPositions: 0,
+      winningTrades: 0,
+      losingTrades: 0,
+      winRate: 0,
+      totalProfitPct: 0,
+      totalProfitUsd: 0,
+      bestTradePct: 0,
+      worstTradePct: 0,
+      reasons: {},
+      avgProfitPct: 0,
+      avgProfitUsd: 0,
+    }),
 
-  startReporter();
-  connectTradeResultsWs();
-  startTelegramWatchdog();
+    getBalanceStr: () => "Test Mode",
 
-  await sendStartedMessage();
-}
+    openPositions$: EMPTY,
+    positionEvent$: EMPTY,
+    positionClosed$: EMPTY,
+  });
 
-// ── Message Formatting ────────────────────────────────────────────────────
+  reporter.start();
 
-function fmtDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return s > 0 ? `${m}m ${s}s` : `${m}m`;
-}
+  //
+  // DBotX Market Data
+  //
 
-function startedMessage(): string {
-  const modeLabel = CONFIG.liveMode ? "Live" : "Simulate";
-  const modeIcon = CONFIG.liveMode ? "\u{1F4E1}" : "\u{1F9EA}";
-  const lines: string[] = [
-    `\u{1F680} **Bot Started**`,
-    "",
-    `Mode: ${modeIcon} \`${modeLabel}\``,
-  ];
+  connectDataWs();
 
-  if (CONFIG.liveMode) {
-    lines.push(`\u{1F512} Wallet: \`${maskWalletId(CONFIG.walletId || "?")}\``);
-    lines.push(`\u{1F6E1}\uFE0F Buy: \`${CONFIG.liveBuyEnabled ? "ENABLED" : "PAPER (disabled)"}\``);
-  }
+  //
+  // Telegram MTProto
+  //
 
-  lines.push(`\u{1F4CC} Max Positions: \`${CONFIG.maxPositions}\``);
-  lines.push(
-    `\u{1F4B0} Position: \`${CONFIG.positionSize.toFixed(2)} SOL\` ` +
-    `(min \`${CONFIG.minPositionSol.toFixed(2)}\` / ` +
-    `max \`${CONFIG.maxPositionSol.toFixed(2)}\` ` +
-    `risk \u{2264}\`${CONFIG.maxRiskPct.toFixed(1)}%\` of balance)`,
+  await startTelegramListener();
+
+  reporter.sendMessage(
+    "🟢 Integration test started.\nListening for trading signals...",
   );
 
-  const channelMode = CONFIG.telegramChannelUserName;
-  if (channelMode === "avesolanatokenscanner" || channelMode === "avesignalmonitor") {
-    lines.push(
-      `\u{23F0} Base TTL: \`${fmtDuration(CONFIG.baseTtlSecs)}\`` +
-      (CONFIG.minProfitForTtlExtensionPct > 0
-        ? ` \u{1F504} renew \u{2265}\`${(CONFIG.minProfitForTtlExtensionPct * 100).toFixed(1)}%\``
-        : "") +
-      ` | Max: \`${fmtDuration(CONFIG.maxTtlSecs)}\``,
+  //
+  // New trading signal
+  //
+
+  acceptedSignal$.subscribe((signal) => {
+    console.log();
+    console.log("==================================");
+    console.log("NEW SIGNAL");
+    console.log("==================================");
+
+    console.table({
+      Token: signal.Token,
+      Pair: signal.LP,
+      Contract: signal.CA,
+      MarketCap: signal.marketCapUSD,
+    });
+
+    subscribePair(signal.LP!, signal.CA!);
+
+    reporter.sendMessage(
+      [
+        "🟢 New Signal",
+        "",
+        `Token: ${signal.Token}`,
+        `Pair: ${signal.LP}`,
+        `Contract: ${signal.CA}`,
+        `Market Cap: $${signal.marketCapUSD}`,
+      ].join("\n"),
     );
-  }
+  });
 
-  lines.push("", "**Exit Settings**");
+  //
+  // Remove expired subscriptions
+  //
 
-  if (channelMode === "avesignalmonitor") {
-    lines.push(`\u{1F7E2} TP: \`from signal maxPumpX\``);
-  }
-  if (CONFIG.stopLossPct) {
-    lines.push(`\u{1F534} Stop Loss: \`${(CONFIG.stopLossPct * 100).toFixed(1)}%\``);
-  }
-  if (CONFIG.partialTpTiers.length > 0) {
-    const tiers = CONFIG.partialTpTiers.map((t) => `${(t.pct * 100).toFixed(0)}%@${(t.at * 100).toFixed(0)}%`).join(", ");
-    lines.push(`\u{1F7E2} Partial TP: \`${tiers}\``);
-  }
-  if (CONFIG.backstopTpPct) {
-    lines.push(`\u{1F7E2} Backstop TP: \`${(CONFIG.backstopTpPct * 100).toFixed(0)}%\``);
-  }
-  if (CONFIG.trailingDistancePct) {
-    lines.push(
-      `\u{1F7E1} Trailing: \`${(CONFIG.trailingActivationPct * 100).toFixed(0)}%\` activation, ` +
-      `\`${(CONFIG.trailingDistancePct * 100).toFixed(0)}%\` distance`,
-    );
-  }
+  expiredPair$.subscribe((pairs) => {
+    for (const pair of pairs) {
+      unsubscribePair(pair);
 
-  return convert(lines.join("\n"));
-}
-
-async function sendStartedMessage(): Promise<void> {
-  try { await sendMessage(startedMessage()); } catch { /* best-effort */ }
-}
-
-async function sendStoppedMessage(error?: string): Promise<void> {
-  try {
-    const lines: string[] = [];
-    if (error) {
-      lines.push(`\u{1F4A5} **Bot Crashed**`, "", `Error: \`${error}\``, "");
-    } else {
-      lines.push(`\u{1F6D1} **Bot Stopped**`, "");
+      console.log(`[WS] Unsubscribed ${pair}`);
     }
-    const report = getReport();
-    const balIcon = report.totalProfitUsd >= 0 ? "\u{1F7E2}" : "\u{1F534}";
-    lines.push(`\u{1F4CA} **Summary**`);
-    lines.push(`\u{1F4CB} Total: \`${report.totalPositions}\``);
-    lines.push(`\u{1F4CC} Open: \`${report.openPositions}\``);
-    lines.push(`\u{2705} Closed: \`${report.closedPositions}\``);
-    lines.push(
-      `\u{1F3C6} Wins: \`${report.winningTrades}\` / \`${report.losingTrades}\` (\`${report.winRate.toFixed(1)}%\`)`,
+  });
+
+  //
+  // Live market price
+  //
+
+  priceUpdate$.subscribe((price) => {
+    console.log(`[PRICE] ${price.token}  $${price.priceUsd.toFixed(10)}`);
+
+    reporter.sendMessage(
+      [
+        "📈 Price Update",
+        "",
+        `Token: ${price.token}`,
+        `Price: $${price.priceUsd}`,
+      ].join("\n"),
     );
-    lines.push(
-      `${balIcon} Total PnL: \`${report.totalProfitPct.toFixed(2)}%\` (\`$${report.totalProfitUsd.toFixed(2)}\`)`,
-    );
-    if (Object.keys(report.reasons).length > 0) {
-      lines.push("", "**Close Reasons**");
-      for (const [r, count] of Object.entries(report.reasons)) {
-        lines.push(`  ${r}: \`${count}\``);
-      }
-    }
-    await sendMessage(convert(lines.join("\n")));
-  } catch { /* best-effort */ }
+  });
+
+  //
+  // Shutdown
+  //
+
+  process.on("SIGINT", async () => {
+    console.log();
+    console.log("Stopping...");
+
+    disconnectDataWs();
+
+    await stopTelegramListener();
+    await reporter.sendMessage("🟥 Integration test stopped.");
+    reporter.stop();
+
+    process.exit(0);
+  });
+
+  console.log();
+  console.log("Ready.");
 }
 
-// ── Telegram Watchdog ──────────────────────────────────────────────────────
-
-function startTelegramWatchdog(): void {
-  _tgWatchdogSub = timer(CONFIG.tgRetryDelayMs, 60_000).pipe(
-    tap(async () => {
-      if (_shuttingDown) return;
-      try {
-        const client = getTelegramClient();
-        const ok = await client.checkAuthorization();
-        if (!ok) {
-          console.warn("[watchdog] Telegram not authorized — restarting");
-          await restartTelegram();
-        }
-      } catch (err) {
-        console.warn("[watchdog] Telegram health check failed — restarting:", err);
-        await restartTelegram();
-      }
-    }),
-  ).subscribe();
-}
-
-async function restartTelegram(): Promise<void> {
-  try { await stopTelegramListener(); } catch { /* ok */ }
-  resetTelegramClient();
-  await new Promise((r) => setTimeout(r, 2000));
-  try { await startTelegramListener(); } catch (err) {
-    console.error("[watchdog] Telegram restart failed:", err);
-  }
-}
-
-// ── Shutdown ───────────────────────────────────────────────────────────────
-
-async function shutdown(error?: string): Promise<void> {
-  if (_shuttingDown) return;
-  _shuttingDown = true;
-
-  console.log("\n[main] Shutting down...");
-  await sendStoppedMessage(error);
-
-  _tgWatchdogSub?.unsubscribe();
-  stopReporter();
-  disconnectTradeResultsWs();
-  await stopTelegramListener().catch(() => {});
-
-  const report = getReport();
-  console.log("=".repeat(50));
-  console.log("PERFORMANCE REPORT");
-  console.log("=".repeat(50));
-  console.log(`Total positions : ${report.totalPositions}`);
-  console.log(`Open           : ${report.openPositions}`);
-  console.log(`Closed         : ${report.closedPositions}`);
-  console.log(`Wins           : ${report.winningTrades}`);
-  console.log(`Losses         : ${report.losingTrades}`);
-  console.log(`Win rate       : ${report.winRate.toFixed(1)}%`);
-  console.log(`Total PnL      : $${report.totalProfitUsd.toFixed(2)} (${report.totalProfitPct.toFixed(2)}%)`);
-
-  process.exit(error ? 1 : 0);
-}
-
-// ── Bootstrap ──────────────────────────────────────────────────────────────
-
-start().catch((err) => {
-  console.error("[main] Startup failed:", err);
-  process.exit(1);
-});
-
-process.on("SIGINT", () => shutdown());
-process.on("SIGTERM", () => shutdown());
-process.on("unhandledRejection", (reason) => {
-  const msg = reason instanceof Error ? reason.message : String(reason);
-  console.error("[main] Unhandled rejection:", msg);
-  shutdown(msg);
-});
-process.on("uncaughtException", (err) => {
-  console.error("[main] Uncaught exception:", err.message);
-  shutdown(err.message);
-});
+main().catch(console.error);
