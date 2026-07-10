@@ -2,17 +2,15 @@ import {
   startTelegramListener,
   stopTelegramListener,
   acceptedSignal$,
-  expiredPair$,
 } from "./telegram/telegram_client";
 
-import type { PerformanceReport } from "./dbotx/types";
 import {
   connectDataWs,
   disconnectDataWs,
   priceUpdate$,
-  subscribePair,
-  unsubscribePair,
 } from "./dbotx/dbotx_data_ws";
+import type { PerformanceReport } from "./dbotx/types";
+
 import { TelegramReporter } from "./telegram/telegram_bot";
 import { EMPTY } from "rxjs";
 
@@ -81,14 +79,7 @@ async function main(): Promise<void> {
     console.log("NEW SIGNAL");
     console.log("==================================");
 
-    console.table({
-      Token: signal.Token,
-      Pair: signal.LP,
-      Contract: signal.CA,
-      MarketCap: signal.marketCapUSD,
-    });
-
-    subscribePair(signal.LP!, signal.CA!);
+    console.dir(signal, { depth: null, colors: true });
 
     reporter.sendMessage(
       [
@@ -103,32 +94,11 @@ async function main(): Promise<void> {
   });
 
   //
-  // Remove expired subscriptions
-  //
-
-  expiredPair$.subscribe((pairs) => {
-    for (const pair of pairs) {
-      unsubscribePair(pair);
-
-      console.log(`[WS] Unsubscribed ${pair}`);
-    }
-  });
-
-  //
   // Live market price
   //
 
   priceUpdate$.subscribe((price) => {
-    console.log(`[PRICE] ${price.token}  $${price.priceUsd.toFixed(10)}`);
-
-    reporter.sendMessage(
-      [
-        "📈 Price Update",
-        "",
-        `Token: ${price.token}`,
-        `Price: $${price.priceUsd}`,
-      ].join("\n"),
-    );
+    console.dir(price, { depth: null, colors: true });
   });
 
   //
@@ -142,7 +112,8 @@ async function main(): Promise<void> {
     disconnectDataWs();
 
     await stopTelegramListener();
-    await reporter.sendMessage("🟥 Integration test stopped.");
+
+    console.log("Integration test stopped.");
     reporter.stop();
 
     process.exit(0);

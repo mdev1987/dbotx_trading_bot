@@ -15,6 +15,7 @@ export interface TokenHolder {
 
 export interface AveScannerSignal {
   Token?: string;
+  // solScanUrl?: string;
 
   CA?: string;
   LP?: string;
@@ -118,7 +119,12 @@ export function parseAveScannerSignal(text: string): AveScannerSignal | null {
     // Basic Information
     // ------------------------------------------------------------
 
-    const Token = capture(/^Token:\s*([^(]+?)\s*\(/m);
+    const tokenMatch = captureGroups(
+      /^Token:\s*(.*?)(?:\s*\((https:\/\/solscan\.io\/token\/[A-Za-z0-9]+)\))?\s*$/m,
+    );
+
+    const Token = tokenMatch?.[1];
+    // const solScan = tokenMatch?.[2];
 
     const CA = capture(/^CA:\s*([1-9A-HJ-NP-Za-km-z]{32,44})$/m);
 
@@ -230,7 +236,7 @@ export function parseAveScannerSignal(text: string): AveScannerSignal | null {
     const tokenHolders: TokenHolder[] = [];
 
     const holderRegex =
-      /^\s*\|_([1-9A-HJ-NP-Za-km-z]{32,44})\s*\([^)]*\)\s*([\d.]+)%$/gm;
+      /^\s*\|_([1-9A-HJ-NP-Za-km-z]{32,44})(?:\s*\([^)]*\))?\s*([\d.]+)%/gm;
 
     for (const match of text.matchAll(holderRegex)) {
       tokenHolders.push({
@@ -279,6 +285,7 @@ export function parseAveScannerSignal(text: string): AveScannerSignal | null {
 
     return {
       Token,
+      // solScanUrl,
       CA,
       LP,
 
