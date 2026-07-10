@@ -1,55 +1,32 @@
-// LP Addresses
-const PAIRS = [
-  "GguaWVjZRWjaaHFigNtqNVC6kSrF78FGPKKUe3KuvkDb",
-  "DP6UmDBuZyQPGt9TUtpyV3cp7XF173QJhUN74tcH9FeT",
-];
+import { Subject } from "rxjs";
 
-// dbotx_price_feed.ts
-// Bun + TypeScript
-//
-// Real-time DBotX trade feed.
-// - Multi-pair support
-// - Auto reconnect
-// - Heartbeat
-// - In-memory pair cache
-// - Calculates execution price from every swap
-// - No RxJS
-// - No EventEmitter
-//
-// Run:
-// bun run dbotx_price_feed.ts
+import { CONFIG } from "../config";
+import type { PriceUpdate } from "./types";
 
 const HEARTBEAT_MS = 30_000;
 const MAX_RECONNECT_MS = 30_000;
 
 interface Tx {
-  p: string; // pair
+  p: string;
   tt: "buy" | "sell";
-  s: number; // SOL amount
-  u: number; // USD amount
-  q: number; // token amount
+  s: number;
+  u: number;
+  q: number;
   t: number;
   tx: string;
 }
 
 interface PairState {
   pair: string;
-
   priceUsd: number;
   priceSol: number;
-
   previousPriceUsd: number;
   previousPriceSol: number;
-
   lastSide: "buy" | "sell";
-
   lastTradeUsd: number;
   lastTradeSol: number;
-
   lastTokenAmount: number;
-
   lastTradeTime: number;
-
   tx: string;
 }
 
@@ -62,28 +39,37 @@ let reconnect: Timer | null = null;
 
 let reconnectDelay = 1000;
 
-const subscribePacket = JSON.stringify({
-  method: "subscribe",
-  type: "tx",
-  args: {
-    pair: PAIRS,
-  },
-});
+const activePairs = new Set<string>();
 
-connect();
+export const priceUpdate$ = new Subject<PriceUpdate>();
 
-function connect() {
-  if (ws) {
-    ws.close();
-    ws = null;
+function buildSubscribePacket() {
+  return JSON.stringify({
+    method: "subscribe",
+    type: "tx",
+    args: { pair: [...activePairs] },
+  });
+}
+
+export function subscribePairs(pairs: string[]): void {
+  for (const pair of pairs) activePairs.add(pair);
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(buildSubscribePacket());
   }
+}
 
-  console.log("Connecting...");
+export function unsubscribePair(pair: string): void {
+  activePairs.delete(pair);
+}
 
-  ws = new WebSocket(WS_URL, {
-    headers: {
-      "x-api-key": API_KEY,
-    },
+export function connectDataWs(): void {
+  if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
+  ws?.close();
+
+  console.log("[DBotX Data] Connecting...");
+
+  ws = new WebSocket(CONFIG.wsUrl, {
+    headers: { "x-api-key": CONFIG.dbotxApiKey },
   });
 
   ws.addEventListener("open", onOpen);
@@ -93,11 +79,11 @@ function connect() {
 }
 
 function onOpen() {
-  console.log("Connected");
+  console.log("[DBotX Data] Connected");
 
   reconnectDelay = 1000;
 
-  ws!.send(subscribePacket);
+  if (activePairs.size > 0) ws!.send(buildSubscribePacket());
 
   if (heartbeat) clearInterval(heartbeat);
 
@@ -107,7 +93,7 @@ function onOpen() {
 }
 
 function onClose() {
-  console.log("Disconnected");
+  console.log("[DBotX Data] Disconnected");
 
   if (heartbeat) {
     clearInterval(heartbeat);
@@ -116,25 +102,22 @@ function onClose() {
 
   if (reconnect) return;
 
-  console.log(`Reconnect in ${reconnectDelay / 1000}s`);
-
   reconnect = setTimeout(() => {
     reconnect = null;
 
     reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_MS);
 
-    connect();
+    connectDataWs();
   }, reconnectDelay);
 }
 
 function onError(error: Event) {
-  console.error(error);
+  console.error("[DBotX Data]", error);
 }
 
 function onMessage(event: MessageEvent) {
   const raw = event.data.toString();
 
-  // Ignore ACK packets
   if (raw.includes('"status":"ack"')) return;
 
   let packet: any;
@@ -154,6 +137,19 @@ function onMessage(event: MessageEvent) {
   for (const trade of trades) {
     processTrade(trade);
   }
+}
+
+export function disconnectDataWs(): void {
+  if (reconnect) {
+    clearTimeout(reconnect);
+    reconnect = null;
+  }
+  if (heartbeat) {
+    clearInterval(heartbeat);
+    heartbeat = null;
+  }
+  ws?.close();
+  ws = null;
 }
 
 function processTrade(trade: Tx) {
@@ -192,6 +188,13 @@ function processTrade(trade: Tx) {
 
     print(state, true);
 
+    priceUpdate$.next({
+      pair: trade.p,
+      token: "",
+      priceUsd,
+      timestamp: trade.t * 1000,
+    });
+
     return;
   }
 
@@ -214,16 +217,12 @@ function processTrade(trade: Tx) {
 
   print(state, false);
 
-  // -------------------------------------------------------
-  // Trading Strategy
-  //
-  // if (state.priceUsd > ...)
-  //      BUY
-  //
-  // if (state.priceUsd < ...)
-  //      SELL
-  //
-  // -------------------------------------------------------
+  priceUpdate$.next({
+    pair: trade.p,
+    token: "",
+    priceUsd,
+    timestamp: trade.t * 1000,
+  });
 }
 
 function print(state: PairState, first: boolean) {

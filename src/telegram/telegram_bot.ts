@@ -7,7 +7,7 @@ import { concatMap, distinctUntilChanged, filter, map } from "rxjs/operators";
 import { CONFIG } from "../config";
 import { isSignalPaused, pauseSignals, resumeSignals } from "./telegram_client";
 
-import type { PerformanceReport } from "../dbotx/types";
+import type { PerformanceReport } from "../data_stream/types";
 
 /* -------------------------------------------------------------------------- */
 /*                            Telegram Bot Instance                           */

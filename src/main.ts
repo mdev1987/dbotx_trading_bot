@@ -1,3 +1,5 @@
+import { Subscription } from "rxjs";
+
 import {
   startTelegramListener,
   stopTelegramListener,
@@ -7,18 +9,28 @@ import {
 import {
   connectDataWs,
   disconnectDataWs,
-  priceUpdate$,
-} from "./dbotx/dbotx_data_ws";
-import type { PerformanceReport } from "./dbotx/types";
+  subscribePairs,
+  priceUpdate$ as dbotxPriceUpdate$,
+} from "./data_stream/dbotx_data_stream";
+
+import {
+  connectPumpStream,
+  disconnectPumpStream,
+  pumpEvent$,
+} from "./data_stream/pumpapi_data_stream";
+
+import type { PerformanceReport } from "./data_stream/types";
 
 import { TelegramReporter } from "./telegram/telegram_bot";
 import { EMPTY } from "rxjs";
+
+const subscriptions: Subscription[] = [];
 
 async function main(): Promise<void> {
   console.clear();
 
   console.log("======================================");
-  console.log(" DBotX Data Integration Test");
+  console.log(" DBotX Trade Bot");
   console.log("======================================");
 
   //
@@ -54,10 +66,16 @@ async function main(): Promise<void> {
   reporter.start();
 
   //
-  // DBotX Market Data
+  // DBotX Data Stream
   //
 
-  connectDataWs();
+  // connectDataWs();
+
+  //
+  // PumpAPI Stream
+  //
+
+  connectPumpStream();
 
   //
   // Telegram MTProto
@@ -65,41 +83,76 @@ async function main(): Promise<void> {
 
   await startTelegramListener();
 
-  reporter.sendMessage(
-    "🟢 Integration test started.\nListening for trading signals...",
-  );
+  reporter.sendMessage("🟢 Bot started.\nListening for trading signals...");
 
   //
   // New trading signal
   //
 
-  acceptedSignal$.subscribe((signal) => {
-    console.log();
-    console.log("==================================");
-    console.log("NEW SIGNAL");
-    console.log("==================================");
+  subscriptions.push(
+    acceptedSignal$.subscribe((signal) => {
+      const token = signal.Token ?? "Unknown";
+      const lpPair = signal.LP ?? "";
+      const ca = signal.CA ?? "";
+      const mcap = signal.marketCapUSD;
 
-    console.dir(signal, { depth: null, colors: true });
+      console.log();
+      console.log("==================================");
+      console.log(`NEW SIGNAL: ${token}`);
+      console.log("==================================");
+      console.dir(signal, { depth: null, colors: true });
 
-    reporter.sendMessage(
-      [
-        "🟢 New Signal",
-        "",
-        `Token: ${signal.Token}`,
-        `Pair: ${signal.LP}`,
-        `Contract: ${signal.CA}`,
-        `Market Cap: $${signal.marketCapUSD}`,
-      ].join("\n"),
-    );
-  });
+      //
+      // Subscribe the LP pair to DBotX price stream
+      //
+
+      if (lpPair) {
+        subscribePairs([lpPair]);
+        console.log(`[Main] Subscribed pair ${lpPair} to DBotX data stream`);
+      }
+
+      //
+      // Report to Telegram bot
+      //
+
+      reporter.sendMessage(
+        [
+          "🟢 New Signal",
+          "",
+          `Token: ${token}`,
+          `CA: \`${ca}\``,
+          `Pair: \`${lpPair}\``,
+          mcap ? `Market Cap: $${mcap.toLocaleString()}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+    }),
+  );
 
   //
-  // Live market price
+  // Price tracking - DBotX
   //
 
-  priceUpdate$.subscribe((price) => {
-    console.dir(price, { depth: null, colors: true });
-  });
+  // subscriptions.push(
+  //   dbotxPriceUpdate$.subscribe((price) => {
+  //     console.log(
+  //       `[Price] ${price.pair.slice(0, 8)} | $${price.priceUsd.toFixed(10)} | ${new Date(price.timestamp).toLocaleTimeString()}`,
+  //     );
+  //   }),
+  // );
+
+  //
+  // Price tracking - PumpAPI
+  //
+
+  subscriptions.push(
+    pumpEvent$.subscribe((event) => {
+      console.log(
+        `[PumpAPI] ${event.action.toUpperCase()} | ${event.mint.slice(0, 8)} | $${event.price}`,
+      );
+    }),
+  );
 
   //
   // Shutdown
@@ -109,11 +162,13 @@ async function main(): Promise<void> {
     console.log();
     console.log("Stopping...");
 
-    disconnectDataWs();
+    for (const sub of subscriptions) sub.unsubscribe();
 
+    //disconnectDataWs();
+    disconnectPumpStream();
     await stopTelegramListener();
 
-    console.log("Integration test stopped.");
+    console.log("Bot stopped.");
     reporter.stop();
 
     process.exit(0);

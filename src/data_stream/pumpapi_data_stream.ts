@@ -1,27 +1,75 @@
-const TOKEN_MINT = "4xUCFcSE3Jys1yHFR8vK84cCtoY6Bmq3rzAovZgCVZ4K";
+import { Subject } from "rxjs";
+import type { PumpEvent } from "./types";
+
 const WS_URL = "wss://stream.pumpapi.io/";
 
-function connect() {
-  const ws = new WebSocket(WS_URL);
+let ws: WebSocket | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let activeMint: string | null = null;
+
+export const pumpEvent$ = new Subject<PumpEvent>();
+
+export function connectPumpStream(tokenMint?: string): void {
+  if (tokenMint) activeMint = tokenMint;
+  if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
+  ws?.close();
+
+  console.log("[PumpAPI] Connecting...");
+
+  ws = new WebSocket(WS_URL);
 
   ws.onopen = () => {
-    console.log("Connected");
+    console.log("[PumpAPI] Connected");
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
   };
 
   ws.onmessage = ({ data }) => {
-    const event = JSON.parse(data as string);
-    if (event.mint !== TOKEN_MINT) return;
-    if (event.action !== "buy" && event.action !== "sell") return;
+    try {
+      const event = JSON.parse(data as string) as Record<string, unknown>;
+      if (activeMint && event.mint !== activeMint) return;
+      if (event.action !== "buy" && event.action !== "sell") return;
 
-    console.log(`${event.action} ${event.price}`);
+      const pumpEvent: PumpEvent = {
+        mint: event.mint as string,
+        action: event.action as "buy" | "sell",
+        price: String(event.price ?? ""),
+        timestamp: Date.now(),
+      };
+
+      pumpEvent$.next(pumpEvent);
+
+      console.log(
+        `[PumpAPI] ${pumpEvent.action.toUpperCase()} | mint:${pumpEvent.mint.slice(0, 8)} | price:${pumpEvent.price}`,
+      );
+    } catch {
+      // skip
+    }
   };
 
-  ws.onerror = console.error;
+  ws.onerror = (error) => {
+    console.error("[PumpAPI]", error);
+  };
 
   ws.onclose = () => {
-    console.log("Reconnecting in 1 second...");
-    setTimeout(connect, 1000);
+    console.log("[PumpAPI] Disconnected");
+    ws = null;
+    if (!reconnectTimer) {
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connectPumpStream();
+      }, 1000);
+    }
   };
 }
 
-connect();
+export function disconnectPumpStream(): void {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  ws?.close();
+  ws = null;
+}
