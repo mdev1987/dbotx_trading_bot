@@ -94,14 +94,39 @@ async function pollLiveOrder(
   );
 }
 
-export const liveApi: TradingApi = {
-  async buy(pair, amountSol, _tokenName, _tokenCA): Promise<SwapOrderResult> {
-    const body = {
-      chain: "solana",
-      pair,
-      walletId: CONFIG.walletId,
-      type: "buy",
-      amountOrPercent: amountSol,
+async function submitLiveBuy(
+  pair: string,
+  amountSol: number,
+): Promise<string> {
+  const body = {
+    chain: "solana",
+    pair,
+    walletId: CONFIG.walletId,
+    type: "buy",
+    amountOrPercent: amountSol,
+    customFeeAndTip: CONFIG.customFeeAndTip,
+    priorityFee: CONFIG.priorityFee,
+    gasFeeDelta: 5,
+    maxFeePerGas: 100,
+    jitoEnabled: CONFIG.jitoEnabled,
+    jitoTip: CONFIG.jitoTip,
+    maxSlippage: CONFIG.maxSlippage,
+    concurrentNodes: CONFIG.concurrentNodes,
+    retries: CONFIG.retries,
+    migrateSellPercent: CONFIG.migrateSellPercent,
+    minDevSellPercent: CONFIG.minDevSellPercent,
+    devSellPercent: CONFIG.devSellPercent,
+    stopEarnGroup: buildPartialTpGroup(),
+    stopLossPercent: CONFIG.stopLossPct,
+    trailingStopGroup: buildTrailingStopGroup(),
+    pnlOrderExpireDelta: Math.min(
+      CONFIG.pnlOrderExpireDeltaMs,
+      CONFIG.baseTtlSecs * 1000,
+    ),
+    pnlOrderExpireExecute: CONFIG.pnlOrderExpireExecute,
+    pnlOrderUseMidPrice: CONFIG.pnlOrderUseMidPrice,
+    pnlCustomConfigEnabled: true,
+    pnlCustomConfig: {
       customFeeAndTip: CONFIG.customFeeAndTip,
       priorityFee: CONFIG.priorityFee,
       gasFeeDelta: 5,
@@ -111,40 +136,26 @@ export const liveApi: TradingApi = {
       maxSlippage: CONFIG.maxSlippage,
       concurrentNodes: CONFIG.concurrentNodes,
       retries: CONFIG.retries,
-      migrateSellPercent: CONFIG.migrateSellPercent,
-      minDevSellPercent: CONFIG.minDevSellPercent,
-      devSellPercent: CONFIG.devSellPercent,
-      stopEarnGroup: buildPartialTpGroup(),
-      stopLossPercent: CONFIG.stopLossPct,
-      trailingStopGroup: buildTrailingStopGroup(),
-      pnlOrderExpireDelta: Math.min(
-        CONFIG.pnlOrderExpireDeltaMs,
-        CONFIG.baseTtlSecs * 1000,
-      ),
-      pnlOrderExpireExecute: CONFIG.pnlOrderExpireExecute,
-      pnlOrderUseMidPrice: CONFIG.pnlOrderUseMidPrice,
-      pnlCustomConfigEnabled: true,
-      pnlCustomConfig: {
-        customFeeAndTip: CONFIG.customFeeAndTip,
-        priorityFee: CONFIG.priorityFee,
-        gasFeeDelta: 5,
-        maxFeePerGas: 100,
-        jitoEnabled: CONFIG.jitoEnabled,
-        jitoTip: CONFIG.jitoTip,
-        maxSlippage: CONFIG.maxSlippage,
-        concurrentNodes: CONFIG.concurrentNodes,
-        retries: CONFIG.retries,
-      },
-    };
+    },
+  };
 
-    const { id } = await apiPost<{ id: string }>(
-      "/automation/swap_order",
-      body,
-    );
+  const { id } = await apiPost<{ id: string }>(
+    "/automation/swap_order",
+    body,
+  );
+  return id;
+}
+
+export const liveApi: TradingApi = {
+  async submitBuy(pair, amountSol, _tokenName, _tokenCA): Promise<string> {
+    const id = await submitLiveBuy(pair, amountSol);
     console.log(`[Live] Buy order submitted: ${id}`);
+    return id;
+  },
 
-    const result = await pollLiveOrder(id);
-    return { ...result, id };
+  async waitForOrder(orderId): Promise<SwapOrderResult> {
+    const result = await pollLiveOrder(orderId);
+    return { ...result, id: orderId };
   },
 
   async sell(pair, amountPercent): Promise<SwapOrderResult> {

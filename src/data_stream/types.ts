@@ -1,3 +1,17 @@
+export enum PriceSource {
+  DBOTX = "dbotx",
+  PUMP = "pump",
+  DEX = "dex",
+}
+
+export interface PriceInfo {
+  token: string;
+  pair?: string;
+  priceUsd: number;
+  source: PriceSource;
+  timestamp: number;
+}
+
 export interface PerformanceReport {
   openPositions: number;
   closedPositions: number;
@@ -48,6 +62,8 @@ export interface Position {
   lastUpdateAt: number;
   currentProfitPct: number;
   partialTierIndex: number;
+  priceSource?: PriceSource;
+  lastPriceTimestamp: number;
 }
 
 export interface SimAccount {

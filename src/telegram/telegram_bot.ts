@@ -83,6 +83,16 @@ export class TelegramReporter {
     return this.callbacks !== undefined;
   }
 
+  /** Convert markdown safely, falling back to raw text on error */
+  private safeConvert(msg: string): string {
+    try {
+      return convert(msg);
+    } catch (e) {
+      console.error("[Reporter] markdown convert error:", e);
+      return msg;
+    }
+  }
+
   start(): void {
     if (this.subscriptions.length > 0) return;
     if (!this.isWired) {
@@ -93,8 +103,15 @@ export class TelegramReporter {
 
     this.subscriptions.push(
       this.sendQueue$
-        .pipe(concatMap((msg) => this.sendWithRetry(convert(msg))))
-        .subscribe(),
+        .pipe(
+          concatMap((msg) => {
+            const converted = this.safeConvert(msg);
+            return this.sendWithRetry(converted);
+          }),
+        )
+        .subscribe({
+          error: (e) => console.error("[Reporter] sendQueue error:", e),
+        }),
     );
 
     this.subscriptions.push(
@@ -138,9 +155,12 @@ export class TelegramReporter {
     console.log("[Reporter] Started");
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
+    // Give the queue a moment to drain before tearing down
+    await new Promise((r) => setTimeout(r, 2000));
     for (const sub of this.subscriptions) sub.unsubscribe();
     this.subscriptions.length = 0;
+    this.sendQueue$.complete();
     bot.stop();
     console.log("[Reporter] Stopped");
   }

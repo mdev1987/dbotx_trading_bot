@@ -5,7 +5,7 @@ import type {
   PerformanceReport,
   Position,
   PositionEvent,
-  PumpEvent,
+  PriceInfo,
   SimAccount,
 } from "../data_stream/types";
 import type { TradingApi } from "./api";
@@ -20,6 +20,12 @@ interface QueuedSignal {
 }
 
 const signalQueue: QueuedSignal[] = [];
+
+/** Synchronous guard: pairs currently being bought (reserved before any await) */
+const pendingPairs = new Set<string>();
+
+/** Synchronous guard: pairs currently being sold/closed */
+const closingPairs = new Set<string>();
 
 const openPositionsSubject = new BehaviorSubject<Position[]>([]);
 const positionEventSubject = new Subject<PositionEvent>();
@@ -41,35 +47,6 @@ let latestAccount: SimAccount = {
   changeAll: 0,
   holdTokens: 0,
 };
-
-/* -------------------------------------------------------------------------- */
-/*  Mutex                                                                     */
-/* -------------------------------------------------------------------------- */
-
-let mutexQueue: Array<() => Promise<void>> = [];
-let mutexBusy = false;
-
-async function mutex<T>(fn: () => Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    mutexQueue.push(async () => {
-      try {
-        resolve(await fn());
-      } catch (e) {
-        reject(e);
-      }
-    });
-    if (!mutexBusy) drainMutex();
-  });
-}
-
-async function drainMutex(): Promise<void> {
-  mutexBusy = true;
-  while (mutexQueue.length > 0) {
-    const next = mutexQueue.shift()!;
-    await next();
-  }
-  mutexBusy = false;
-}
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
@@ -111,9 +88,6 @@ export function enqueueSignal(signal: AveScannerSignal): void {
   );
   if (duplicateIdx !== -1) {
     signalQueue[duplicateIdx] = { signal, timestamp: now };
-    console.log(
-      `[Queue] Replaced duplicate ${signal.Token}, new TTL ${CONFIG.signalQueueTtlSecs}s`,
-    );
     broadcastQueueCount();
     return;
   }
@@ -123,24 +97,17 @@ export function enqueueSignal(signal: AveScannerSignal): void {
   );
   if (expiredIdx !== -1) {
     const removed = signalQueue.splice(expiredIdx, 1)[0];
-    console.log(`[Queue] Dropped expired ${removed.signal.Token} for new ${signal.Token}`);
     signalQueue.push({ signal, timestamp: now });
     broadcastQueueCount();
     return;
   }
 
   if (signalQueue.length >= CONFIG.signalQueueSize) {
-    console.log(
-      `[Queue] Full (${CONFIG.signalQueueSize}), rejecting ${signal.Token}`,
-    );
     return;
   }
 
   signalQueue.push({ signal, timestamp: now });
   broadcastQueueCount();
-  console.log(
-    `[Queue] Enqueued ${signal.Token} (${signalQueue.length}/${CONFIG.signalQueueSize})`,
-  );
 }
 
 export function cleanupExpiredSignals(): void {
@@ -149,9 +116,8 @@ export function cleanupExpiredSignals(): void {
   const before = signalQueue.length;
 
   for (let i = signalQueue.length - 1; i >= 0; i--) {
-    if (now - signalQueue[i].timestamp > ttlMs) {
-      const removed = signalQueue.splice(i, 1)[0];
-      console.log(`[Queue] Expired signal ${removed.signal.Token}, removed`);
+    if (now - signalQueue[i]!.timestamp > ttlMs) {
+      signalQueue.splice(i, 1);
     }
   }
 
@@ -162,7 +128,7 @@ export function getSignalQueueSize(): number {
   return signalQueue.length;
 }
 
-async function tryDequeue(api: TradingApi): Promise<void> {
+function tryDequeue(api: TradingApi): void {
   cleanupExpiredSignals();
 
   const open = [...positions.values()].filter((p) => p.status === "open");
@@ -171,8 +137,7 @@ async function tryDequeue(api: TradingApi): Promise<void> {
 
   const next = signalQueue.shift()!;
   broadcastQueueCount();
-  console.log(`[Queue] Processing queued signal: ${next.signal.Token}`);
-  await openPosition(api, next.signal);
+  openPosition(api, next.signal);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -183,96 +148,119 @@ export async function openPosition(
   api: TradingApi,
   signal: AveScannerSignal,
 ): Promise<Position | null> {
-  return mutex(async () => {
-    const pair = signal.LP;
-    const tokenName = signal.Token ?? "Unknown";
-    const tokenCA = signal.CA ?? "";
+  // ── Synchronous check (atomic, no await before) ──────────────────────
+  const pair = signal.LP;
+  const tokenName = signal.Token ?? "Unknown";
+  const tokenCA = signal.CA ?? "";
 
-    if (!pair) {
-      console.log(`[Position] No LP for ${tokenName}, skipping`);
-      return null;
-    }
+  if (!pair) return null;
 
-    const open = [...positions.values()].filter((p) => p.status === "open");
-    if (open.length >= CONFIG.maxPositions) {
-      console.log(
-        `[Position] Max positions (${CONFIG.maxPositions}) reached, enqueuing ${tokenName}`,
-      );
-      enqueueSignal(signal);
-      return null;
-    }
+  if (
+    pendingPairs.has(pair) ||
+    closingPairs.has(pair) ||
+    positions.has(pair)
+  ) {
+    return null;
+  }
 
-    if (positions.has(pair)) {
-      console.log(`[Position] Already have position for ${pair}, skipping`);
-      return null;
-    }
-
-    if (tokenCA) {
-      const exists = [...positions.values()].some(
-        (p) => p.token.toLowerCase() === tokenCA.toLowerCase(),
-      );
-      if (exists) {
-        console.log(`[Position] Already tracking CA ${tokenCA}, skipping`);
-        return null;
-      }
-    }
-
-    console.log(
-      `[Position] Buying ${tokenName} (${pair}) with ${CONFIG.positionSize} SOL`,
+  if (tokenCA) {
+    const exists = [...positions.values()].some(
+      (p) => p.token.toLowerCase() === tokenCA.toLowerCase(),
     );
+    if (exists) return null;
+  }
 
-    try {
-      const result = await api.buy(
-        pair,
-        CONFIG.positionSize,
-        tokenName,
-        tokenCA,
-      );
+  const open = [...positions.values()].filter((p) => p.status === "open");
+  if (open.length + pendingPairs.size >= CONFIG.maxPositions) {
+    enqueueSignal(signal);
+    return null;
+  }
 
-      const entryPrice = result.priceUsd ?? 0;
-      if (!entryPrice || entryPrice <= 0) {
-        console.error(
-          `[Position] Invalid entry price (${entryPrice}) for ${tokenName}, aborting`,
-        );
-        return null;
-      }
+  // ── Reserve slot (synchronous, atomic) ──────────────────────────────
+  pendingPairs.add(pair);
 
-      const sizeToken = CONFIG.positionSize / entryPrice;
+  console.log(
+    `[Position] Buying ${tokenName} (${pair}) with ${CONFIG.positionSize} SOL`,
+  );
 
-      const position: Position = {
-        id: generateId(),
-        orderId: result.id,
-        pair,
-        token: tokenCA,
-        tokenName,
-        entryPriceUsd: entryPrice,
-        sizeSol: CONFIG.positionSize,
-        sizeToken,
-        openedAt: Date.now(),
-        peakPriceUsd: entryPrice,
-        currentPriceUsd: entryPrice,
-        soldPct: 0,
-        status: "open",
-        lastUpdateAt: Date.now(),
-        currentProfitPct: 0,
-        partialTierIndex: 0,
-      };
+  // ── Phase 1: Submit buy (fast, ~100ms HTTP) ─────────────────────────
+  let orderId: string;
+  try {
+    orderId = await api.submitBuy(pair, CONFIG.positionSize, tokenName, tokenCA);
+  } catch (error) {
+    console.error(`[Position] submitBuy failed for ${tokenName}:`, error);
+    pendingPairs.delete(pair);
+    return null;
+  }
 
-      positions.set(pair, position);
-      broadcastPositions();
+  // ── Phase 2: Poll for completion (slow, ~30s — not blocking other buys) ──
+  let result: import("../data_stream/types").SwapOrderResult;
+  try {
+    result = await api.waitForOrder(orderId);
+  } catch (error) {
+    console.error(`[Position] waitForOrder failed for ${tokenName}:`, error);
+    pendingPairs.delete(pair);
+    return null;
+  }
 
-      positionEventSubject.next({ type: "opened", position });
+  // ── Phase 3: Add position (synchronous re-check) ────────────────────
+  // Re-check conditions; another buy for this pair might have completed first
+  if (!pendingPairs.has(pair) || positions.has(pair)) {
+    console.log(`[Position] Pair ${pair} no longer pending, skipping`);
+    pendingPairs.delete(pair);
+    return null;
+  }
 
-      console.log(
-        `[Position] Opened ${tokenName} @ ${fmtUsd(entryPrice)} | ${CONFIG.positionSize} SOL`,
-      );
+  const entryPrice = result.priceUsd ?? 0;
+  if (!entryPrice || entryPrice <= 0) {
+    console.warn(`[Position] Invalid entry price (${entryPrice}) for ${tokenName}, aborting`);
+    pendingPairs.delete(pair);
+    return null;
+  }
 
-      return position;
-    } catch (error) {
-      console.error(`[Position] Failed to buy ${tokenName}:`, error);
-      return null;
-    }
-  });
+  const openNow = [...positions.values()].filter((p) => p.status === "open");
+  if (openNow.length >= CONFIG.maxPositions) {
+    pendingPairs.delete(pair);
+    enqueueSignal(signal);
+    return null;
+  }
+
+  // API returns price directly in USD (both sim and live)
+  const sizeToken = CONFIG.positionSize / entryPrice;
+
+  const now = Date.now();
+  const position: Position = {
+    id: generateId(),
+    orderId,
+    pair,
+    token: tokenCA,
+    tokenName,
+    entryPriceUsd: entryPrice,
+    sizeSol: CONFIG.positionSize,
+    sizeToken,
+    openedAt: now,
+    peakPriceUsd: entryPrice,
+    currentPriceUsd: entryPrice,
+    soldPct: 0,
+    status: "open",
+    lastUpdateAt: now,
+    currentProfitPct: 0,
+    partialTierIndex: 0,
+    lastPriceTimestamp: now,
+  };
+
+  positions.set(pair, position);
+  pendingPairs.delete(pair);
+  broadcastPositions();
+
+  positionEventSubject.next({ type: "opened", position });
+
+  const ep = entryPrice >= 1 ? `$${entryPrice.toFixed(2)}` : `$${entryPrice.toFixed(10)}`;
+  console.log(
+    `[Position] Opened ${tokenName} @ ${ep} | ${CONFIG.positionSize} SOL`,
+  );
+
+  return position;
 }
 
 export async function closePosition(
@@ -280,88 +268,135 @@ export async function closePosition(
   pair: string,
   reason: string,
 ): Promise<void> {
-  return mutex(async () => {
+  // Synchronous guard: only one close per pair at a time
+  if (closingPairs.has(pair)) return;
+  closingPairs.add(pair);
+
+  try {
     const pos = positions.get(pair);
-    if (!pos || pos.status === "closed") return;
-
-    console.log(`[Position] Closing ${pos.tokenName} (${reason})`);
-
-    try {
-      const remainingPct = 1 - pos.soldPct;
-      if (remainingPct > 0.001) {
-        const result = await api.sell(pair, remainingPct);
-        if (result.priceUsd) pos.closePriceUsd = result.priceUsd;
-      }
-
-      pos.status = "closed";
-      pos.closeReason = reason;
-      pos.closedAt = Date.now();
-      pos.lastUpdateAt = Date.now();
-      pos.currentProfitPct =
-        pos.entryPriceUsd > 0
-          ? ((pos.closePriceUsd ?? pos.currentPriceUsd) -
-              pos.entryPriceUsd) /
-            pos.entryPriceUsd
-          : 0;
-
-      closedPositions.push({ ...pos });
-      positions.delete(pair);
-      broadcastPositions();
-
-      positionEventSubject.next({ type: "closed", position: pos, reason });
-      positionClosedSubject.next({ type: "closed", position: pos, reason });
-
-      console.log(`[Position] Closed ${pos.tokenName} (${reason})`);
-
-      await tryDequeue(api);
-    } catch (error) {
-      console.error(`[Position] Failed to sell ${pos.tokenName}:`, error);
+    if (!pos || pos.status !== "open") {
+      closingPairs.delete(pair);
+      return;
     }
-  });
+
+    // Capture the price that triggered the exit BEFORE any async operations.
+    // A subsequent price tick can update currentPriceUsd during the sell,
+    // so we freeze the exit price here for accurate PnL reporting.
+    // For the Telegram exit price, prefer the price engine snapshot (real market data)
+    // over the simulator's fill price, since the simulator often fills at entry price
+    // regardless of actual market movement.
+    const priceAtExitTrigger = pos.currentPriceUsd;
+
+    const remainingPct = 1 - pos.soldPct;
+    if (remainingPct > 0.001) {
+      try {
+        const result = await api.sell(pair, remainingPct);
+        if (result.priceUsd != null) {
+          pos.closePriceUsd = result.priceUsd;
+        }
+      } catch (error) {
+        closingPairs.delete(pair);
+        return;
+      }
+    }
+
+    pos.status = "closed";
+    pos.closeReason = reason;
+    pos.closedAt = Date.now();
+    pos.lastUpdateAt = Date.now();
+
+    // Prefer the simulator's actual fill price when it reflects real movement.
+    // If the simulator filled at entry price (±1%), it means the simulator's
+    // internal model didn't simulate price impact — fall back to the market
+    // snapshot (priceAtExitTrigger) that actually triggered the exit.
+    const fillPrice = pos.closePriceUsd;
+    const isSimFlat = fillPrice != null && Math.abs(fillPrice / pos.entryPriceUsd - 1) < 0.01;
+    const exitPrice = isSimFlat ? priceAtExitTrigger : (fillPrice ?? priceAtExitTrigger ?? pos.currentPriceUsd);
+    pos.closePriceUsd = exitPrice;
+    pos.currentProfitPct =
+      pos.entryPriceUsd > 0
+        ? (exitPrice - pos.entryPriceUsd) / pos.entryPriceUsd
+        : 0;
+
+    closedPositions.push({ ...pos });
+    positions.delete(pair);
+    closingPairs.delete(pair);
+    broadcastPositions();
+
+    console.log(`[Position] Closed ${pos.tokenName} (${reason})`);
+
+    positionEventSubject.next({ type: "closed", position: pos, reason });
+    positionClosedSubject.next({ type: "closed", position: pos, reason });
+
+    tryDequeue(api);
+  } catch (error) {
+    console.error(`[Position] closePosition error for ${pair}:`, error);
+    closingPairs.delete(pair);
+  }
 }
 
 export async function handlePriceUpdate(
   api: TradingApi,
-  event: PumpEvent,
+  update: PriceInfo,
 ): Promise<void> {
-  return mutex(async () => {
-    const price = parseFloat(event.price);
-    if (!Number.isFinite(price) || price <= 0) return;
+  const now = Date.now();
 
-    const mint = event.mint;
+  for (const pos of positions.values()) {
+    if (pos.status !== "open") continue;
 
-    for (const pos of positions.values()) {
-      if (pos.status !== "open") continue;
+    const match =
+      pos.token.toLowerCase() === update.token.toLowerCase() ||
+      pos.pair.toLowerCase() === update.token.toLowerCase() ||
+      (update.pair != null &&
+        (pos.token.toLowerCase() === update.pair.toLowerCase() ||
+          pos.pair.toLowerCase() === update.pair.toLowerCase()));
 
-      const match =
-        pos.token.toLowerCase() === mint.toLowerCase() ||
-        pos.pair.toLowerCase() === mint.toLowerCase();
+    if (!match) continue;
 
-      if (!match) continue;
+    // Timestamp regression guard
+    if (update.timestamp <= pos.lastPriceTimestamp) continue;
 
-      pos.currentPriceUsd = price;
-      pos.lastUpdateAt = Date.now();
+    const price = update.priceUsd;
+    if (!Number.isFinite(price) || price <= 0) continue;
 
-      if (price > pos.peakPriceUsd) {
-        pos.peakPriceUsd = price;
-      }
-
-      pos.currentProfitPct =
-        pos.entryPriceUsd > 0
-          ? (price - pos.entryPriceUsd) / pos.entryPriceUsd
-          : 0;
-
-      const peakProfitPct =
-        pos.entryPriceUsd > 0
-          ? (pos.peakPriceUsd - pos.entryPriceUsd) / pos.entryPriceUsd
-          : 0;
-
-      await checkStopLoss(api, pos);
-      await checkTrailingStop(api, pos, peakProfitPct);
-      await checkTrailingTP(api, pos, peakProfitPct);
-      await checkPartialTP(api, pos, price);
+    // Reject price spikes from bad data. If a single tick shows a change
+    // beyond the deviation limit (default 80%), it's almost certainly
+    // a garbage price from a misconfigured source, not a real market move.
+    const maxDevPct = CONFIG.maxPriceDeviationPct || 0.8;
+    if (pos.currentPriceUsd > 0) {
+      const change = Math.abs(price - pos.currentPriceUsd) / pos.currentPriceUsd;
+      if (change > maxDevPct) continue;
     }
-  });
+
+    pos.currentPriceUsd = price;
+    pos.lastUpdateAt = now;
+    pos.lastPriceTimestamp = update.timestamp;
+    pos.priceSource = update.source;
+
+    if (price > pos.peakPriceUsd) {
+      pos.peakPriceUsd = price;
+      console.log(`[Position] ${pos.tokenName} new ATH $${price.toFixed(10)}`);
+    }
+
+    pos.currentProfitPct =
+      pos.entryPriceUsd > 0
+        ? (price - pos.entryPriceUsd) / pos.entryPriceUsd
+        : 0;
+
+    const peakProfitPct =
+      pos.entryPriceUsd > 0
+        ? (pos.peakPriceUsd - pos.entryPriceUsd) / pos.entryPriceUsd
+        : 0;
+
+    // Order: Hard SL → Partial TP → Trailing Stop → Trailing TP
+    // All checks run on every price update (no min-hold guard).
+    // BASE_TTL_SECS only applies to TTL expiry (checkExpiredPositions), not to price exits.
+    // No await between checks — closePosition/closingPairs guards prevent duplicates
+    checkStopLoss(api, pos);
+    checkPartialTP(api, pos, price);
+    checkTrailingStop(api, pos, peakProfitPct);
+    checkTrailingTP(api, pos, peakProfitPct);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -373,6 +408,8 @@ async function checkStopLoss(
   pos: Position,
 ): Promise<void> {
   if (!CONFIG.stopLossPct) return;
+  if (pos.status !== "open") return;
+  if (closingPairs.has(pos.pair)) return;
   const slThreshold = -Math.abs(CONFIG.stopLossPct);
   if (pos.currentProfitPct <= slThreshold) {
     await closePosition(api, pos.pair, "stop_loss");
@@ -389,6 +426,8 @@ async function checkTrailingStop(
     CONFIG.trailingDistancePct <= 0
   )
     return;
+  if (pos.status !== "open") return;
+  if (closingPairs.has(pos.pair)) return;
   if (peakProfitPct < CONFIG.trailingActivationPct) return;
 
   const drawdown = peakProfitPct - pos.currentProfitPct;
@@ -403,6 +442,8 @@ async function checkTrailingTP(
   peakProfitPct: number,
 ): Promise<void> {
   if (CONFIG.trailingTpDistancePct <= 0) return;
+  if (pos.status !== "open") return;
+  if (closingPairs.has(pos.pair)) return;
   if (peakProfitPct < CONFIG.trailingTpDistancePct) return;
 
   const drawdown = peakProfitPct - pos.currentProfitPct;
@@ -417,6 +458,8 @@ async function checkPartialTP(
   currentPrice: number,
 ): Promise<void> {
   if (!CONFIG.partialTpEnabled) return;
+  if (pos.status !== "open") return;
+  if (closingPairs.has(pos.pair)) return;
   const tiers = CONFIG.partialTpTiers;
   if (tiers.length === 0) return;
 
@@ -426,7 +469,7 @@ async function checkPartialTP(
       : 0;
 
   while (pos.partialTierIndex < tiers.length) {
-    const tier = tiers[pos.partialTierIndex];
+    const tier = tiers[pos.partialTierIndex]!;
     if (profitPct < tier.at) break;
 
     const remainingPct = 1 - pos.soldPct;
@@ -438,14 +481,10 @@ async function checkPartialTP(
     const tierTarget = tier.pct;
     const sellRatio = Math.min(tierTarget / remainingPct, 1);
 
-    if (sellRatio <= 0.001) {
+    if (sellRatio < 0.01) {
       pos.partialTierIndex++;
       continue;
     }
-
-    console.log(
-      `[Position] Partial TP: selling ${(sellRatio * 100).toFixed(0)}% of remaining ${pos.tokenName} at +${(profitPct * 100).toFixed(2)}%`,
-    );
 
     try {
       const result = await api.sell(pos.pair, sellRatio);
@@ -458,14 +497,7 @@ async function checkPartialTP(
         soldPct: tierTarget,
         profitPct: profitPct,
       });
-
-      if (result.priceUsd) {
-        console.log(
-          `[Position] Partial sell ${pos.tokenName} at ${fmtUsd(result.priceUsd)}`,
-        );
-      }
     } catch (error) {
-      console.error(`[Position] Partial TP sell failed:`, error);
       break;
     }
   }
@@ -483,28 +515,26 @@ async function checkPartialTP(
 }
 
 export async function checkExpiredPositions(api: TradingApi): Promise<void> {
-  return mutex(async () => {
-    const now = Date.now();
+  const now = Date.now();
 
-    for (const pos of [...positions.values()]) {
-      if (pos.status !== "open") continue;
+  for (const pos of [...positions.values()]) {
+    if (pos.status !== "open") continue;
 
-      const ageMs = now - pos.openedAt;
-      const ageSecs = ageMs / 1000;
+    const ageMs = now - pos.openedAt;
+    const ageSecs = ageMs / 1000;
 
-      if (ageSecs < CONFIG.baseTtlSecs) continue;
+    if (ageSecs < CONFIG.baseTtlSecs) continue;
 
-      const isProfitable =
-        CONFIG.minProfitForTtlExtensionPct > 0 &&
-        pos.currentProfitPct >= CONFIG.minProfitForTtlExtensionPct;
+    const isProfitable =
+      CONFIG.minProfitForTtlExtensionPct > 0 &&
+      pos.currentProfitPct >= CONFIG.minProfitForTtlExtensionPct;
 
-      if (isProfitable && ageSecs < CONFIG.maxTtlSecs) {
-        continue;
-      }
-
-      await closePosition(api, pos.pair, "expired");
+    if (isProfitable && ageSecs < CONFIG.maxTtlSecs) {
+      continue;
     }
-  });
+
+    await closePosition(api, pos.pair, "expired");
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -518,7 +548,6 @@ export async function refreshAccountInfo(
     latestAccount = await api.getAccountInfo();
     return latestAccount;
   } catch (error) {
-    console.error("[Position] Failed to fetch account info:", error);
     return latestAccount;
   }
 }
@@ -586,18 +615,9 @@ export function getReport(): PerformanceReport {
 
 export function getBalanceStr(): string {
   const change24 = latestAccount.change24h;
+  const unit = CONFIG.liveMode ? "SOL" : "$";
   return [
-    `💰 Balance: \`${latestAccount.balance.toFixed(2)} SOL\``,
-    `📊 Change: \`${change24 >= 0 ? "+" : ""}${(change24 * 100).toFixed(2)}%\` (24h)`,
-  ].join("\n");
-}
-
-/* -------------------------------------------------------------------------- */
-/*  Utility                                                                   */
-/* -------------------------------------------------------------------------- */
-
-function fmtUsd(value: number): string {
-  if (value >= 1) return `$${value.toFixed(2)}`;
-  if (value >= 0.001) return `$${value.toFixed(6)}`;
-  return `$${value.toFixed(10)}`;
+    `\`${latestAccount.balance.toFixed(2)} ${unit}\``,
+    `${change24 >= 0 ? "+" : ""}${(change24 * 100).toFixed(2)}% (24h)`,
+  ].join(" · ");
 }

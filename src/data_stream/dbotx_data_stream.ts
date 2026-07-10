@@ -186,8 +186,6 @@ function processTrade(trade: Tx) {
 
     states.set(trade.p, state);
 
-    print(state, true);
-
     priceUpdate$.next({
       pair: trade.p,
       token: "",
@@ -215,8 +213,6 @@ function processTrade(trade: Tx) {
 
   state.tx = trade.tx;
 
-  print(state, false);
-
   priceUpdate$.next({
     pair: trade.p,
     token: "",
@@ -225,32 +221,4 @@ function processTrade(trade: Tx) {
   });
 }
 
-function print(state: PairState, first: boolean) {
-  const pct =
-    state.previousPriceUsd === 0
-      ? 0
-      : ((state.priceUsd - state.previousPriceUsd) / state.previousPriceUsd) *
-        100;
 
-  const arrow = first ? "•" : pct > 0 ? "▲" : pct < 0 ? "▼" : "=";
-
-  console.log(
-    [
-      new Date(state.lastTradeTime * 1000).toLocaleTimeString(),
-
-      arrow,
-
-      state.lastSide.toUpperCase().padEnd(4),
-
-      state.pair.slice(0, 8),
-
-      `$${state.priceUsd.toFixed(10)}`,
-
-      `${pct >= 0 ? "+" : ""}${pct.toFixed(4)}%`,
-
-      `Vol:$${state.lastTradeUsd.toFixed(2)}`,
-
-      `${state.lastTokenAmount.toFixed(2)} tokens`,
-    ].join(" | "),
-  );
-}

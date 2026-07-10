@@ -171,6 +171,7 @@ export const CONFIG = {
   defaultGasFeeDelta: number("DEFAULT_GAS_FEE_DELTA", 5),
   defaultMaxFeePerGas: number("DEFAULT_MAX_FEE_PER_GAS", 100),
 
+
   // Mode
   liveMode: process.env.LIVE_MODE?.toLowerCase() === "true",
   liveBuyEnabled: (process.env.LIVE_BUY_ENABLED ?? "true").toLowerCase() === "true",

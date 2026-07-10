@@ -59,10 +59,6 @@ export function connectPumpStream(tokenMint?: string): void {
       };
 
       pumpEvent$.next(pumpEvent);
-
-      console.log(
-        `[PumpAPI] ${pumpEvent.action.toUpperCase()} | mint:${pumpEvent.mint.slice(0, 8)} | price:${pumpEvent.price}`,
-      );
     } catch {
       // skip
     }
