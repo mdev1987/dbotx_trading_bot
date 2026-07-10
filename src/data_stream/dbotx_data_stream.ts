@@ -1,7 +1,7 @@
 import { Subject } from "rxjs";
 
 import { CONFIG } from "../config";
-import type { PriceUpdate } from "./types";
+import { PriceSource, type DbotxEvent } from "./types";
 
 const HEARTBEAT_MS = 30_000;
 const MAX_RECONNECT_MS = 30_000;
@@ -41,7 +41,7 @@ let reconnectDelay = 1000;
 
 const activePairs = new Set<string>();
 
-export const priceUpdate$ = new Subject<PriceUpdate>();
+export const dbotxPriceUpdateEvent$ = new Subject<DbotxEvent>();
 
 function buildSubscribePacket() {
   return JSON.stringify({
@@ -63,7 +63,11 @@ export function unsubscribePair(pair: string): void {
 }
 
 export function connectDataWs(): void {
-  if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
+  if (
+    ws?.readyState === WebSocket.OPEN ||
+    ws?.readyState === WebSocket.CONNECTING
+  )
+    return;
   ws?.close();
 
   console.log("[DBotX Data] Connecting...");
@@ -186,10 +190,11 @@ function processTrade(trade: Tx) {
 
     states.set(trade.p, state);
 
-    priceUpdate$.next({
+    dbotxPriceUpdateEvent$.next({
       pair: trade.p,
       token: "",
       priceUsd,
+      source: PriceSource.DBOTX,
       timestamp: trade.t * 1000,
     });
 
@@ -213,12 +218,11 @@ function processTrade(trade: Tx) {
 
   state.tx = trade.tx;
 
-  priceUpdate$.next({
+  dbotxPriceUpdateEvent$.next({
     pair: trade.p,
     token: "",
     priceUsd,
+    source: PriceSource.DBOTX,
     timestamp: trade.t * 1000,
   });
 }
-
-

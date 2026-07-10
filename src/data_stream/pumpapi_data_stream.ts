@@ -1,5 +1,5 @@
 import { Subject } from "rxjs";
-import type { PumpEvent } from "./types";
+import { PriceSource, type PumpEvent } from "./types";
 
 const WS_URL = "wss://stream.pumpapi.io/";
 const HEARTBEAT_MS = 30_000;
@@ -9,7 +9,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let activeMint: string | null = null;
 
-export const pumpEvent$ = new Subject<PumpEvent>();
+export const pumpApiPriceUpdateEvent$ = new Subject<PumpEvent>();
 
 export function connectPumpStream(tokenMint?: string): void {
   if (tokenMint) activeMint = tokenMint;
@@ -44,7 +44,6 @@ export function connectPumpStream(tokenMint?: string): void {
   ws.onmessage = ({ data }) => {
     try {
       const raw = JSON.parse(data as string);
-
       if (raw?.type === "pong") return;
 
       const event = raw as Record<string, unknown>;
@@ -55,10 +54,11 @@ export function connectPumpStream(tokenMint?: string): void {
         mint: event.mint as string,
         action: event.action as "buy" | "sell",
         price: String(event.price ?? ""),
+        source: PriceSource.PUMPAPI,
         timestamp: Date.now(),
       };
 
-      pumpEvent$.next(pumpEvent);
+      pumpApiPriceUpdateEvent$.next(pumpEvent);
     } catch {
       // skip
     }

@@ -1,5 +1,5 @@
 import { Subscription, timer, from } from "rxjs";
-import { mergeMap, filter } from "rxjs/operators";
+import { mergeMap, filter, tap } from "rxjs/operators";
 
 import { CONFIG } from "./config";
 
@@ -153,11 +153,17 @@ async function main(): Promise<void> {
         mergeMap((update) =>
           from(
             (async () => {
+              // console.log();
+              // console.log("==================================");
+              // console.log(`PRICE UPDATE: ${update.token}`);
+              // console.log("==================================");
+              // console.dir(update, { depth: null, colors: true });
               await handlePriceUpdate(api, update);
             })(),
           ),
         ),
       )
+
       .subscribe(),
   );
 
@@ -169,6 +175,11 @@ async function main(): Promise<void> {
     positionEvent$
       .pipe(filter((ev) => ev.type === "opened"))
       .subscribe((ev) => {
+        console.log();
+        console.log("==================================");
+        console.log(`POSITION OPENED: ${ev.position.token}`);
+        console.log("==================================");
+        console.dir(ev.position, { depth: null, colors: true });
         trackToken(ev.position.token, ev.position.pair);
       }),
   );
@@ -177,6 +188,11 @@ async function main(): Promise<void> {
     positionEvent$
       .pipe(filter((ev) => ev.type === "closed"))
       .subscribe((ev) => {
+        console.log();
+        console.log("==================================");
+        console.log(`POSITION CLOSED: ${ev.position.token}`);
+        console.log("==================================");
+        console.dir(ev.position, { depth: null, colors: true });
         untrackToken(ev.position.token);
       }),
   );

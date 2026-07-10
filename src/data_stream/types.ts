@@ -1,7 +1,7 @@
 export enum PriceSource {
   DBOTX = "dbotx",
-  PUMP = "pump",
-  DEX = "dex",
+  PUMPAPI = "pumpapi",
+  DEXSCREENER = "dexscreener",
 }
 
 export interface PriceInfo {
@@ -12,26 +12,11 @@ export interface PriceInfo {
   timestamp: number;
 }
 
-export interface PerformanceReport {
-  openPositions: number;
-  closedPositions: number;
-  totalPositions: number;
-  winningTrades: number;
-  losingTrades: number;
-  winRate: number;
-  totalProfitPct: number;
-  totalProfitUsd: number;
-  bestTradePct: number;
-  worstTradePct: number;
-  avgProfitPct: number;
-  avgProfitUsd: number;
-  reasons: Record<string, number>;
-}
-
-export interface PriceUpdate {
+export interface DbotxEvent {
   pair: string;
   token: string;
   priceUsd: number;
+  source: PriceSource;
   timestamp: number;
 }
 
@@ -39,31 +24,34 @@ export interface PumpEvent {
   mint: string;
   action: "buy" | "sell";
   price: string;
+  source: PriceSource;
   timestamp: number;
 }
 
-export interface Position {
-  id: string;
-  orderId: string;
-  pair: string;
+export interface DexScreenerEvent {
   token: string;
-  tokenName: string;
-  entryPriceUsd: number;
-  sizeSol: number;
-  sizeToken: number;
-  openedAt: number;
-  peakPriceUsd: number;
-  currentPriceUsd: number;
-  soldPct: number;
-  status: "open" | "closed";
-  closeReason?: string;
-  closePriceUsd?: number;
-  closedAt?: number;
-  lastUpdateAt: number;
-  currentProfitPct: number;
-  partialTierIndex: number;
-  priceSource?: PriceSource;
-  lastPriceTimestamp: number;
+  pair: string;
+  priceUsd: number;
+  source: PriceSource;
+  timestamp: number;
+}
+
+export interface TrackedToken {
+  pair: string;
+  timestamp: number;
+}
+
+export interface DexPair {
+  chainId: string;
+  dexId: string;
+  pairAddress: string;
+  baseToken: { address: string; symbol: string; name: string };
+  quoteToken: { address: string; symbol: string };
+  priceUsd: string;
+  priceNative: string;
+  liquidity?: { usd?: number };
+  fdv?: number;
+  marketCap?: number;
 }
 
 export interface SimAccount {
