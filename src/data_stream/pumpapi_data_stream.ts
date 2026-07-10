@@ -2,16 +2,22 @@ import { Subject } from "rxjs";
 import type { PumpEvent } from "./types";
 
 const WS_URL = "wss://stream.pumpapi.io/";
+const HEARTBEAT_MS = 30_000;
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let activeMint: string | null = null;
 
 export const pumpEvent$ = new Subject<PumpEvent>();
 
 export function connectPumpStream(tokenMint?: string): void {
   if (tokenMint) activeMint = tokenMint;
-  if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
+  if (
+    ws?.readyState === WebSocket.OPEN ||
+    ws?.readyState === WebSocket.CONNECTING
+  )
+    return;
   ws?.close();
 
   console.log("[PumpAPI] Connecting...");
@@ -24,11 +30,24 @@ export function connectPumpStream(tokenMint?: string): void {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = setInterval(() => {
+      try {
+        ws?.send(JSON.stringify({ type: "ping" }));
+      } catch {
+        // ignore
+      }
+    }, HEARTBEAT_MS);
   };
 
   ws.onmessage = ({ data }) => {
     try {
-      const event = JSON.parse(data as string) as Record<string, unknown>;
+      const raw = JSON.parse(data as string);
+
+      if (raw?.type === "pong") return;
+
+      const event = raw as Record<string, unknown>;
       if (activeMint && event.mint !== activeMint) return;
       if (event.action !== "buy" && event.action !== "sell") return;
 
@@ -56,6 +75,12 @@ export function connectPumpStream(tokenMint?: string): void {
   ws.onclose = () => {
     console.log("[PumpAPI] Disconnected");
     ws = null;
+
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+
     if (!reconnectTimer) {
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
@@ -69,6 +94,10 @@ export function disconnectPumpStream(): void {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
+  }
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
   }
   ws?.close();
   ws = null;

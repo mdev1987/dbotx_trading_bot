@@ -27,3 +27,51 @@ export interface PumpEvent {
   price: string;
   timestamp: number;
 }
+
+export interface Position {
+  id: string;
+  orderId: string;
+  pair: string;
+  token: string;
+  tokenName: string;
+  entryPriceUsd: number;
+  sizeSol: number;
+  sizeToken: number;
+  openedAt: number;
+  peakPriceUsd: number;
+  currentPriceUsd: number;
+  soldPct: number;
+  status: "open" | "closed";
+  closeReason?: string;
+  closePriceUsd?: number;
+  closedAt?: number;
+  lastUpdateAt: number;
+  currentProfitPct: number;
+  partialTierIndex: number;
+}
+
+export interface SimAccount {
+  balance: number;
+  change24h: number;
+  changeAll: number;
+  holdTokens: number;
+}
+
+export interface SwapOrderResult {
+  id: string;
+  state: string;
+  type?: string;
+  pair?: string;
+  priceUsd?: number;
+  totalUsd?: number;
+  sendAmount?: string;
+  receiveAmount?: string;
+}
+
+export interface PositionEvent {
+  type: "opened" | "closed" | "partial_sold";
+  position: Position;
+  soldPct?: number;
+  profitPct?: number;
+  reason?: string;
+}
