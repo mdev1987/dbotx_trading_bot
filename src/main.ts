@@ -6,7 +6,7 @@ import { simulatorTrading } from "./trading/simulator/simulator";
 
 import type {
   OrderResult,
-  SimulatorAccount,
+  TradingAccount,
   TradingApi,
 } from "./trading/types";
 
@@ -50,14 +50,16 @@ export async function buy(
 export async function sell(
   pair: string,
   percentage: number,
+  tokenName: string,
+  token: string,
 ): Promise<OrderResult> {
-  return trading.sell(pair, percentage);
+  return trading.sell(pair, percentage, tokenName, token);
 }
 
 /**
  * Retrieve simulator account information.
  */
-export async function getAccount(): Promise<SimulatorAccount> {
+export async function getAccount(): Promise<TradingAccount> {
   return trading.getAccount();
 }
 

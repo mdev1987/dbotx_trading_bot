@@ -17,45 +17,13 @@ import {
   refreshSimulatorAccount,
   getSimulatorAccount,
   resetSimulatorAccount,
-  type SimulatorAccount,
 } from "./simulator_account";
 
-export interface TradingApi {
-  /**
-   * Buy a token.
-   *
-   * Resolves once the trade has completed.
-   */
-  buy(
-    pair: string,
-    amountSol: number,
-    tokenName: string,
-    token: string,
-  ): Promise<SimulatorOrder>;
-
-  /**
-   * Sell part or all of a position.
-   *
-   * percentage:
-   *   1.0 = 100%
-   *   0.5 = 50%
-   */
-  sell(
-    pair: string,
-    percentage: number,
-    tokenName: string,
-    token: string,
-  ): Promise<SimulatorOrder>;
-  /**
-   * Refresh and return the latest account state.
-   */
-  getAccount(): Promise<SimulatorAccount>;
-
-  /**
-   * Shutdown the backend.
-   */
-  shutdown(): Promise<void>;
-}
+import type {
+  OrderResult,
+  TradingAccount,
+  TradingApi,
+} from "../types";
 
 /* -------------------------------------------------------------------------- */
 /*                                   Events                                   */
@@ -67,19 +35,6 @@ export { simulatorOrderSubmitted$, simulatorTaskCompleted$, simulatorAccount$ };
 /*                              Internal Helper                               */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Executes a simulator order.
- *
- * Flow:
- *
- * Submit
- *   ↓
- * Wait
- *   ↓
- * Refresh Account
- *   ↓
- * Return OrderResult
- */
 async function execute(
   orderPromise: Promise<SimulatorOrder>,
 ): Promise<SimulatorTask> {
@@ -93,48 +48,41 @@ async function execute(
 }
 
 /* -------------------------------------------------------------------------- */
-/*                                   Trading                                  */
+/*                             Trading Implementation                         */
 /* -------------------------------------------------------------------------- */
 
-export function buy(
-  pair: string,
-  amountSol: number,
-  tokenName: string,
-  token: string,
-): Promise<SimulatorTask> {
-  return execute(submitBuy(pair, amountSol));
-}
+export const simulatorTrading: TradingApi = {
+  async buy(
+    pair: string,
+    amountSol: number,
+    _tokenName: string,
+    _token: string,
+  ): Promise<OrderResult> {
+    return execute(submitBuy(pair, amountSol));
+  },
 
-export function sell(
-  pair: string,
-  percentage: number,
-  tokenName: string,
-  token: string,
-): Promise<SimulatorTask> {
-  return execute(submitSell(pair, percentage));
-}
+  async sell(
+    pair: string,
+    percentage: number,
+    _tokenName: string,
+    _token: string,
+  ): Promise<OrderResult> {
+    return execute(submitSell(pair, percentage));
+  },
 
-/* -------------------------------------------------------------------------- */
-/*                                  Account                                   */
-/* -------------------------------------------------------------------------- */
+  async getAccount(): Promise<TradingAccount> {
+    await refreshSimulatorAccount();
+    return getSimulatorAccount();
+  },
 
-export async function getAccount(): Promise<SimulatorAccount> {
-  await refreshSimulatorAccount();
-
-  return getSimulatorAccount();
-}
-
-/* -------------------------------------------------------------------------- */
-/*                                   Tasks                                    */
-/* -------------------------------------------------------------------------- */
-
-export { getTask };
-export { waitForTaskConfirmed as waitForTask };
+  async shutdown(): Promise<void> {
+    await resetSimulatorAccount();
+  },
+};
 
 /* -------------------------------------------------------------------------- */
-/*                                 Lifecycle                                  */
+/*                              Legacy Exports                                */
 /* -------------------------------------------------------------------------- */
 
-export async function shutdown(): Promise<void> {
-  await resetSimulatorAccount();
-}
+export { getTask } from "./simulator_tasks";
+export { waitForTaskConfirmed as waitForTask } from "./simulator_tasks";

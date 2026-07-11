@@ -1,5 +1,5 @@
 import { Subject } from "rxjs";
-import { CONFIG } from "../../config";
+import { CONFIG, type PartialTpTier } from "../../config";
 import { http } from "./simulator_http";
 
 /* -------------------------------------------------------------------------- */
@@ -55,6 +55,38 @@ interface SubmitOrderResponse {
 export const simulatorOrderSubmitted$ = new Subject<SimulatorOrder>();
 
 /* -------------------------------------------------------------------------- */
+/*                              TP / SL Helpers                               */
+/* -------------------------------------------------------------------------- */
+
+interface StopEarnGroupItem {
+  pricePercent: number;
+  amountPercent: number;
+}
+
+function buildStopEarnGroup(
+  tiers: PartialTpTier[],
+  backstopPct: number,
+): StopEarnGroupItem[] {
+  const group = tiers.map((tier) => ({
+    pricePercent: tier.at,
+    amountPercent: tier.pct,
+  }));
+
+  if (backstopPct > 0) {
+    const totalPct = tiers.reduce((sum, t) => sum + t.pct, 0);
+    const remaining = +(1 - totalPct).toFixed(4);
+    if (remaining > 0) {
+      group.push({
+        pricePercent: backstopPct,
+        amountPercent: remaining,
+      });
+    }
+  }
+
+  return group;
+}
+
+/* -------------------------------------------------------------------------- */
 /*                              Internal Helper                               */
 /* -------------------------------------------------------------------------- */
 
@@ -66,6 +98,14 @@ async function submitOrder(
   pair: string,
   amount: number,
 ): Promise<SimulatorOrder> {
+  const hasPartialTp = CONFIG.partialTpEnabled && CONFIG.partialTpTiers.length > 0;
+  const stopEarnGroup = hasPartialTp
+    ? buildStopEarnGroup(CONFIG.partialTpTiers, CONFIG.backstopTpPct)
+    : null;
+
+  const stopLossPercent =
+    CONFIG.stopLossPct !== 0 ? Math.abs(CONFIG.stopLossPct) : null;
+
   const response = await http.post<SubmitOrderResponse>(
     "/simulator/sim_swap_order",
     {
@@ -89,9 +129,9 @@ async function submitOrder(
 
       stopEarnPercent: null,
 
-      stopLossPercent: null,
+      stopLossPercent,
 
-      stopEarnGroup: null,
+      stopEarnGroup,
 
       stopLossGroup: null,
     },
