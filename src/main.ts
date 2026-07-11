@@ -10,6 +10,15 @@ import type {
   TradingApi,
 } from "./trading/types";
 
+import { unifiedPriceUpdate$ } from "./data_stream/price_engine";
+import { updatePositionPrice } from "./strategy/positions_store";
+import { registerStrategies, scanPositions } from "./strategy/scanner";
+import { PositionEngine } from "./strategy/positions_engine";
+import { StopLossStrategy } from "./strategy/exit-strategies/stop-loss";
+import { TrailingStopStrategy } from "./strategy/exit-strategies/trailing-stop";
+import { PartialTakeProfitStrategy } from "./strategy/exit-strategies/partial-tp";
+import { TtlStrategy } from "./strategy/exit-strategies/ttl";
+
 /* -------------------------------------------------------------------------- */
 /*                              Trading Backend                               */
 /* -------------------------------------------------------------------------- */
@@ -90,3 +99,22 @@ export const isLiveTrading = false;
  * Returns true when using the simulator.
  */
 export const isSimulatorTrading = true;
+
+/* -------------------------------------------------------------------------- */
+/*                          Strategy Engine Wiring                            */
+/* -------------------------------------------------------------------------- */
+
+registerStrategies([
+  new StopLossStrategy(CONFIG.stopLossEnabled, CONFIG.stopLossPct),
+  new TrailingStopStrategy(CONFIG.trailingActivationPct, CONFIG.trailingDistancePct),
+  new PartialTakeProfitStrategy(CONFIG.partialTpEnabled, CONFIG.partialTpTiers),
+  new TtlStrategy(CONFIG.baseTtlSecs, CONFIG.maxTtlSecs, CONFIG.minProfitForTtlExtensionPct),
+]);
+
+export const positionEngine = new PositionEngine(
+  unifiedPriceUpdate$,
+  updatePositionPrice,
+  scanPositions,
+);
+
+positionEngine.start();

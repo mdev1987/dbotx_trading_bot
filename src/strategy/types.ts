@@ -27,25 +27,28 @@ export interface PerformanceReport {
 
 export interface Position {
   id: string;
-  orderId: string;
   pair: string;
   token: string;
   tokenName: string;
+
   entryPriceUsd: number;
   sizeSol: number;
   sizeToken: number;
+
   openedAt: number;
-  peakPriceUsd: number;
   currentPriceUsd: number;
+  peakPriceUsd: number;
+
   soldPct: number;
+  partialTierIndex: number;
+
   status: "open" | "closed";
-  closeReason?: string;
+  reason?: PositionExitReason;
   closePriceUsd?: number;
   closedAt?: number;
+
   lastUpdateAt: number;
   currentProfitPct: number;
-  partialTierIndex: number;
   priceSource?: PriceSource;
   lastPriceTimestamp: number;
-  reason?: PositionExitReason;
 }

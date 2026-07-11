@@ -238,7 +238,7 @@ export class TelegramReporter {
     const p = event.position;
     const report = this.callbacks.getReport();
     const mode = CONFIG.liveMode ? "📡 Live" : "🧪 Simulate";
-    const reason = p.closeReason ?? "unknown";
+    const reason = p.reason ?? "unknown";
     const pnlPct = p.currentProfitPct ?? 0;
     const profitable = pnlPct >= 0;
     const durationMs = (p.closedAt ?? Date.now()) - (p.openedAt ?? Date.now());

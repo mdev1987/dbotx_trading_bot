@@ -1,21 +1,15 @@
 import { BehaviorSubject, Subject } from "rxjs";
 
 import type { PriceInfo } from "../data_stream/types";
-import type { Position } from "./types";
+import type { Position, PositionExitReason } from "./types";
+import { clearPendingExit } from "./scanner";
 
-/* -------------------------------------------------------------------------- */
-/*                                   State                                    */
-/* -------------------------------------------------------------------------- */
-
-export const positions = new Map<string, Position>();
-
+const positions = new Map<string, Position>();
 const closedPositions: Position[] = [];
 
 let nextPositionId = 1;
 
-/* -------------------------------------------------------------------------- */
-/*                                   Events                                   */
-/* -------------------------------------------------------------------------- */
+export { positions };
 
 export const openPositions$ = new BehaviorSubject<readonly Position[]>([]);
 
@@ -24,10 +18,6 @@ export const positionOpened$ = new Subject<Position>();
 export const positionUpdated$ = new Subject<Position>();
 
 export const positionClosed$ = new Subject<Position>();
-
-/* -------------------------------------------------------------------------- */
-/*                                  Helpers                                   */
-/* -------------------------------------------------------------------------- */
 
 function publishPositions(): void {
   openPositions$.next([...positions.values()]);
@@ -41,10 +31,6 @@ function calculateProfit(entry: number, current: number): number {
   return (current - entry) / entry;
 }
 
-/* -------------------------------------------------------------------------- */
-/*                              Position Create                               */
-/* -------------------------------------------------------------------------- */
-
 export function addPosition(
   token: string,
   pair: string,
@@ -56,9 +42,6 @@ export function addPosition(
 
   const position: Position = {
     id: createPositionId(),
-
-    orderId: "",
-
     token,
     pair,
     tokenName,
@@ -91,11 +74,11 @@ export function addPosition(
   return position;
 }
 
-/* -------------------------------------------------------------------------- */
-/*                              Position Remove                               */
-/* -------------------------------------------------------------------------- */
-
-export function removePosition(pair: string): Position | null {
+export function removePosition(
+  pair: string,
+  closePriceUsd?: number,
+  reason?: PositionExitReason,
+): Position | null {
   const position = positions.get(pair);
 
   if (!position) {
@@ -103,6 +86,9 @@ export function removePosition(pair: string): Position | null {
   }
 
   position.status = "closed";
+  position.closePriceUsd = closePriceUsd ?? position.currentPriceUsd;
+  position.reason = reason;
+  position.closedAt = Date.now();
   position.lastUpdateAt = Date.now();
 
   positions.delete(pair);
@@ -113,12 +99,10 @@ export function removePosition(pair: string): Position | null {
 
   positionClosed$.next(position);
 
+  clearPendingExit(position.id);
+
   return position;
 }
-
-/* -------------------------------------------------------------------------- */
-/*                               Price Updates                                */
-/* -------------------------------------------------------------------------- */
 
 export function updatePositionPrice(update: PriceInfo): void {
   const position =
@@ -152,10 +136,6 @@ export function updatePositionPrice(update: PriceInfo): void {
   positionUpdated$.next(position);
 }
 
-/* -------------------------------------------------------------------------- */
-/*                                  Queries                                   */
-/* -------------------------------------------------------------------------- */
-
 export function getPosition(pair: string): Position | undefined {
   return positions.get(pair);
 }
@@ -175,10 +155,6 @@ export function getClosedPositions(): readonly Position[] {
 export function positionCount(): number {
   return positions.size;
 }
-
-/* -------------------------------------------------------------------------- */
-/*                                  Cleanup                                   */
-/* -------------------------------------------------------------------------- */
 
 export function clearPositions(): void {
   positions.clear();

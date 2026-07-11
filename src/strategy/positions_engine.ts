@@ -1,32 +1,43 @@
+import type { Observable } from "rxjs";
 import { Subscription, timer } from "rxjs";
 
-import { unifiedPriceUpdate$ } from "../data_stream/price_engine";
+import type { PriceInfo } from "../data_stream/types";
 
-import { updatePositionPrice } from "./positions_store";
+type PriceUpdateFn = (update: PriceInfo) => void;
+type ScannerFn = (now: number) => void;
 
-import { scanPositions } from "./positions_strategy";
+export class PositionEngine {
+  private priceSub: Subscription | null = null;
+  private scanSub: Subscription | null = null;
 
-let priceSub: Subscription | null = null;
-let scanSub: Subscription | null = null;
+  constructor(
+    private readonly priceUpdate$: Observable<PriceInfo>,
+    private readonly onPriceUpdate: PriceUpdateFn,
+    private readonly onScan: ScannerFn,
+    private readonly scanIntervalMs = 1000,
+  ) {}
 
-export function initPositionEngine(): void {
-  if (priceSub) {
-    return;
+  start(): void {
+    if (this.priceSub) {
+      return;
+    }
+
+    this.priceSub = this.priceUpdate$.subscribe(this.onPriceUpdate);
+
+    this.scanSub = timer(this.scanIntervalMs, this.scanIntervalMs).subscribe(
+      this.onScan,
+    );
+
+    console.log("[PositionEngine] Started");
   }
 
-  priceSub = unifiedPriceUpdate$.subscribe(updatePositionPrice);
+  stop(): void {
+    this.priceSub?.unsubscribe();
+    this.scanSub?.unsubscribe();
 
-  scanSub = timer(1000, 1000).subscribe(scanPositions);
+    this.priceSub = null;
+    this.scanSub = null;
 
-  console.log("[PositionEngine] Started");
-}
-
-export function stopPositionEngine(): void {
-  priceSub?.unsubscribe();
-  scanSub?.unsubscribe();
-
-  priceSub = null;
-  scanSub = null;
-
-  console.log("[PositionEngine] Stopped");
+    console.log("[PositionEngine] Stopped");
+  }
 }
