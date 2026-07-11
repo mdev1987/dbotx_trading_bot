@@ -6,7 +6,7 @@ import { concatMap, distinctUntilChanged, filter, map } from "rxjs/operators";
 
 import { CONFIG } from "../config";
 
-import type { PerformanceReport } from "../data_stream/types";
+import type { PerformanceReport } from "../strategy/types";
 
 const bot = new Bot(CONFIG.telegramBotToken!);
 const CHAT_ID = CONFIG.telegramChatId!;
@@ -39,13 +39,20 @@ function fmtDuration(ms: number): string {
 
 function closeIcon(reason: string): string {
   switch (reason) {
-    case "take_profit": return "🟢";
-    case "stop_loss": return "🔴";
-    case "trailing_stop": return "🟡";
-    case "trailing_tp": return "🔵";
-    case "expired": return "⏰";
-    case "manual": return "👤";
-    default: return "⚠️";
+    case "take_profit":
+      return "🟢";
+    case "stop_loss":
+      return "🔴";
+    case "trailing_stop":
+      return "🟡";
+    case "trailing_tp":
+      return "🔵";
+    case "expired":
+      return "⏰";
+    case "manual":
+      return "👤";
+    default:
+      return "⚠️";
   }
 }
 
@@ -124,15 +131,21 @@ export class TelegramReporter {
       this.callbacks.positionEvent$
         .pipe(filter((ev) => ev.type === "opened"))
         .subscribe((ev) => {
-          try { this.enqueueMessage(this.buildOpened(ev)); }
-          catch (e) { console.error("[Reporter] buildOpened error:", e); }
+          try {
+            this.enqueueMessage(this.buildOpened(ev));
+          } catch (e) {
+            console.error("[Reporter] buildOpened error:", e);
+          }
         }),
     );
 
     this.subscriptions.push(
       this.callbacks.positionClosed$.subscribe((ev) => {
-        try { this.enqueueMessage(this.buildClosed(ev)); }
-        catch (e) { console.error("[Reporter] buildClosed error:", e); }
+        try {
+          this.enqueueMessage(this.buildClosed(ev));
+        } catch (e) {
+          console.error("[Reporter] buildClosed error:", e);
+        }
       }),
     );
 
@@ -141,7 +154,13 @@ export class TelegramReporter {
       this.subscriptions.push(
         timer(intervalMs, intervalMs)
           .pipe(
-            map(() => { try { return this.callbacks.getReport(); } catch { return null; } }),
+            map(() => {
+              try {
+                return this.callbacks.getReport();
+              } catch {
+                return null;
+              }
+            }),
             distinctUntilChanged((a, b) => {
               if (!a || !b) return false;
               return JSON.stringify(a) === JSON.stringify(b);
@@ -176,14 +195,18 @@ export class TelegramReporter {
   private async sendWithRetry(message: string, maxRetries = 3): Promise<void> {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        await bot.api.sendMessage(CHAT_ID, message, { parse_mode: "MarkdownV2" });
+        await bot.api.sendMessage(CHAT_ID, message, {
+          parse_mode: "MarkdownV2",
+        });
         return;
       } catch (error) {
         if (attempt === maxRetries) {
           console.error("[Reporter] Failed to send:", error);
           return;
         }
-        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
+        await new Promise((r) =>
+          setTimeout(r, 1000 * Math.pow(2, attempt - 1)),
+        );
       }
     }
   }
@@ -273,7 +296,9 @@ export class TelegramReporter {
       lines.push(`${SEPARATOR}`);
       lines.push(`**Close Reasons**`);
       for (const [reason, count] of Object.entries(report.reasons)) {
-        lines.push(`${closeIcon(reason)} **${closeLabel(reason)}**: \`${count}\``);
+        lines.push(
+          `${closeIcon(reason)} **${closeLabel(reason)}**: \`${count}\``,
+        );
       }
     }
 

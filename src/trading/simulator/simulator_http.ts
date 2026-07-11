@@ -1,12 +1,6 @@
 import { CONFIG } from "../../config";
 
 /* -------------------------------------------------------------------------- */
-/*                              HTTP Configuration                            */
-/* -------------------------------------------------------------------------- */
-
-const BASE_URL = "https://api-bot-v1.dbotx.com";
-
-/* -------------------------------------------------------------------------- */
 /*                                HTTP Client                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -36,26 +30,59 @@ class SimulatorHttpClient {
     path: string,
     body?: unknown,
   ): Promise<T> {
-    const response = await fetch(`${BASE_URL}${path}`, {
-      method,
+    let lastError: Error | undefined;
 
-      headers: {
-        "Content-Type": "application/json",
+    for (let attempt = 0; attempt <= CONFIG.httpMaxRetries; attempt++) {
+      if (attempt > 0) {
+        await sleep(CONFIG.httpBaseDelayMs * 2 ** (attempt - 1));
+      }
 
-        "x-api-key": CONFIG.dbotxApiKey,
-      },
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), CONFIG.httpTimeoutMs);
 
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+        try {
+          const response = await fetch(`${CONFIG.baseUrl}${path}`, {
+            method,
+            signal: controller.signal,
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": CONFIG.dbotxApiKey,
+            },
+            body: body === undefined ? undefined : JSON.stringify(body),
+          });
 
-    if (!response.ok) {
-      throw new Error(
-        `[Simulator] ${method} ${path} failed (${response.status})`,
-      );
+          if (!response.ok) {
+            throw new Error(
+              `[Simulator] ${method} ${path} failed (${response.status})`,
+            );
+          }
+
+          return (await response.json()) as T;
+        } finally {
+          clearTimeout(timeout);
+        }
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        if (attempt < CONFIG.httpMaxRetries) {
+          console.warn(
+            `[Simulator] ${method} ${path} attempt ${attempt + 1}/${CONFIG.httpMaxRetries + 1} failed: ${lastError.message}. Retrying...`,
+          );
+        }
+      }
     }
 
-    return (await response.json()) as T;
+    throw lastError ?? new Error(`[Simulator] ${method} ${path} failed`);
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                   Helper                                   */
+/* -------------------------------------------------------------------------- */
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /* -------------------------------------------------------------------------- */

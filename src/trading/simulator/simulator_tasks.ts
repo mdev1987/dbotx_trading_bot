@@ -2,6 +2,7 @@ import { Subject } from "rxjs";
 import { CONFIG } from "../../config";
 import { http } from "./simulator_http";
 import { SimulatorOrderStatus } from "./simulator_orders";
+
 /* -------------------------------------------------------------------------- */
 /*                                   Types                                    */
 /* -------------------------------------------------------------------------- */
@@ -27,21 +28,6 @@ export interface SimulatorTask {
 
   updatedAt: number;
 }
-
-/** Maximum wait for buy/sell completion. */
-const simulatorTaskTimeoutSecs = 30;
-
-/** Poll every 500ms. */
-const simulatorTaskPollIntervalMs = 500;
-
-/** HTTP request timeout. */
-const simulatorHttpTimeoutMs = 10000;
-
-/** HTTP retry count. */
-const simulatorHttpRetries = 3;
-
-/** Delay between HTTP retries. */
-const simulatorHttpRetryDelayMs = 1000;
 
 interface SimulatorTaskResponse {
   err: boolean;
@@ -107,7 +93,7 @@ export async function getTask(orderId: string): Promise<SimulatorTask> {
 export async function waitForTaskConfirmed(
   orderId: string,
 ): Promise<SimulatorTask> {
-  const timeout = simulatorTaskTimeoutSecs * 1000;
+  const timeout = CONFIG.simulatorTaskTimeoutSecs * 1000;
 
   const started = Date.now();
 
@@ -128,7 +114,7 @@ export async function waitForTaskConfirmed(
       throw new Error("Simulator task timed out.");
     }
 
-    await sleep(simulatorTaskPollIntervalMs);
+    await sleep(CONFIG.simulatorTaskPollIntervalMs);
   }
 }
 

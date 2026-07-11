@@ -81,11 +81,11 @@ async function submitOrder(
 
       priorityFee: "",
 
-      gasFeeDelta: 0,
+      gasFeeDelta: CONFIG.defaultGasFeeDelta,
 
-      maxFeePerGas: 0,
+      maxFeePerGas: CONFIG.defaultMaxFeePerGas,
 
-      slippage: CONFIG.maxSlippage,
+      slippage: CONFIG.defaultSlippage,
 
       stopEarnPercent: null,
 

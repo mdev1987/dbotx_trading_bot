@@ -190,6 +190,8 @@ export const CONFIG = {
   defaultSlippage: number("DEFAULT_SLIPPAGE", 0.1),
   defaultGasFeeDelta: number("DEFAULT_GAS_FEE_DELTA", 5),
   defaultMaxFeePerGas: number("DEFAULT_MAX_FEE_PER_GAS", 100),
+  simulatorTaskTimeoutSecs: number("SIMULATOR_TASK_TIMEOUT_SECS", 30),
+  simulatorTaskPollIntervalMs: number("SIMULATOR_TASK_POLL_INTERVAL_MS", 500),
 
   // Mode
   liveMode: process.env.LIVE_MODE?.toLowerCase() === "true",
