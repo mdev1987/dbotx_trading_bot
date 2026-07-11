@@ -9,7 +9,9 @@ function required(key: string, altKey?: string): string {
   const val = process.env[key] ?? (altKey ? process.env[altKey] : undefined);
   if (!val) {
     const hint = altKey ? ` (also tried ${altKey})` : "";
-    throw new Error(`[config] Missing required environment variable: ${key}${hint}`);
+    throw new Error(
+      `[config] Missing required environment variable: ${key}${hint}`,
+    );
   }
   return val;
 }
@@ -18,10 +20,13 @@ function number(key: string, fallback?: number): number {
   const raw = process.env[key];
   if (raw === undefined || raw === "") {
     if (fallback !== undefined) return fallback;
-    throw new Error(`[config] Missing required numeric environment variable: ${key}`);
+    throw new Error(
+      `[config] Missing required numeric environment variable: ${key}`,
+    );
   }
   const n = Number(raw);
-  if (!Number.isFinite(n)) throw new Error(`[config] Invalid number for ${key}: "${raw}"`);
+  if (!Number.isFinite(n))
+    throw new Error(`[config] Invalid number for ${key}: "${raw}"`);
   return n;
 }
 
@@ -30,7 +35,8 @@ function parsePartialTpTiers(raw: string | undefined): PartialTpTier[] {
   return raw.split(",").flatMap((part) => {
     const trimmed = part.trim();
     const [pctStr, atStr] = trimmed.split("@");
-    if (!pctStr || !atStr) throw new Error(`[config] invalid partial TP tier: "${part}"`);
+    if (!pctStr || !atStr)
+      throw new Error(`[config] invalid partial TP tier: "${part}"`);
     const pctClean = pctStr.replace(/%$/, "");
     const atClean = atStr.replace(/%$/, "");
     const pct = Number(pctClean) / 100;
@@ -48,8 +54,10 @@ export const CONFIG = {
   wsUrl: required("DBOTX_WS_URL"),
   baseUrl: required("DBOTX_BASE_URL"),
   servapiBaseUrl: required("DBOTX_SERVAPI_BASE_URL"),
-  dataBaseUrl: process.env.DBOTX_DATA_BASE_URL ?? "https://api-data-v1.dbotx.com",
-  tradeWsUrl: process.env.LIVE_TRADE_WS_URL ?? "wss://api-bot-v1.dbotx.com/trade/ws/",
+  dataBaseUrl:
+    process.env.DBOTX_DATA_BASE_URL ?? "https://api-data-v1.dbotx.com",
+  tradeWsUrl:
+    process.env.LIVE_TRADE_WS_URL ?? "wss://api-bot-v1.dbotx.com/trade/ws/",
 
   // Wallet (LIVE)
   walletId: process.env.LIVE_WALLET_ID ?? "",
@@ -58,7 +66,8 @@ export const CONFIG = {
   // Position sizing & limits
   maxPositions: number("MAX_POSITIONS", 5),
   baseTtlSecs: number("BASE_TTL_SECS", 90),
-  minProfitForTtlExtensionPct: number("MIN_PROFIT_FOR_TTL_EXTENSION_PCT", 0) / 100,
+  minProfitForTtlExtensionPct:
+    number("MIN_PROFIT_FOR_TTL_EXTENSION_PCT", 0) / 100,
   maxTtlSecs: number("MAX_TTL_SECS", 600),
   signalQueueSize: number("SIGNAL_QUEUE_SIZE", 30),
   signalQueueTtlSecs: number("SIGNAL_QUEUE_TTL_SECS", 600),
@@ -67,44 +76,49 @@ export const CONFIG = {
   maxPositionSol: number("MAX_POSITION_SOL", 0.1),
   maxRiskPct: number("MAX_RISK_PCT", 1),
 
+  // Stop loss
+  stopLossEnabled: process.env.STOP_LOSS_ENABLED?.toLowerCase() === "true",
+
   // TP/SL
   stopLossPct: (() => {
-    const raw = process.env.STOP_LOSS_PERCENT ?? process.env.PAPER_STOP_LOSS_PERCENT;
+    const raw = process.env.STOP_LOSS_PERCENT;
     const n = Number(raw);
     return Number.isFinite(n) ? n / 100 : 0;
   })(),
   trailingActivationPct: (() => {
-    const raw = process.env.TRAILING_ACTIVATION_PERCENT ?? process.env.PAPER_TRAILING_ACTIVATION_PERCENT;
+    const raw = process.env.TRAILING_ACTIVATION_PERCENT;
     const n = Number(raw);
     return Number.isFinite(n) ? n / 100 : 0;
   })(),
   trailingDistancePct: (() => {
-    const raw = process.env.TRAILING_STOP_PERCENT ?? process.env.PAPER_TRAILING_STOP_PERCENT;
+    const raw = process.env.TRAILING_STOP_PERCENT;
     const n = Number(raw);
     return Number.isFinite(n) ? n / 100 : 0;
   })(),
   trailingTpDistancePct: (() => {
-    const raw = process.env.TRAILING_TP_PERCENT ?? process.env.PAPER_TRAILING_TP_PERCENT;
+    const raw = process.env.TRAILING_TP_PERCENT;
     const n = Number(raw);
     return Number.isFinite(n) ? n / 100 : 0;
   })(),
   partialTpEnabled: process.env.PARTIAL_TP_ENABLED?.toLowerCase() === "true",
   partialTpTiers: parsePartialTpTiers(process.env.PARTIAL_TP_TIERS),
   backstopTpPct: (() => {
-    const raw = process.env.BACKSTOP_TP_PERCENT ?? process.env.PAPER_BACKSTOP_TP_PERCENT ?? process.env.PAPER_TAKE_PROFIT_PERCENT;
+    const raw = process.env.BACKSTOP_TP_PERCENT;
     const n = Number(raw);
     return Number.isFinite(n) ? n / 100 : 0;
   })(),
   maxSlippageExitPct: (() => {
-    const raw = process.env.MAX_SLIPPAGE_EXIT_PERCENT ?? process.env.PAPER_MAX_SLIPPAGE_EXIT_PERCENT;
+    const raw = process.env.MAX_SLIPPAGE_EXIT_PERCENT;
     const n = Number(raw);
     return Number.isFinite(n) ? n / 100 : 0;
   })(),
 
   // Live execution
-  jitoEnabled: (process.env.LIVE_JITO_ENABLED ?? "true").toLowerCase() === "true",
+  jitoEnabled:
+    (process.env.LIVE_JITO_ENABLED ?? "true").toLowerCase() === "true",
   jitoTip: number("LIVE_JITO_TIP", 0.0001),
-  customFeeAndTip: (process.env.LIVE_CUSTOM_FEE_AND_TIP ?? "false").toLowerCase() === "true",
+  customFeeAndTip:
+    (process.env.LIVE_CUSTOM_FEE_AND_TIP ?? "false").toLowerCase() === "true",
   priorityFee: process.env.LIVE_PRIORITY_FEE ?? "",
   maxSlippage: number("LIVE_MAX_SLIPPAGE", 0.1),
   concurrentNodes: number("LIVE_CONCURRENT_NODES", 2),
@@ -115,8 +129,12 @@ export const CONFIG = {
 
   // PnL order lifecycle
   pnlOrderExpireDeltaMs: number("LIVE_PNL_ORDER_EXPIRE_DELTA_MS", 43_200_000),
-  pnlOrderExpireExecute: (process.env.LIVE_PNL_ORDER_EXPIRE_EXECUTE ?? "true").toLowerCase() === "true",
-  pnlOrderUseMidPrice: (process.env.LIVE_PNL_ORDER_USE_MID_PRICE ?? "true").toLowerCase() === "true",
+  pnlOrderExpireExecute:
+    (process.env.LIVE_PNL_ORDER_EXPIRE_EXECUTE ?? "true").toLowerCase() ===
+    "true",
+  pnlOrderUseMidPrice:
+    (process.env.LIVE_PNL_ORDER_USE_MID_PRICE ?? "true").toLowerCase() ===
+    "true",
 
   // Risk controls
   dailyLossLimitUsd: number("DAILY_LOSS_LIMIT_USD", 0),
@@ -135,7 +153,9 @@ export const CONFIG = {
   reportIntervalMinutes: number("TELEGRAM_REPORT_INTERVAL_MINUTES", 5),
   telegramApiId: process.env.TELEGRAM_API_ID,
   telegramApiHash: process.env.TELEGRAM_API_HASH,
-  telegramChannelUserName: required("TELEGRAM_CHANNEL_USERNAME").trim().toLocaleLowerCase(),
+  telegramChannelUserName: required("TELEGRAM_CHANNEL_USERNAME")
+    .trim()
+    .toLocaleLowerCase(),
   telegramChannelId: process.env.TELEGRAM_CHANNEL_ID,
 
   // Polling & timing
@@ -171,13 +191,14 @@ export const CONFIG = {
   defaultGasFeeDelta: number("DEFAULT_GAS_FEE_DELTA", 5),
   defaultMaxFeePerGas: number("DEFAULT_MAX_FEE_PER_GAS", 100),
 
-
   // Mode
   liveMode: process.env.LIVE_MODE?.toLowerCase() === "true",
-  liveBuyEnabled: (process.env.LIVE_BUY_ENABLED ?? "true").toLowerCase() === "true",
+  liveBuyEnabled:
+    (process.env.LIVE_BUY_ENABLED ?? "true").toLowerCase() === "true",
 
   // Recovery
-  recoveryOnStart: (process.env.LIVE_RECOVERY_ON_START ?? "true").toLowerCase() === "true",
+  recoveryOnStart:
+    (process.env.LIVE_RECOVERY_ON_START ?? "true").toLowerCase() === "true",
   liveDbPath: process.env.LIVE_DB_PATH ?? "./data/live_trading.sqlite",
 
   // Watchdog
