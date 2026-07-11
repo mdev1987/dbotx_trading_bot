@@ -1,4 +1,5 @@
-import { Subject } from "rxjs";
+import { Subject, Subscription, timer } from "rxjs";
+
 import { CONFIG } from "../config";
 import type {
   PriceInfo,
@@ -14,34 +15,41 @@ import {
   subscribePairs,
   unsubscribePair,
 } from "./dbotx_data_stream";
-import { dexScreenerPriceUpdateEvent$ } from "./dexscreener_polling";
-import { Subscription } from "rxjs";
+import { dexScreenerPriceUpdateEvent$, pollDexScreener } from "./dexscreener_polling";
 
 function isValidPrice(price: number): boolean {
   return Number.isFinite(price) && price > 0;
 }
 
 const trackedTokens = new Map<string, TrackedToken>();
+const pairToToken = new Map<string, string>();
 
 export const unifiedPriceUpdate$ = new Subject<PriceInfo>();
 
 let pumpApiSub: Subscription | null = null;
 let dbotxSub: Subscription | null = null;
 let dexScreenerSub: Subscription | null = null;
+let dexScreenerPollSub: Subscription | null = null;
 
 export function trackToken(token: string, pair: string): void {
   const tracked = trackedTokens.get(token);
 
   if (tracked) {
     if (tracked.pair !== pair) {
+      pairToToken.delete(tracked.pair);
       unsubscribePair(tracked.pair);
       subscribePairs([pair]);
+      pairToToken.set(pair, token);
       tracked.pair = pair;
     }
 
     tracked.timestamp = Date.now();
     return;
   }
+
+  pairToToken.set(pair, token);
+  trackedTokens.set(token, { pair, timestamp: Date.now() });
+  subscribePairs([pair]);
 }
 
 export function untrackToken(token: string): void {
@@ -50,6 +58,7 @@ export function untrackToken(token: string): void {
     return;
   }
 
+  pairToToken.delete(tracked.pair);
   unsubscribePair(tracked.pair);
   trackedTokens.delete(token);
 }
@@ -61,13 +70,18 @@ function emitPrice(
   source: PriceSource,
   timestamp: number,
 ): void {
-  const tracked = trackedTokens.get(token);
+  const resolvedToken = token || (pair ? pairToToken.get(pair) : undefined);
+
+  if (!resolvedToken) {
+    return;
+  }
+
+  const tracked = trackedTokens.get(resolvedToken);
 
   if (!tracked) {
     return;
   }
 
-  // Ignore prices from a different LP.
   if (pair && tracked.pair !== pair) {
     return;
   }
@@ -75,7 +89,7 @@ function emitPrice(
   tracked.timestamp = timestamp;
 
   unifiedPriceUpdate$.next({
-    token,
+    token: resolvedToken,
     pair,
     priceUsd,
     source,
@@ -122,6 +136,18 @@ function initDexScreenerSub(): void {
   );
 }
 
+function initDexScreenerPolling(): void {
+  dexScreenerPollSub = timer(
+    CONFIG.dexscreenerPollIntervalMs,
+    CONFIG.dexscreenerPollIntervalMs,
+  ).subscribe(() => {
+    const tokens = [...trackedTokens.keys()];
+    if (tokens.length > 0) {
+      pollDexScreener(tokens);
+    }
+  });
+}
+
 export function initPriceEngine(): void {
   if (pumpApiSub || dbotxSub || dexScreenerSub) {
     return;
@@ -129,6 +155,7 @@ export function initPriceEngine(): void {
   initPumpSub();
   initDbotxSub();
   initDexScreenerSub();
+  initDexScreenerPolling();
   console.log("[PriceEngine] Initialized");
 }
 
@@ -136,14 +163,18 @@ export function stopPriceEngine(): void {
   pumpApiSub?.unsubscribe();
   dbotxSub?.unsubscribe();
   dexScreenerSub?.unsubscribe();
+  dexScreenerPollSub?.unsubscribe();
 
   pumpApiSub = null;
   dbotxSub = null;
   dexScreenerSub = null;
+  dexScreenerPollSub = null;
+
   for (const tracked of trackedTokens.values()) {
     unsubscribePair(tracked.pair);
   }
   trackedTokens.clear();
+  pairToToken.clear();
 
   console.log("[PriceEngine] Stopped");
 }

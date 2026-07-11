@@ -1,18 +1,24 @@
 import { Subject } from "rxjs";
-import { PriceSource, type PumpEvent } from "./types";
 
-const WS_URL = "wss://stream.pumpapi.io/";
-const HEARTBEAT_MS = 30_000;
+import { CONFIG } from "../config";
+import { PriceSource, type PumpEvent, type PumpWsPacket } from "./types";
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-let activeMint: string | null = null;
+const activeMints = new Set<string>();
 
 export const pumpApiPriceUpdateEvent$ = new Subject<PumpEvent>();
 
-export function connectPumpStream(tokenMint?: string): void {
-  if (tokenMint) activeMint = tokenMint;
+export function subscribeMint(mint: string): void {
+  activeMints.add(mint);
+}
+
+export function unsubscribeMint(mint: string): void {
+  activeMints.delete(mint);
+}
+
+export function connectPumpStream(): void {
   if (
     ws?.readyState === WebSocket.OPEN ||
     ws?.readyState === WebSocket.CONNECTING
@@ -22,7 +28,7 @@ export function connectPumpStream(tokenMint?: string): void {
 
   console.log("[PumpAPI] Connecting...");
 
-  ws = new WebSocket(WS_URL);
+  ws = new WebSocket(CONFIG.pumpapiWsUrl);
 
   ws.onopen = () => {
     console.log("[PumpAPI] Connected");
@@ -38,22 +44,25 @@ export function connectPumpStream(tokenMint?: string): void {
       } catch {
         // ignore
       }
-    }, HEARTBEAT_MS);
+    }, CONFIG.wsHeartbeatIntervalMs);
   };
 
   ws.onmessage = ({ data }) => {
     try {
-      const raw = JSON.parse(data as string);
+      const raw = JSON.parse(data as string) as PumpWsPacket;
       if (raw?.type === "pong") return;
 
-      const event = raw as Record<string, unknown>;
-      if (activeMint && event.mint !== activeMint) return;
-      if (event.action !== "buy" && event.action !== "sell") return;
+      if (activeMints.size > 0 && (!raw.mint || !activeMints.has(raw.mint))) {
+        return;
+      }
+      if (raw.action !== "buy" && raw.action !== "sell") {
+        return;
+      }
 
       const pumpEvent: PumpEvent = {
-        mint: event.mint as string,
-        action: event.action as "buy" | "sell",
-        price: String(event.price ?? ""),
+        mint: raw.mint ?? "",
+        action: raw.action as "buy" | "sell",
+        price: String(raw.price ?? ""),
         source: PriceSource.PUMPAPI,
         timestamp: Date.now(),
       };
@@ -81,7 +90,7 @@ export function connectPumpStream(tokenMint?: string): void {
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         connectPumpStream();
-      }, 1000);
+      }, CONFIG.wsReconnectDelayMs);
     }
   };
 }

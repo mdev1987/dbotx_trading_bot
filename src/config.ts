@@ -172,6 +172,13 @@ export const CONFIG = {
   wsDisconnectLogThrottleMs: number("WS_DISCONNECT_LOG_THROTTLE_MS", 30_000),
   wsReconnectDelayMs: number("WS_RECONNECT_DELAY_MS", 5_000),
 
+  // Price Data Streams
+  pumpapiWsUrl:
+    process.env.PUMPAPI_WS_URL ?? "wss://stream.pumpapi.io/",
+  dexscreenerApiUrl:
+    process.env.DEXSCREENER_API_URL ?? "https://api.dexscreener.com/tokens/v1/solana",
+  dexscreenerPollIntervalMs: number("DEXSCREENER_POLL_INTERVAL_MS", 30_000),
+
   // Signal deduplication
   signalCacheTtlSeconds: number("SIGNAL_CACHE_TTL_SECONDS", 3_600),
   signalCleanupIntervalMs: number("SIGNAL_CLEANUP_INTERVAL_MS", 5_000),

@@ -1,20 +1,9 @@
 import { Subject } from "rxjs";
 
 import { CONFIG } from "../config";
-import { PriceSource, type DbotxEvent } from "./types";
+import { PriceSource, type DbotxEvent, type DbotxTrade, type DbotxWsPacket } from "./types";
 
-const HEARTBEAT_MS = 30_000;
-const MAX_RECONNECT_MS = 30_000;
-
-interface Tx {
-  p: string;
-  tt: "buy" | "sell";
-  s: number;
-  u: number;
-  q: number;
-  t: number;
-  tx: string;
-}
+const MAX_RECONNECT_DELAY_MS = 30_000;
 
 interface PairState {
   pair: string;
@@ -34,8 +23,8 @@ const states = new Map<string, PairState>();
 
 let ws: WebSocket | null = null;
 
-let heartbeat: Timer | null = null;
-let reconnect: Timer | null = null;
+let heartbeat: ReturnType<typeof setInterval> | null = null;
+let reconnect: ReturnType<typeof setTimeout> | null = null;
 
 let reconnectDelay = 1000;
 
@@ -43,7 +32,7 @@ const activePairs = new Set<string>();
 
 export const dbotxPriceUpdateEvent$ = new Subject<DbotxEvent>();
 
-function buildSubscribePacket() {
+function buildSubscribePacket(): string {
   return JSON.stringify({
     method: "subscribe",
     type: "tx",
@@ -82,7 +71,7 @@ export function connectDataWs(): void {
   ws.addEventListener("error", onError);
 }
 
-function onOpen() {
+function onOpen(): void {
   console.log("[DBotX Data] Connected");
 
   reconnectDelay = 1000;
@@ -93,10 +82,10 @@ function onOpen() {
 
   heartbeat = setInterval(() => {
     ws?.ping();
-  }, HEARTBEAT_MS);
+  }, CONFIG.wsHeartbeatIntervalMs);
 }
 
-function onClose() {
+function onClose(): void {
   console.log("[DBotX Data] Disconnected");
 
   if (heartbeat) {
@@ -109,32 +98,32 @@ function onClose() {
   reconnect = setTimeout(() => {
     reconnect = null;
 
-    reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_MS);
+    reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
 
     connectDataWs();
   }, reconnectDelay);
 }
 
-function onError(error: Event) {
+function onError(error: Event): void {
   console.error("[DBotX Data]", error);
 }
 
-function onMessage(event: MessageEvent) {
+function onMessage(event: MessageEvent): void {
   const raw = event.data.toString();
 
   if (raw.includes('"status":"ack"')) return;
 
-  let packet: any;
+  let packet: DbotxWsPacket;
 
   try {
-    packet = JSON.parse(raw);
+    packet = JSON.parse(raw) as DbotxWsPacket;
   } catch {
     return;
   }
 
   if (packet.type !== "tx") return;
 
-  const trades: Tx[] = packet.result;
+  const trades = packet.result;
 
   if (!Array.isArray(trades)) return;
 
@@ -156,7 +145,7 @@ export function disconnectDataWs(): void {
   ws = null;
 }
 
-function processTrade(trade: Tx) {
+function processTrade(trade: DbotxTrade): void {
   if (!trade.q) return;
 
   const inv = 1 / trade.q;

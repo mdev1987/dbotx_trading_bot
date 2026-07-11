@@ -54,28 +54,25 @@ export interface DexPair {
   marketCap?: number;
 }
 
-export interface SimAccount {
-  balance: number;
-  change24h: number;
-  changeAll: number;
-  holdTokens: number;
+export interface DbotxTrade {
+  p: string;
+  tt: "buy" | "sell";
+  s: number;
+  u: number;
+  q: number;
+  t: number;
+  tx: string;
 }
 
-export interface SwapOrderResult {
-  id: string;
-  state: string;
+export interface DbotxWsPacket {
   type?: string;
-  pair?: string;
-  priceUsd?: number;
-  totalUsd?: number;
-  sendAmount?: string;
-  receiveAmount?: string;
+  result?: DbotxTrade[];
+  status?: string;
 }
 
-export interface PositionEvent {
-  type: "opened" | "closed" | "partial_sold";
-  position: Position;
-  soldPct?: number;
-  profitPct?: number;
-  reason?: string;
+export interface PumpWsPacket {
+  type?: string;
+  mint?: string;
+  action?: string;
+  price?: string;
 }

@@ -10,7 +10,9 @@ import type {
   TradingApi,
 } from "./trading/types";
 
-import { unifiedPriceUpdate$ } from "./data_stream/price_engine";
+import { unifiedPriceUpdate$, initPriceEngine, stopPriceEngine } from "./data_stream/price_engine";
+import { connectDataWs, disconnectDataWs } from "./data_stream/dbotx_data_stream";
+import { connectPumpStream, disconnectPumpStream } from "./data_stream/pumpapi_data_stream";
 import { updatePositionPrice } from "./strategy/positions_store";
 import { registerStrategies, scanPositions } from "./strategy/scanner";
 import { PositionEngine } from "./strategy/positions_engine";
@@ -117,4 +119,22 @@ export const positionEngine = new PositionEngine(
   scanPositions,
 );
 
-positionEngine.start();
+const services = {
+  start(): void {
+    connectDataWs();
+    connectPumpStream();
+    initPriceEngine();
+    positionEngine.start();
+    console.log("[Main] All services started");
+  },
+
+  stop(): void {
+    positionEngine.stop();
+    stopPriceEngine();
+    disconnectDataWs();
+    disconnectPumpStream();
+    console.log("[Main] All services stopped");
+  },
+};
+
+services.start();
