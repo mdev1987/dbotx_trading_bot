@@ -20,6 +20,8 @@ import { StopLossStrategy } from "./strategy/exit-strategies/stop-loss";
 import { TrailingStopStrategy } from "./strategy/exit-strategies/trailing-stop";
 import { PartialTakeProfitStrategy } from "./strategy/exit-strategies/partial-tp";
 import { TtlStrategy } from "./strategy/exit-strategies/ttl";
+import { startPriceTracking, stopPriceTracking } from "./price_tracking";
+import { startTelegramListener, stopTelegramListener } from "./telegram/telegram_client";
 
 /* -------------------------------------------------------------------------- */
 /*                              Trading Backend                               */
@@ -125,14 +127,20 @@ const services = {
     connectPumpStream();
     initPriceEngine();
     positionEngine.start();
+    startPriceTracking();
+    startTelegramListener().catch((err) =>
+      console.error("[Main] Telegram listener failed:", err),
+    );
     console.log("[Main] All services started");
   },
 
   stop(): void {
+    stopPriceTracking();
     positionEngine.stop();
     stopPriceEngine();
     disconnectDataWs();
     disconnectPumpStream();
+    stopTelegramListener();
     console.log("[Main] All services stopped");
   },
 };

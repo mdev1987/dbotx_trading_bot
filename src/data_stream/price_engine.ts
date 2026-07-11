@@ -17,6 +17,8 @@ import {
 } from "./dbotx_data_stream";
 import { dexScreenerPriceUpdateEvent$, pollDexScreener } from "./dexscreener_polling";
 
+const MAX_PRICE_CHANGE_RATIO = 100;
+
 function isValidPrice(price: number): boolean {
   return Number.isFinite(price) && price > 0;
 }
@@ -30,6 +32,35 @@ let pumpApiSub: Subscription | null = null;
 let dbotxSub: Subscription | null = null;
 let dexScreenerSub: Subscription | null = null;
 let dexScreenerPollSub: Subscription | null = null;
+
+/* -------------------------------------------------------------------------- */
+/*                            SOL → USD rate                                  */
+/* -------------------------------------------------------------------------- */
+
+let solPriceUsd = 0;
+
+function updateSolPriceFromEvent(priceUsd: number, priceSol: number): void {
+  if (priceSol > 0 && priceUsd > 0) {
+    solPriceUsd = priceUsd / priceSol;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                        Price spike guard                                   */
+/* -------------------------------------------------------------------------- */
+
+const lastPrices = new Map<string, number>();
+
+function isPriceSpike(token: string, priceUsd: number): boolean {
+  const last = lastPrices.get(token);
+  if (last === undefined) return false;
+  const ratio = Math.max(priceUsd, last) / Math.min(priceUsd, last);
+  return ratio > MAX_PRICE_CHANGE_RATIO;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                        Token tracking                                      */
+/* -------------------------------------------------------------------------- */
 
 export function trackToken(token: string, pair: string): void {
   const tracked = trackedTokens.get(token);
@@ -61,7 +92,12 @@ export function untrackToken(token: string): void {
   pairToToken.delete(tracked.pair);
   unsubscribePair(tracked.pair);
   trackedTokens.delete(token);
+  lastPrices.delete(token);
 }
+
+/* -------------------------------------------------------------------------- */
+/*                          Emit price                                        */
+/* -------------------------------------------------------------------------- */
 
 function emitPrice(
   token: string,
@@ -86,6 +122,14 @@ function emitPrice(
     return;
   }
 
+  if (source !== PriceSource.DEXSCREENER && isPriceSpike(resolvedToken, priceUsd)) {
+    console.warn(
+      `[PriceEngine] Spike rejected for ${resolvedToken}: ${priceUsd} (source: ${source})`,
+    );
+    return;
+  }
+
+  lastPrices.set(resolvedToken, priceUsd);
   tracked.timestamp = timestamp;
 
   unifiedPriceUpdate$.next({
@@ -102,7 +146,17 @@ function initPumpSub(): void {
     const price = parseFloat(event.price);
     const timestamp = event.timestamp || Date.now();
     if (!isValidPrice(price)) return;
-    emitPrice(event.mint, undefined, price, PriceSource.PUMPAPI, timestamp);
+
+    let priceUsd: number;
+
+    if (event.quoteMint === "So11111111111111111111111111111111111111112") {
+      if (solPriceUsd <= 0) return;
+      priceUsd = price * solPriceUsd;
+    } else {
+      priceUsd = price;
+    }
+
+    emitPrice(event.mint, undefined, priceUsd, PriceSource.PUMPAPI, timestamp);
   });
 }
 
@@ -110,6 +164,7 @@ function initDbotxSub(): void {
   dbotxSub = dbotxPriceUpdateEvent$.subscribe((update: DbotxEvent) => {
     const price = update.priceUsd;
     if (!isValidPrice(price)) return;
+    updateSolPriceFromEvent(update.priceUsd, update.priceSol);
     emitPrice(
       update.token,
       update.pair,
@@ -175,6 +230,7 @@ export function stopPriceEngine(): void {
   }
   trackedTokens.clear();
   pairToToken.clear();
+  lastPrices.clear();
 
   console.log("[PriceEngine] Stopped");
 }

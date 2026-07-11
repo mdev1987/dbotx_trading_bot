@@ -183,6 +183,7 @@ function processTrade(trade: DbotxTrade): void {
       pair: trade.p,
       token: "",
       priceUsd,
+      priceSol,
       source: PriceSource.DBOTX,
       timestamp: trade.t * 1000,
     });
@@ -211,6 +212,7 @@ function processTrade(trade: DbotxTrade): void {
     pair: trade.p,
     token: "",
     priceUsd,
+    priceSol,
     source: PriceSource.DBOTX,
     timestamp: trade.t * 1000,
   });

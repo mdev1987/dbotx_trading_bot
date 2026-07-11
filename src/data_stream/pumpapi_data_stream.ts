@@ -63,6 +63,7 @@ export function connectPumpStream(): void {
         mint: raw.mint ?? "",
         action: raw.action as "buy" | "sell",
         price: String(raw.price ?? ""),
+        quoteMint: raw.quoteMint ?? "",
         source: PriceSource.PUMPAPI,
         timestamp: Date.now(),
       };

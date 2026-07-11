@@ -16,6 +16,7 @@ export interface DbotxEvent {
   pair: string;
   token: string;
   priceUsd: number;
+  priceSol: number;
   source: PriceSource;
   timestamp: number;
 }
@@ -24,6 +25,7 @@ export interface PumpEvent {
   mint: string;
   action: "buy" | "sell";
   price: string;
+  quoteMint: string;
   source: PriceSource;
   timestamp: number;
 }
@@ -75,4 +77,5 @@ export interface PumpWsPacket {
   mint?: string;
   action?: string;
   price?: string;
+  quoteMint?: string;
 }
