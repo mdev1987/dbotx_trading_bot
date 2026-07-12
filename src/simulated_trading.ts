@@ -391,7 +391,7 @@ function onPositionUpdate(position: Position): void {
 /*                                Lifecycle                                   */
 /* -------------------------------------------------------------------------- */
 
-export function startSimulatedTrading(): void {
+export async function startSimulatedTrading(): Promise<void> {
   if (signalSub) return;
 
   if (CONFIG.telegramBotToken && CONFIG.telegramChatId) {
@@ -399,12 +399,15 @@ export function startSimulatedTrading(): void {
     console.log("[SimTrading] Bot initialized");
   }
 
-  simulatorTrading.getAccount().then((acc) => {
+  try {
+    const acc = await simulatorTrading.getAccount();
     initialSimBalance = acc.balance;
     console.log(
       `[SimTrading] Live sim: $${LIVE_SIM_START} → sim $${acc.balance.toFixed(2)}`,
     );
-  });
+  } catch {
+    console.warn("[SimTrading] Could not fetch initial balance");
+  }
 
   signalSub = telegramSignal$.subscribe(onSignal);
   exitSub = positionExitRequested$.subscribe(onExit);

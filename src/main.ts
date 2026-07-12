@@ -127,7 +127,9 @@ const services = {
     connectPumpStream();
     initPriceEngine();
     positionEngine.start();
-    startSimulatedTrading();
+    startSimulatedTrading().catch((err) =>
+      console.error("[Main] Sim trading failed:", err),
+    );
     startTelegramListener().catch((err) =>
       console.error("[Main] Telegram listener failed:", err),
     );
