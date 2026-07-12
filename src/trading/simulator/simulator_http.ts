@@ -53,9 +53,13 @@ class SimulatorHttpClient {
           });
 
           if (!response.ok) {
-            throw new Error(
+            const error = new Error(
               `[Simulator] ${method} ${path} failed (${response.status})`,
             );
+            if (response.status >= 400 && response.status < 500) {
+              error.name = "NonRetryableError";
+            }
+            throw error;
           }
 
           return (await response.json()) as T;
@@ -65,11 +69,13 @@ class SimulatorHttpClient {
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
 
-        if (attempt < CONFIG.httpMaxRetries) {
-          console.warn(
-            `[Simulator] ${method} ${path} attempt ${attempt + 1}/${CONFIG.httpMaxRetries + 1} failed: ${lastError.message}. Retrying...`,
-          );
+        if (lastError.name === "NonRetryableError" || attempt >= CONFIG.httpMaxRetries) {
+          throw lastError;
         }
+
+        console.warn(
+          `[Simulator] ${method} ${path} attempt ${attempt + 1}/${CONFIG.httpMaxRetries + 1} failed: ${lastError.message}. Retrying...`,
+        );
       }
     }
 

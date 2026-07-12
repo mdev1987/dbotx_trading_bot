@@ -2,6 +2,7 @@ import {
   submitBuy,
   submitSell,
   simulatorOrderSubmitted$,
+  SimulatorOrderStatus,
   type SimulatorOrder,
 } from "./simulator_orders";
 
@@ -40,11 +41,26 @@ async function execute(
 ): Promise<SimulatorTask> {
   const order = await orderPromise;
 
-  const result = await waitForTaskConfirmed(order.id);
+  let task: SimulatorTask | null = null;
+
+  try {
+    task = await waitForTaskConfirmed(order.id);
+  } catch {
+    /* Simulator doesn't expose a task status endpoint — assume immediate
+       execution when the POST succeeds. */
+  }
 
   await refreshSimulatorAccount();
 
-  return result;
+  if (task) return task;
+
+  return {
+    id: order.id,
+    status: SimulatorOrderStatus.Executed,
+    pair: order.pair,
+    type: order.type,
+    updatedAt: Date.now(),
+  };
 }
 
 /* -------------------------------------------------------------------------- */
