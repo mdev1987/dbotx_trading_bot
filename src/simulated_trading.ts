@@ -35,8 +35,8 @@ const LIVE_SIM_START = 10;
 let initialSimBalance = 0;
 
 function getLiveBalance(simBalance: number): number {
-  if (initialSimBalance <= 0) return LIVE_SIM_START;
-  return (simBalance / initialSimBalance) * LIVE_SIM_START;
+  const base = initialSimBalance > 0 ? initialSimBalance : 10000;
+  return (simBalance / base) * LIVE_SIM_START;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -278,7 +278,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       `💵 Entry: \`${fmtPrice(fillPrice)}\``,
       `💰 Size: \`${CONFIG.positionSize} SOL\``,
       `💳 Balance: \`$${account.balance.toFixed(2)}\``,
-      `💵 Live: \`$${getLiveBalance(account.balance).toFixed(2)}\``,
+      `💵 Live: \`$${getLiveBalance(account.balance).toFixed(4)}\``,
     ];
 
     if (signal.marketCapUSD) {
@@ -358,7 +358,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
         `💵 Exit: \`${fmtPrice(closePrice)}\``,
         `💰 Size: \`${closed.sizeSol} SOL\``,
         `💳 Balance: \`$${account.balance.toFixed(2)}\``,
-        `💵 Live: \`$${getLiveBalance(account.balance).toFixed(2)}\``,
+        `💵 Live: \`$${getLiveBalance(account.balance).toFixed(4)}\``,
         `📋 Reason: \`${reasonToLabel(reason)}\``,
         `⏱ Duration: \`${fmtDuration(durationMs)}\``,
         `━━━━━━━━━━━━━━━━━━━`,
