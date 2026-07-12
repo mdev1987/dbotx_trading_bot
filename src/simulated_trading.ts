@@ -11,7 +11,7 @@ import {
   hasPosition,
   positionUpdated$,
 } from "./strategy/positions_store";
-import { trackToken, untrackToken } from "./data_stream/price_engine";
+import { trackToken, untrackToken, getSolPriceUsd } from "./data_stream/price_engine";
 import { PositionExitReason, type Position } from "./strategy/types";
 import type { AveScannerSignal } from "./telegram/ave_scanner_parser";
 import type { ExitCheckResult } from "./strategy/exit-strategies/types";
@@ -32,11 +32,19 @@ let debugSub: Subscription | null = null;
 const pendingBuyPairs = new Set<string>();
 
 const LIVE_SIM_START = 10;
-let initialSimBalance = 0;
+let liveCash = LIVE_SIM_START;
 
-function getLiveBalance(simBalance: number): number {
-  const base = initialSimBalance > 0 ? initialSimBalance : 10000;
-  return (simBalance / base) * LIVE_SIM_START;
+/** Debit the live cash balance for a buy of `solAmount` SOL. */
+function debitBuy(solAmount: number): void {
+  const solPrice = getSolPriceUsd() || 80;
+  liveCash -= solAmount * solPrice;
+}
+
+/** Credit the live cash balance for a sell with realized PnL. */
+function creditSell(solAmount: number, pnlRatio: number, sellPct: number): void {
+  const solPrice = getSolPriceUsd() || 80;
+  const cost = solAmount * sellPct * solPrice;
+  liveCash += cost * (1 + pnlRatio);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -268,6 +276,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
 
     addPosition(token, pair, tokenName, fillPrice, CONFIG.positionSize);
     trackToken(token, pair);
+    debitBuy(CONFIG.positionSize);
 
     const account = await simulatorTrading.getAccount();
 
@@ -278,7 +287,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       `💵 Entry: \`${fmtPrice(fillPrice)}\``,
       `💰 Size: \`${CONFIG.positionSize} SOL\``,
       `💳 Balance: \`$${account.balance.toFixed(2)}\``,
-      `💵 Live: \`$${getLiveBalance(account.balance).toFixed(4)}\``,
+      `💵 Live: \`$${liveCash.toFixed(4)}\``,
     ];
 
     if (signal.marketCapUSD) {
@@ -343,6 +352,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
         return;
       }
 
+      creditSell(closed.sizeSol, pnl, sellPct);
       recordTrade(closed, closePrice, reason);
 
       const label = pnl >= 0 ? "🟢" : "🔴";
@@ -358,7 +368,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
         `💵 Exit: \`${fmtPrice(closePrice)}\``,
         `💰 Size: \`${closed.sizeSol} SOL\``,
         `💳 Balance: \`$${account.balance.toFixed(2)}\``,
-        `💵 Live: \`$${getLiveBalance(account.balance).toFixed(4)}\``,
+        `💵 Live: \`$${liveCash.toFixed(4)}\``,
         `📋 Reason: \`${reasonToLabel(reason)}\``,
         `⏱ Duration: \`${fmtDuration(durationMs)}\``,
         `━━━━━━━━━━━━━━━━━━━`,
@@ -399,15 +409,9 @@ export async function startSimulatedTrading(): Promise<void> {
     console.log("[SimTrading] Bot initialized");
   }
 
-  try {
-    const acc = await simulatorTrading.getAccount();
-    initialSimBalance = acc.balance;
-    console.log(
-      `[SimTrading] Live sim: $${LIVE_SIM_START} → sim $${acc.balance.toFixed(2)}`,
-    );
-  } catch {
-    console.warn("[SimTrading] Could not fetch initial balance");
-  }
+  console.log(
+    `[SimTrading] Live sim: $${LIVE_SIM_START}`,
+  );
 
   signalSub = telegramSignal$.subscribe(onSignal);
   exitSub = positionExitRequested$.subscribe(onExit);

@@ -39,6 +39,11 @@ let dexScreenerPollSub: Subscription | null = null;
 
 let solPriceUsd = 0;
 
+/** Latest SOL/USD rate derived from DBotX trades. */
+export function getSolPriceUsd(): number {
+  return solPriceUsd;
+}
+
 function updateSolPriceFromEvent(priceUsd: number, priceSol: number): void {
   if (priceSol > 0 && priceUsd > 0) {
     solPriceUsd = priceUsd / priceSol;
