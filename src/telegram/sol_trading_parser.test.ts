@@ -94,4 +94,64 @@ describe("SolTrading Parser", () => {
     `);
     expect(result).toBeNull();
   });
+
+  test("should return null for empty string", () => {
+    expect(parseSolTrendingSignal("")).toBeNull();
+  });
+
+  test("should return null for message without header match", () => {
+    expect(parseSolTrendingSignal("Some random text without the expected format")).toBeNull();
+  });
+
+  test("should handle missing market cap line gracefully", () => {
+    const signal = `
+⏺ | TestCoin / TEST (https://t.me/test)
+🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢
+
+🔀 $100.00 (1.0 SOL)
+👤 Buyer (https://solscan.io/address/abc) / TX (https://solscan.io/tx/abc)
+🪙 New Holder
+
+DexT (https://www.dextools.io/app/en/solana/pair-explorer/abc) | Screener (https://dexscreener.com/solana/abc) | Buy (https://jup.ag/swap/SOL-TestCoin123456789012345678901234567890123) | Trending (https://t.me/SOLTRENDING/123)
+    `;
+    const result = parseSolTrendingSignal(signal);
+    expect(result).not.toBeNull();
+    expect(result?.marketCapUSD).toBe(0);
+  });
+
+  test("should handle bronze rank emoji", () => {
+    const signal = `
+🥉 | BronzeCoin / BRONZE (https://t.me/bronze)
+🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢
+
+🔀 $50.00 (0.5 SOL)
+🔀 100 SOL
+👤 Buyer (https://solscan.io/address/abc) / TX (https://solscan.io/tx/abc)
+🪙 New Holder
+💸 Market Cap $50,000
+
+DexT (https://www.dextools.io/app/en/solana/pair-explorer/abc) | Screener (https://dexscreener.com/solana/abc) | Buy (https://jup.ag/swap/SOL-BronzeCoin1234567890123456789012345678901) | Trending (https://t.me/SOLTRENDING/123)
+    `;
+    const result = parseSolTrendingSignal(signal);
+    expect(result).not.toBeNull();
+    expect(result?.Token).toBe("BronzeCoin");
+  });
+
+  test("should handle CA not ending in pump as Unknown dex", () => {
+    const signal = `
+⏺ | NonPump / NOPUMP (https://t.me/nopump)
+🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢
+
+🔀 $100.00 (1.0 SOL)
+🔀 100 SOL
+👤 Buyer (https://solscan.io/address/abc) / TX (https://solscan.io/tx/abc)
+🪙 New Holder
+💸 Market Cap $100,000
+
+DexT (https://www.dextools.io/app/en/solana/pair-explorer/abc) | Screener (https://dexscreener.com/solana/abc) | Buy (https://jup.ag/swap/SOL-NonPumpTokenCA1234567890123456789012345678) | Trending (https://t.me/SOLTRENDING/123)
+    `;
+    const result = parseSolTrendingSignal(signal);
+    expect(result).not.toBeNull();
+    expect(result?.dex).toBe("Unknown");
+  });
 });

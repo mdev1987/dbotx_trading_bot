@@ -49,19 +49,6 @@ function updateSolPriceFromEvent(priceUsd: number, priceSol: number): void {
 }
 
 /* -------------------------------------------------------------------------- */
-/*                        Price spike guard                                   */
-/* -------------------------------------------------------------------------- */
-
-const lastPrices = new Map<string, number>();
-
-function isPriceSpike(token: string, priceUsd: number): boolean {
-  const last = lastPrices.get(token);
-  if (last === undefined) return false;
-  const ratio = Math.max(priceUsd, last) / Math.min(priceUsd, last);
-  return ratio > CONFIG.maxPriceChangeRatio;
-}
-
-/* -------------------------------------------------------------------------- */
 /*                        Token tracking                                      */
 /* -------------------------------------------------------------------------- */
 
@@ -95,7 +82,6 @@ export function untrackToken(token: string): void {
   pairToToken.delete(tracked.pair);
   unsubscribePair(tracked.pair);
   trackedTokens.delete(token);
-  lastPrices.delete(token);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -125,14 +111,6 @@ function emitPrice(
     return;
   }
 
-  if (source !== PriceSource.DEXSCREENER && isPriceSpike(resolvedToken, priceUsd)) {
-    console.warn(
-      `[PriceEngine] Spike rejected for ${resolvedToken}: ${priceUsd} (source: ${source})`,
-    );
-    return;
-  }
-
-  lastPrices.set(resolvedToken, priceUsd);
   tracked.timestamp = timestamp;
 
   // Ensure pair is always set — resolve from tracked token when omitted
@@ -236,7 +214,6 @@ export function stopPriceEngine(): void {
   }
   trackedTokens.clear();
   pairToToken.clear();
-  lastPrices.clear();
 
   console.log("[PriceEngine] Stopped");
 }

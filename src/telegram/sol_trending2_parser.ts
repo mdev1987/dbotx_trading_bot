@@ -28,7 +28,7 @@ export function parseTrendingssolSignal(text: string): AveScannerSignal | null {
 
     const mcapMatch = text.match(/💸\s*Market\s*Cap\s*\$([\d.\s]+)(?:\s*([KMB]))?/);
     const marketCapUSD = mcapMatch
-      ? parseHumanNumber(mcapMatch[1])
+      ? parseHumanNumber(`${mcapMatch[1]}${mcapMatch[2] ?? ""}`)
       : 0;
 
     const priceLineMatch = text.match(/💲\s*(?:\S+\s+)?Price:\s*\$([\d.]+)/);

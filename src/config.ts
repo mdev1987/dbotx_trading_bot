@@ -161,7 +161,6 @@ export const CONFIG = {
   dexscreenerApiUrl:
     process.env.DEXSCREENER_API_URL ?? "https://api.dexscreener.com/tokens/v1/solana",
   dexscreenerPollIntervalMs: number("DEXSCREENER_POLL_INTERVAL_MS", 30_000),
-  maxPriceChangeRatio: number("MAX_PRICE_CHANGE_RATIO", 100),
   wsDataMaxReconnectDelayMs: number("WS_DATA_MAX_RECONNECT_DELAY_MS", 30_000),
   wsDataInitialReconnectDelayMs: number("WS_DATA_INITIAL_RECONNECT_DELAY_MS", 1_000),
 

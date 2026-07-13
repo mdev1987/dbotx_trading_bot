@@ -81,7 +81,20 @@ const services = {
   },
 };
 
-services.start().catch((err) => {
+services.start().then(() => {
+  process.on("SIGINT", () => {
+    console.log("\n[Main] SIGINT received");
+    services.stop();
+    process.exit(0);
+  });
+
+  process.on("SIGTERM", () => {
+    console.log("[Main] SIGTERM received");
+    services.stop();
+    process.exit(0);
+  });
+}).catch((err) => {
   console.error("[Main] Startup failed:", err);
+  services.stop();
   process.exit(1);
 });

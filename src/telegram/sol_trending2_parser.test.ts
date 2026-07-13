@@ -120,4 +120,73 @@ SOL TRENDING: Test (https://t.me/xxx) Buy!
     `);
     expect(result).toBeNull();
   });
+
+  test("should return null for empty string", () => {
+    expect(parseTrendingssolSignal("")).toBeNull();
+  });
+
+  test("should return null for message without SOL TRENDING header", () => {
+    expect(parseTrendingssolSignal("Some random message")).toBeNull();
+  });
+
+  test("should handle missing market cap line gracefully", () => {
+    const signal = `
+SOL TRENDING: TestCoin (https://t.me/test) Buy!
+🟢
+
+⬆️ New Holder!
+
+📈 Chart (https://dexscreener.com/solana/TestCoinCA1234567890123456789012345678901)   ⏫ Trending (https://t.me/trendingssol)
+    `;
+    const result = parseTrendingssolSignal(signal);
+    expect(result).not.toBeNull();
+    expect(result?.marketCapUSD).toBe(0);
+    expect(result?.Token).toBe("TestCoin");
+  });
+
+  test("should handle CA not ending in pump as Unknown dex", () => {
+    const signal = `
+SOL TRENDING: NonPumpCoin (https://t.me/nopump) Buy!
+🟢
+
+⬆️ New Holder!
+💸 Market Cap $100 000
+
+📈 Chart (https://dexscreener.com/solana/NonPumpCA1234567890123456789012345678901)   ⏫ Trending (https://t.me/trendingssol)
+    `;
+    const result = parseTrendingssolSignal(signal);
+    expect(result).not.toBeNull();
+    expect(result?.dex).toBe("Unknown");
+  });
+
+  test("should handle market cap with M suffix", () => {
+    const signal = `
+SOL TRENDING: MegaCoin (https://t.me/mega) Buy!
+🟢
+
+⬆️ New Holder!
+💸 Market Cap $5M
+
+📈 Chart (https://dexscreener.com/solana/MegaCoinCA12345678901234567890123456789012)   ⏫ Trending (https://t.me/trendingssol)
+    `;
+    const result = parseTrendingssolSignal(signal);
+    expect(result).not.toBeNull();
+    expect(result?.marketCapUSD).toBe(5_000_000);
+  });
+
+  test("should parse price line when present", () => {
+    const signal = `
+SOL TRENDING: PricedCoin (https://t.me/priced) Buy!
+🟢
+
+⬆️ Position: 50% Up!
+💲 SHIB Price: $0.001234
+💸 Market Cap $500K
+
+📈 Chart (https://dexscreener.com/solana/PricedCoinCA1234567890123456789012345678901)   ⏫ Trending (https://t.me/trendingssol)
+    `;
+    const result = parseTrendingssolSignal(signal);
+    expect(result).not.toBeNull();
+    expect(Number(result?.initPriceUSD)).toBeCloseTo(0.001234);
+  });
 });

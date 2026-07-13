@@ -333,4 +333,67 @@ describe("Ave Scanner Parser", () => {
 
     expect(result?.security?.noBlacklist).toBe(true);
   });
+
+  // ─── Edge cases ───────────────────────────────────────────────────────
+
+  test("should return null for empty input", () => {
+    expect(parseAveScannerSignal("")).toBeNull();
+  });
+
+  test("should return null for missing CA and LP", () => {
+    const text = `Token: TestToken\nInit Price: $0.01\nMCap: $1K\n`;
+    expect(parseAveScannerSignal(text)).toBeNull();
+  });
+
+  test("should return null for missing LP", () => {
+    const text = `Token: TestToken\nCA: FP1GCRkntLdb3EhVSnRzJzqzbS4hyJEgxnnyh8v91Caz\n`;
+    expect(parseAveScannerSignal(text)).toBeNull();
+  });
+
+  test("should parse signal with no holders listed", () => {
+    const text = `Token: TestToken (https://solscan.io/token/FP1GCRkntLdb3EhVSnRzJzqzbS4hyJEgxnnyh8v91Caz)
+CA: FP1GCRkntLdb3EhVSnRzJzqzbS4hyJEgxnnyh8v91Caz
+LP: 5wGEfoimBhyVb2XTVwxfpqyv5SynyAiNinsj7v6rigvh
+Init Price: $0.01003
+MCap: $1K
+Dex: Pump
+Token Holders: 0`;
+    const result = parseAveScannerSignal(text);
+    expect(result).not.toBeNull();
+    expect(result?.tokenHolders).toHaveLength(0);
+  });
+
+  test("should parse market cap with K suffix", () => {
+    const text = `Token: TestToken (https://solscan.io/token/FP1GCRkntLdb3EhVSnRzJzqzbS4hyJEgxnnyh8v91Caz)
+CA: FP1GCRkntLdb3EhVSnRzJzqzbS4hyJEgxnnyh8v91Caz
+LP: 5wGEfoimBhyVb2XTVwxfpqyv5SynyAiNinsj7v6rigvh
+Init Price: $0.01
+MCap: $500K
+Dex: Pump`;
+    const result = parseAveScannerSignal(text);
+    expect(result?.marketCapUSD).toBe(500_000);
+  });
+
+  test("should parse market cap with B suffix", () => {
+    const text = `Token: TestToken (https://solscan.io/token/FP1GCRkntLdb3EhVSnRzJzqzbS4hyJEgxnnyh8v91Caz)
+CA: FP1GCRkntLdb3EhVSnRzJzqzbS4hyJEgxnnyh8v91Caz
+LP: 5wGEfoimBhyVb2XTVwxfpqyv5SynyAiNinsj7v6rigvh
+Init Price: $0.01
+MCap: $1.5B
+Dex: Pump`;
+    const result = parseAveScannerSignal(text);
+    expect(result?.marketCapUSD).toBe(1_500_000_000);
+  });
+
+  test("should handle signal without security section", () => {
+    const text = `Token: TestToken
+CA: FP1GCRkntLdb3EhVSnRzJzqzbS4hyJEgxnnyh8v91Caz
+LP: 5wGEfoimBhyVb2XTVwxfpqyv5SynyAiNinsj7v6rigvh
+Init Price: $0.01
+MCap: $1K
+Dex: Pump`;
+    const result = parseAveScannerSignal(text);
+    expect(result).not.toBeNull();
+    expect(result?.CA).toBe("FP1GCRkntLdb3EhVSnRzJzqzbS4hyJEgxnnyh8v91Caz");
+  });
 });
