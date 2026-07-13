@@ -10,11 +10,11 @@ const activeMints = new Set<string>();
 
 export const pumpApiPriceUpdateEvent$ = new Subject<PumpEvent>();
 
-export function subscribeMint(mint: string): void {
+function subscribeMint(mint: string): void {
   activeMints.add(mint);
 }
 
-export function unsubscribeMint(mint: string): void {
+function unsubscribeMint(mint: string): void {
   activeMints.delete(mint);
 }
 

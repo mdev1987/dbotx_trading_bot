@@ -1,7 +1,7 @@
 import { BehaviorSubject } from "rxjs";
 
 import { CONFIG } from "../../config";
-import { http } from "./simulator_http";
+import { simHttp as http } from "../http";
 
 /* -------------------------------------------------------------------------- */
 /*                                   Types                                    */

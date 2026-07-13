@@ -1,14 +1,8 @@
-// main.ts
-
 import { CONFIG } from "./config";
 
-import { simulatorTrading } from "./trading/simulator/simulator";
-
-import type {
-  OrderResult,
-  TradingAccount,
-  TradingApi,
-} from "./trading/types";
+import { simulatorTrading } from "./trading/simulator/trading";
+import { liveTrading } from "./trading/live/trading";
+import { initLiveStore, recoverLivePositions, startLiveMonitor, stopLiveMonitor, connectTradeWs, disconnectTradeWs } from "./trading/live";
 
 import { unifiedPriceUpdate$, initPriceEngine, stopPriceEngine } from "./data_stream/price_engine";
 import { connectDataWs, disconnectDataWs } from "./data_stream/dbotx_data_stream";
@@ -21,130 +15,75 @@ import { TrailingStopStrategy } from "./strategy/exit-strategies/trailing-stop";
 import { PartialTakeProfitStrategy } from "./strategy/exit-strategies/partial-tp";
 import { TtlStrategy } from "./strategy/exit-strategies/ttl";
 import { startTelegramListener, stopTelegramListener } from "./telegram/telegram_client";
-import { startSimulatedTrading, stopSimulatedTrading } from "./simulated_trading";
-
-/* -------------------------------------------------------------------------- */
-/*                              Trading Backend                               */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Current trading backend.
- *
- * For now only the simulator is available.
- *
- * When the live module is implemented this file will become:
- *
- * const trading =
- *   CONFIG.liveMode
- *     ? liveTrading
- *     : simulatorTrading;
- */
-export const trading: TradingApi = simulatorTrading;
-
-/* -------------------------------------------------------------------------- */
-/*                            Convenience Functions                           */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Submit a buy order.
- */
-export async function buy(
-  pair: string,
-  amountSol: number,
-  tokenName: string,
-  token: string,
-): Promise<OrderResult> {
-  return trading.buy(pair, amountSol, tokenName, token);
-}
-
-/**
- * Submit a sell order.
- */
-export async function sell(
-  pair: string,
-  percentage: number,
-  tokenName: string,
-  token: string,
-): Promise<OrderResult> {
-  return trading.sell(pair, percentage, tokenName, token);
-}
-
-/**
- * Retrieve simulator account information.
- */
-export async function getAccount(): Promise<TradingAccount> {
-  return trading.getAccount();
-}
-
-/**
- * Shutdown the trading backend.
- */
-export async function shutdown(): Promise<void> {
-  await trading.shutdown();
-}
-
-/* -------------------------------------------------------------------------- */
-/*                                 Trading Mode                               */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Current trading mode.
- */
-export const tradingMode = CONFIG.liveMode ? "live" : "simulate";
-
-/**
- * Returns true when running with real funds.
- *
- * Currently always false until the live backend is implemented.
- */
-export const isLiveTrading = false;
-
-/**
- * Returns true when using the simulator.
- */
-export const isSimulatorTrading = true;
+import { initTelegramBot, shutdownTelegramBot } from "./telegram/telegram_bot";
+import { startTrading, stopTrading } from "./trading/handler";
 
 /* -------------------------------------------------------------------------- */
 /*                          Strategy Engine Wiring                            */
 /* -------------------------------------------------------------------------- */
 
-registerStrategies([
-  new StopLossStrategy(CONFIG.stopLossEnabled, CONFIG.stopLossPct),
-  new TrailingStopStrategy(CONFIG.trailingActivationPct, CONFIG.trailingDistancePct),
-  new PartialTakeProfitStrategy(CONFIG.partialTpEnabled, CONFIG.partialTpTiers),
-  new TtlStrategy(CONFIG.baseTtlSecs, CONFIG.maxTtlSecs, CONFIG.minProfitForTtlExtensionPct),
-]);
+if (!CONFIG.liveMode) {
+  registerStrategies([
+    new StopLossStrategy(CONFIG.stopLossEnabled, CONFIG.stopLossPct),
+    new TrailingStopStrategy(CONFIG.trailingActivationPct, CONFIG.trailingDistancePct),
+    new PartialTakeProfitStrategy(CONFIG.partialTpEnabled, CONFIG.partialTpTiers),
+    new TtlStrategy(CONFIG.baseTtlSecs, CONFIG.maxTtlSecs, CONFIG.minProfitForTtlExtensionPct),
+  ]);
+}
 
-export const positionEngine = new PositionEngine(
+const positionEngine = new PositionEngine(
   unifiedPriceUpdate$,
   updatePositionPrice,
   scanPositions,
 );
 
 const services = {
-  start(): void {
+  async start(): Promise<void> {
+    initTelegramBot();
     connectDataWs();
     connectPumpStream();
     initPriceEngine();
-    positionEngine.start();
-    startSimulatedTrading().catch((err) =>
-      console.error("[Main] Sim trading failed:", err),
-    );
+
+    if (CONFIG.liveMode) {
+      initLiveStore(CONFIG.liveDbPath);
+
+      if (CONFIG.recoveryOnStart) {
+        await recoverLivePositions();
+      }
+
+      connectTradeWs();
+      startLiveMonitor();
+      await startTrading(liveTrading);
+    } else {
+      positionEngine.start();
+      await startTrading(simulatorTrading);
+    }
+
     startTelegramListener().catch((err) =>
       console.error("[Main] Telegram listener failed:", err),
     );
+
     console.log("[Main] All services started");
   },
 
   stop(): void {
-    stopSimulatedTrading();
-    positionEngine.stop();
+    if (CONFIG.liveMode) {
+      stopLiveMonitor();
+      disconnectTradeWs();
+    } else {
+      stopTrading();
+      positionEngine.stop();
+    }
     stopPriceEngine();
     disconnectDataWs();
     disconnectPumpStream();
     stopTelegramListener();
+    shutdownTelegramBot();
     console.log("[Main] All services stopped");
   },
 };
 
-services.start();
+services.start().catch((err) => {
+  console.error("[Main] Startup failed:", err);
+  process.exit(1);
+});

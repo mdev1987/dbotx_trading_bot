@@ -1,21 +1,20 @@
-import { Bot } from "grammy";
-import { convert } from "telegram-markdown-v2";
 import { Subscription } from "rxjs";
 
-import { CONFIG } from "./config";
-import { telegramSignal$ } from "./telegram/telegram_client";
-import { positionExitRequested$ } from "./strategy/scanner";
+import { CONFIG } from "../config";
+import { telegramSignal$ } from "../telegram/telegram_client";
+import { positionExitRequested$ } from "../strategy/scanner";
 import {
   addPosition,
   removePosition,
   hasPosition,
   positionUpdated$,
-} from "./strategy/positions_store";
-import { trackToken, untrackToken, getSolPriceUsd } from "./data_stream/price_engine";
-import { PositionExitReason, type Position } from "./strategy/types";
-import type { AveScannerSignal } from "./telegram/ave_scanner_parser";
-import type { ExitCheckResult } from "./strategy/exit-strategies/types";
-import { simulatorTrading } from "./trading/simulator/simulator";
+} from "../strategy/positions_store";
+import { trackToken, untrackToken, getSolPriceUsd } from "../data_stream/price_engine";
+import { PositionExitReason, type Position } from "../strategy/types";
+import type { AveScannerSignal } from "../telegram/ave_scanner_parser";
+import type { ExitCheckResult } from "../strategy/exit-strategies/types";
+import type { TradingApi } from "./types";
+import { sendTelegram, fmtPrice, fmtPct, fmtMcap, fmtDuration, notifyBuyOpened, notifyTradeClosed, sendTradeReport } from "../telegram/telegram_bot";
 
 /* -------------------------------------------------------------------------- */
 /*                                   State                                    */
@@ -23,13 +22,15 @@ import { simulatorTrading } from "./trading/simulator/simulator";
 
 const DEBUG = CONFIG.logLevel === "debug";
 
-let bot: Bot | null = null;
 let signalSub: Subscription | null = null;
 let exitSub: Subscription | null = null;
 let debugSub: Subscription | null = null;
 
 /** Prevents duplicate buys for the same pair while a buy is in-flight. */
 const pendingBuyPairs = new Set<string>();
+
+/** Trading backend — set by startTrading. */
+let trading: TradingApi | null = null;
 
 const LIVE_SIM_START = 10;
 let initialSimBalance = 0;
@@ -134,35 +135,20 @@ function sendTradeReport(): void {
       ? avgMcaps.reduce((s, v) => s + v, 0) / avgMcaps.length
       : 0;
 
-  const lines: string[] = [
-    `📊 **Trade Report \\(last ${total}\\)**`,
-    `━━━━━━━━━━━━━━━━━━━`,
-    `Trades: \`${total}\``,
-    `Win rate: \`${(winRate * 100).toFixed(0)}%\``,
-    `Avg winner: \`${fmtPct(avgWin)}\``,
-    `Avg loser: \`${fmtPct(avgLoss)}\``,
-    `Profit factor: \`${profitFactor.toFixed(2)}\``,
-    `Expectancy: \`${expectancy >= 0 ? "+" : ""}${expectancy.toFixed(2)}R\``,
-    `Median hold: \`${fmtDuration(medianDurationMs)}\``,
-    ``,
-    `Best: \`${best.tokenName}\` ${fmtPct(best.pnl)}`,
-    `Worst: \`${worst.tokenName}\` ${fmtPct(worst.pnl)}`,
-    ``,
-    ...Object.entries(exitTypes)
-      .sort(([, a], [, b]) => b - a)
-      .map(
-        ([label, count]) =>
-          `${label}: \`${((count / total) * 100).toFixed(0)}%\``,
-      ),
-  ];
+  sendTradeReport(
+    total,
+    winRate,
+    avgWin,
+    avgLoss,
+    profitFactor,
+    expectancy,
+    medianDurationMs,
+    { tokenName: best.tokenName, pnl: best.pnl },
+    { tokenName: worst.tokenName, pnl: worst.pnl },
+    exitTypes,
+    avgMcap,
+  );
 
-  if (avgMcap > 0) {
-    lines.push(`Avg MCap: \`${fmtMcap(avgMcap)}\``);
-  }
-
-  lines.push(`━━━━━━━━━━━━━━━━━━━`);
-
-  sendTelegram(lines.join("\n"));
   console.log("[SimTrading] Report sent");
 }
 
@@ -170,49 +156,8 @@ function sendTradeReport(): void {
 /*                                  Helpers                                   */
 /* -------------------------------------------------------------------------- */
 
-function fmtPrice(price: number): string {
-  if (price >= 1) return `$${price.toFixed(4)}`;
-  if (price >= 0.001) return `$${price.toFixed(6)}`;
-  if (price >= 0.000001) return `$${price.toFixed(9)}`;
-  return `$${price.toFixed(12)}`;
-}
-
-function fmtPct(value: number): string {
-  const sign = value >= 0 ? "+" : "";
-  return `${sign}${(value * 100).toFixed(2)}%`;
-}
-
 function now(): number {
   return Date.now();
-}
-
-function fmtMcap(mcap: number): string {
-  if (mcap >= 1e9) return `$${(mcap / 1e9).toFixed(2)}B`;
-  if (mcap >= 1e6) return `$${(mcap / 1e6).toFixed(2)}M`;
-  if (mcap >= 1e3) return `$${(mcap / 1e3).toFixed(2)}K`;
-  return `$${mcap.toFixed(2)}`;
-}
-
-function fmtDuration(ms: number): string {
-  const totalSecs = Math.floor(ms / 1000);
-  const mins = Math.floor(totalSecs / 60);
-  const secs = totalSecs % 60;
-  return `${mins}:${String(secs).padStart(2, "0")}`;
-}
-
-function sendTelegram(text: string): void {
-  if (!bot || !CONFIG.telegramChatId) return;
-
-  try {
-    const converted = convert(text);
-    bot.api.sendMessage(CONFIG.telegramChatId, converted, {
-      parse_mode: "MarkdownV2",
-    }).catch((err) => {
-      console.error("[SimTrading] Failed to send msg:", err);
-    });
-  } catch (err) {
-    console.error("[SimTrading] Failed to convert msg:", err);
-  }
 }
 
 function reasonToLabel(reason: PositionExitReason): string {
@@ -253,8 +198,10 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
     `[SimTrading] Buy signal: ${tokenName}${entryPrice ? ` @ ${fmtPrice(entryPrice)}` : " (no price)"}`,
   );
 
+  if (!trading) return;
+
   try {
-    const result = await simulatorTrading.buy(
+    const result = await trading.buy(
       pair,
       CONFIG.positionSize,
       tokenName,
@@ -275,32 +222,20 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       return;
     }
     trackToken(token, pair);
-    const account = await simulatorTrading.getAccount();
+      const account = await trading.getAccount();
 
     if (initialSimBalance === 0) {
       initialSimBalance = account.balance;
     }
 
-    const lines = [
-      `🟢 **Position Opened**`,
-      `━━━━━━━━━━━━━━━━━━━`,
-      `🔖 Token: \`${tokenName}\``,
-      `💵 Entry: \`${fmtPrice(fillPrice)}\``,
-      `💰 Size: \`${CONFIG.positionSize} SOL\``,
-      `💳 Balance: \`$${account.balance.toFixed(2)}\``,
-      `💵 Live: \`$${getLiveCash(account.balance).toFixed(4)}\``,
-    ];
-
-    if (signal.marketCapUSD) {
-      lines.push(
-        `📊 MCap: \`${fmtMcap(signal.marketCapUSD)}\``,
-      );
-    }
-    if (signal.dex) {
-      lines.push(`🏛 Dex: \`${signal.dex}\``);
-    }
-
-    sendTelegram(lines.join("\n"));
+    notifyBuyOpened(
+      tokenName,
+      fillPrice,
+      CONFIG.positionSize,
+      account.balance,
+      signal.marketCapUSD,
+      signal.dex,
+    );
   } catch (err) {
     console.error(`[SimTrading] Buy failed for ${tokenName}:`, err);
     untrackToken(token);
@@ -324,8 +259,10 @@ async function onExit(result: ExitCheckResult): Promise<void> {
     `[SimTrading] Exit: ${tokenName} reason=${reason} pct=${(sellPct * 100).toFixed(0)}%`,
   );
 
+  if (!trading) return;
+
   try {
-    const sellResult = await simulatorTrading.sell(
+    const sellResult = await trading.sell(
       pair,
       sellPct,
       tokenName,
@@ -355,26 +292,18 @@ async function onExit(result: ExitCheckResult): Promise<void> {
 
       recordTrade(closed, closePrice, reason);
 
-      const label = pnl >= 0 ? "🟢" : "🔴";
+      const account = await trading.getAccount();
 
-      const account = await simulatorTrading.getAccount();
-
-      const lines = [
-        `${label} **Trade Closed**`,
-        `━━━━━━━━━━━━━━━━━━━`,
-        `🔖 Token: \`${tokenName}\``,
-        `📈 PnL: **${fmtPct(pnl)}**`,
-        `💵 Entry: \`${fmtPrice(closed.entryPriceUsd)}\``,
-        `💵 Exit: \`${fmtPrice(closePrice)}\``,
-        `💰 Size: \`${closed.sizeSol} SOL\``,
-        `💳 Balance: \`$${account.balance.toFixed(2)}\``,
-        `💵 Live: \`$${getLiveCash(account.balance).toFixed(4)}\``,
-        `📋 Reason: \`${reasonToLabel(reason)}\``,
-        `⏱ Duration: \`${fmtDuration(durationMs)}\``,
-        `━━━━━━━━━━━━━━━━━━━`,
-      ];
-
-      sendTelegram(lines.join("\n"));
+      notifyTradeClosed(
+        tokenName,
+        pnl,
+        closed.entryPriceUsd,
+        closePrice,
+        closed.sizeSol,
+        account.balance,
+        reasonToLabel(reason),
+        durationMs,
+      );
 
       if (reason !== PositionExitReason.PartialTP) {
         untrackToken(token);
@@ -401,13 +330,10 @@ function onPositionUpdate(position: Position): void {
 /*                                Lifecycle                                   */
 /* -------------------------------------------------------------------------- */
 
-export async function startSimulatedTrading(): Promise<void> {
+export async function startTrading(api: TradingApi): Promise<void> {
   if (signalSub) return;
 
-  if (CONFIG.telegramBotToken && CONFIG.telegramChatId) {
-    bot = new Bot(CONFIG.telegramBotToken);
-    console.log("[SimTrading] Bot initialized");
-  }
+  trading = api;
 
   console.log(
     `[SimTrading] Live sim: $${LIVE_SIM_START}`,
@@ -423,7 +349,7 @@ export async function startSimulatedTrading(): Promise<void> {
   console.log("[SimTrading] Started");
 }
 
-export function stopSimulatedTrading(): void {
+export function stopTrading(): void {
   signalSub?.unsubscribe();
   exitSub?.unsubscribe();
   debugSub?.unsubscribe();
@@ -431,8 +357,6 @@ export function stopSimulatedTrading(): void {
   signalSub = null;
   exitSub = null;
   debugSub = null;
-
-  bot = null;
 
   console.log("[SimTrading] Stopped");
 }

@@ -1,36 +1,26 @@
 import {
   submitBuy,
   submitSell,
-  simulatorOrderSubmitted$,
   SimulatorOrderStatus,
   type SimulatorOrder,
-} from "./simulator_orders";
+} from "./orders";
 
 import {
-  getTask,
   waitForTaskConfirmed,
-  simulatorTaskCompleted$,
   type SimulatorTask,
-} from "./simulator_tasks";
+} from "./tasks";
 
 import {
-  simulatorAccount$,
   refreshSimulatorAccount,
   getSimulatorAccount,
   resetSimulatorAccount,
-} from "./simulator_account";
+} from "./account";
 
 import type {
   OrderResult,
   TradingAccount,
   TradingApi,
 } from "../types";
-
-/* -------------------------------------------------------------------------- */
-/*                                   Events                                   */
-/* -------------------------------------------------------------------------- */
-
-export { simulatorOrderSubmitted$, simulatorTaskCompleted$, simulatorAccount$ };
 
 /* -------------------------------------------------------------------------- */
 /*                              Internal Helper                               */
@@ -95,10 +85,3 @@ export const simulatorTrading: TradingApi = {
     await resetSimulatorAccount();
   },
 };
-
-/* -------------------------------------------------------------------------- */
-/*                              Legacy Exports                                */
-/* -------------------------------------------------------------------------- */
-
-export { getTask } from "./simulator_tasks";
-export { waitForTaskConfirmed as waitForTask } from "./simulator_tasks";

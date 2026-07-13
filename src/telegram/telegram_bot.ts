@@ -1,307 +1,194 @@
 import { Bot } from "grammy";
 import { convert } from "telegram-markdown-v2";
-
-import { Observable, Subject, Subscription, timer } from "rxjs";
-import { concatMap, distinctUntilChanged, filter, map } from "rxjs/operators";
-
 import { CONFIG } from "../config";
 
-import type { PerformanceReport } from "../strategy/types";
+/* -------------------------------------------------------------------------- */
+/*                                   Bot                                      */
+/* -------------------------------------------------------------------------- */
 
-const bot = new Bot(CONFIG.telegramBotToken!);
-const CHAT_ID = CONFIG.telegramChatId!;
+let bot: Bot | null = null;
 
-const SEPARATOR = "━━━━━━━━━━━━━━━━━━━";
-
-function fmtSigned(value: number, suffix = ""): string {
-  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}${suffix}`;
+export function initTelegramBot(): void {
+  if (bot) return;
+  if (!CONFIG.telegramBotToken) {
+    console.warn("[TelegramBot] No token configured");
+    return;
+  }
+  bot = new Bot(CONFIG.telegramBotToken);
+  console.log("[TelegramBot] Initialized");
 }
 
-function fmtUsd(value: number): string {
-  if (value >= 1) return `$${value.toFixed(2)}`;
-  if (value >= 0.001) return `$${value.toFixed(6)}`;
-  return `$${value.toFixed(10)}`;
+export function shutdownTelegramBot(): void {
+  bot = null;
 }
 
-function fmtTime(ts: number): string {
-  const d = new Date(ts);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
-}
+/* -------------------------------------------------------------------------- */
+/*                               Send Message                                 */
+/* -------------------------------------------------------------------------- */
 
-function fmtDuration(ms: number): string {
-  const secs = Math.floor(ms / 1000);
-  const mins = Math.floor(secs / 60);
-  const hrs = Math.floor(mins / 60);
-  if (hrs > 0) return `${hrs}h ${mins % 60}m ${secs % 60}s`;
-  if (mins > 0) return `${mins}m ${secs % 60}s`;
-  return `${secs}s`;
-}
-
-function closeIcon(reason: string): string {
-  switch (reason) {
-    case "take_profit":
-      return "🟢";
-    case "stop_loss":
-      return "🔴";
-    case "trailing_stop":
-      return "🟡";
-    case "trailing_tp":
-      return "🔵";
-    case "expired":
-      return "⏰";
-    case "manual":
-      return "👤";
-    default:
-      return "⚠️";
+export function sendTelegram(text: string): void {
+  if (!bot || !CONFIG.telegramChatId) return;
+  try {
+    const converted = convert(text);
+    bot.api.sendMessage(CONFIG.telegramChatId, converted, {
+      parse_mode: "MarkdownV2",
+    }).catch((err) => {
+      console.error("[TelegramBot] Failed to send msg:", err);
+    });
+  } catch (err) {
+    console.error("[TelegramBot] Failed to convert msg:", err);
   }
 }
 
-function closeLabel(reason: string): string {
-  const labels: Record<string, string> = {
-    take_profit: "Take Profit",
-    stop_loss: "Stop Loss",
-    trailing_stop: "Trailing Stop",
-    trailing_tp: "Trailing TP",
-    expired: "TTL Expired",
-    manual: "Manual Close",
-  };
-  return labels[reason] ?? reason;
+/* -------------------------------------------------------------------------- */
+/*                               Formatters                                   */
+/* -------------------------------------------------------------------------- */
+
+export function fmtPrice(price: number): string {
+  if (price >= 1) return `$${price.toFixed(4)}`;
+  if (price >= 0.001) return `$${price.toFixed(6)}`;
+  if (price >= 0.000001) return `$${price.toFixed(9)}`;
+  return `$${price.toFixed(12)}`;
 }
 
-export interface ReporterCallbacks {
-  getReport(): PerformanceReport;
-  getBalanceStr(): string;
-  openPositions$: Observable<any[]>;
-  positionEvent$: Observable<any>;
-  positionClosed$: Observable<any>;
+export function fmtPct(value: number): string {
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${(value * 100).toFixed(2)}%`;
 }
 
-export class TelegramReporter {
-  private readonly sendQueue$ = new Subject<string>();
-  private readonly subscriptions: Subscription[] = [];
-  private callbacks!: ReporterCallbacks;
-  public openCount = 0;
+export function fmtMcap(mcap: number): string {
+  if (mcap >= 1e9) return `$${(mcap / 1e9).toFixed(2)}B`;
+  if (mcap >= 1e6) return `$${(mcap / 1e6).toFixed(2)}M`;
+  if (mcap >= 1e3) return `$${(mcap / 1e3).toFixed(2)}K`;
+  return `$${mcap.toFixed(2)}`;
+}
 
-  wire(callbacks: ReporterCallbacks): void {
-    this.callbacks = callbacks;
+export function fmtDuration(ms: number): string {
+  const totalSecs = Math.floor(ms / 1000);
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+  return `${mins}:${String(secs).padStart(2, "0")}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                               Notifications                                */
+/* -------------------------------------------------------------------------- */
+
+export function notifyBuyOpened(
+  tokenName: string,
+  fillPrice: number,
+  sizeSol: number,
+  balanceUsd: number,
+  mcap?: number,
+  dex?: string,
+): void {
+  const lines = [
+    `🟢 **Position Opened**`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `🔖 Token: \`${tokenName}\``,
+    `💵 Entry: \`${fmtPrice(fillPrice)}\``,
+    `💰 Size: \`${sizeSol} SOL\``,
+    `💳 Balance: \`$${balanceUsd.toFixed(2)}\``,
+  ];
+
+  if (mcap) lines.push(`📊 MCap: \`${fmtMcap(mcap)}\``);
+  if (dex) lines.push(`🏛 Dex: \`${dex}\``);
+
+  sendTelegram(lines.join("\n"));
+}
+
+export function notifyTradeClosed(
+  tokenName: string,
+  pnl: number,
+  entryPrice: number,
+  exitPrice: number,
+  sizeSol: number,
+  balanceUsd: number,
+  reason: string,
+  durationMs: number,
+): void {
+  const label = pnl >= 0 ? "🟢" : "🔴";
+
+  const lines = [
+    `${label} **Trade Closed**`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `🔖 Token: \`${tokenName}\``,
+    `📈 PnL: **${fmtPct(pnl)}**`,
+    `💵 Entry: \`${fmtPrice(entryPrice)}\``,
+    `💵 Exit: \`${fmtPrice(exitPrice)}\``,
+    `💰 Size: \`${sizeSol} SOL\``,
+    `💳 Balance: \`$${balanceUsd.toFixed(2)}\``,
+    `📋 Reason: \`${reason}\``,
+    `⏱ Duration: \`${fmtDuration(durationMs)}\``,
+    `━━━━━━━━━━━━━━━━━━━`,
+  ];
+
+  sendTelegram(lines.join("\n"));
+}
+
+export function notifyExitTask(
+  label: string,
+  tokenName: string,
+  isSuccess: boolean,
+  priceUsd?: number,
+  errorMessage?: string,
+  txHash?: string,
+): void {
+  const emoji = isSuccess ? "🟢" : "🔴";
+
+  const lines = [
+    `${emoji} **${label} ${isSuccess ? "Success" : "Failed"}**`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `🔖 Token: \`${tokenName}\``,
+  ];
+
+  if (priceUsd) lines.push(`💵 Price: \`$${priceUsd}\``);
+  if (!isSuccess && errorMessage) lines.push(`❌ Error: \`${errorMessage}\``);
+  if (isSuccess && txHash) lines.push(`🔗 Tx: \`${txHash.slice(0, 16)}…\``);
+
+  sendTelegram(lines.join("\n"));
+}
+
+export function sendTradeReport(
+  total: number,
+  winRate: number,
+  avgWin: number,
+  avgLoss: number,
+  profitFactor: number,
+  expectancy: number,
+  medianDurationMs: number,
+  best: { tokenName: string; pnl: number },
+  worst: { tokenName: string; pnl: number },
+  exitTypes: Record<string, number>,
+  avgMcap?: number,
+): void {
+  const lines: string[] = [
+    `📊 **Trade Report \\(last ${total}\\)**`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `Trades: \`${total}\``,
+    `Win rate: \`${(winRate * 100).toFixed(0)}%\``,
+    `Avg winner: \`${fmtPct(avgWin)}\``,
+    `Avg loser: \`${fmtPct(avgLoss)}\``,
+    `Profit factor: \`${profitFactor.toFixed(2)}\``,
+    `Expectancy: \`${expectancy >= 0 ? "+" : ""}${expectancy.toFixed(2)}R\``,
+    `Median hold: \`${fmtDuration(medianDurationMs)}\``,
+    ``,
+    `Best: \`${best.tokenName}\` ${fmtPct(best.pnl)}`,
+    `Worst: \`${worst.tokenName}\` ${fmtPct(worst.pnl)}`,
+    ``,
+    ...Object.entries(exitTypes)
+      .sort(([, a], [, b]) => b - a)
+      .map(
+        ([label, count]) =>
+          `${label}: \`${((count / total) * 100).toFixed(0)}%\``,
+      ),
+  ];
+
+  if (avgMcap && avgMcap > 0) {
+    lines.push(`Avg MCap: \`${fmtMcap(avgMcap)}\``);
   }
 
-  private get isWired(): boolean {
-    return this.callbacks !== undefined;
-  }
+  lines.push(`━━━━━━━━━━━━━━━━━━━`);
 
-  /** Convert markdown safely, falling back to raw text on error */
-  private safeConvert(msg: string): string {
-    try {
-      return convert(msg);
-    } catch (e) {
-      console.error("[Reporter] markdown convert error:", e);
-      return msg;
-    }
-  }
-
-  start(): void {
-    if (this.subscriptions.length > 0) return;
-    if (!this.isWired) {
-      throw new Error(
-        "TelegramReporter.start() called before wire(). Call reporter.wire(callbacks) first.",
-      );
-    }
-
-    this.subscriptions.push(
-      this.sendQueue$
-        .pipe(
-          concatMap((msg) => {
-            const converted = this.safeConvert(msg);
-            return this.sendWithRetry(converted);
-          }),
-        )
-        .subscribe({
-          error: (e) => console.error("[Reporter] sendQueue error:", e),
-        }),
-    );
-
-    this.subscriptions.push(
-      this.callbacks.openPositions$.subscribe((positions) => {
-        this.openCount = positions.length;
-      }),
-    );
-
-    this.subscriptions.push(
-      this.callbacks.positionEvent$
-        .pipe(filter((ev) => ev.type === "opened"))
-        .subscribe((ev) => {
-          try {
-            this.enqueueMessage(this.buildOpened(ev));
-          } catch (e) {
-            console.error("[Reporter] buildOpened error:", e);
-          }
-        }),
-    );
-
-    this.subscriptions.push(
-      this.callbacks.positionClosed$.subscribe((ev) => {
-        try {
-          this.enqueueMessage(this.buildClosed(ev));
-        } catch (e) {
-          console.error("[Reporter] buildClosed error:", e);
-        }
-      }),
-    );
-
-    const intervalMs = CONFIG.reportIntervalMinutes * 60_000;
-    if (intervalMs > 0) {
-      this.subscriptions.push(
-        timer(intervalMs, intervalMs)
-          .pipe(
-            map(() => {
-              try {
-                return this.callbacks.getReport();
-              } catch {
-                return null;
-              }
-            }),
-            distinctUntilChanged((a, b) => {
-              if (!a || !b) return false;
-              return JSON.stringify(a) === JSON.stringify(b);
-            }),
-            filter((r): r is PerformanceReport => r !== null),
-          )
-          .subscribe((r) => this.enqueueMessage(this.buildSummary(r))),
-      );
-    }
-
-    console.log("[Reporter] Started");
-  }
-
-  async stop(): Promise<void> {
-    // Give the queue a moment to drain before tearing down
-    await new Promise((r) => setTimeout(r, 2000));
-    for (const sub of this.subscriptions) sub.unsubscribe();
-    this.subscriptions.length = 0;
-    this.sendQueue$.complete();
-    bot.stop();
-    console.log("[Reporter] Stopped");
-  }
-
-  sendMessage(message: string): void {
-    this.enqueueMessage(message);
-  }
-
-  private enqueueMessage(message: string): void {
-    this.sendQueue$.next(message);
-  }
-
-  private async sendWithRetry(message: string, maxRetries = 3): Promise<void> {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        await bot.api.sendMessage(CHAT_ID, message, {
-          parse_mode: "MarkdownV2",
-        });
-        return;
-      } catch (error) {
-        if (attempt === maxRetries) {
-          console.error("[Reporter] Failed to send:", error);
-          return;
-        }
-        await new Promise((r) =>
-          setTimeout(r, 1000 * Math.pow(2, attempt - 1)),
-        );
-      }
-    }
-  }
-
-  // ── Message builders ────────────────────────────────────────────────────
-
-  private buildOpened(event: any): string {
-    const p = event.position;
-    const report = this.callbacks.getReport();
-    const mode = CONFIG.liveMode ? "📡 Live" : "🧪 Simulate";
-
-    const lines = [
-      `🟢 **Position Opened**`,
-      `${SEPARATOR}`,
-      `🔖 Token: \`${p.tokenName}\``,
-      `💵 Entry: \`${fmtUsd(p.entryPriceUsd)}\``,
-      `💰 Size: \`${p.sizeSol.toFixed(2)} SOL\``,
-      `🕐 Time: \`${fmtTime(p.openedAt)}\``,
-      `${SEPARATOR}`,
-      this.callbacks.getBalanceStr(),
-      `📌 Positions: \`${report.openPositions} / ${CONFIG.maxPositions}\``,
-      `📶 Mode: \`${mode}\``,
-    ];
-
-    return lines.join("\n");
-  }
-
-  private buildClosed(event: any): string {
-    const p = event.position;
-    const report = this.callbacks.getReport();
-    const mode = CONFIG.liveMode ? "📡 Live" : "🧪 Simulate";
-    const reason = p.reason ?? "unknown";
-    const pnlPct = p.currentProfitPct ?? 0;
-    const profitable = pnlPct >= 0;
-    const durationMs = (p.closedAt ?? Date.now()) - (p.openedAt ?? Date.now());
-
-    const lines = [
-      `${profitable ? "🟢" : "🔴"} **Position Closed** ${profitable ? "✅" : "❌"}`,
-      `${SEPARATOR}`,
-      `🔖 Token: \`${p.tokenName}\``,
-      `💵 Entry: \`${fmtUsd(p.entryPriceUsd)}\``,
-    ];
-
-    if (p.closePriceUsd != null) {
-      lines.push(`💵 Exit: \`${fmtUsd(p.closePriceUsd)}\``);
-    }
-
-    lines.push(
-      `📈 PnL: **${fmtSigned(pnlPct * 100)}%**`,
-      `⏱ Duration: \`${fmtDuration(durationMs)}\``,
-      `🔗 Reason: ${closeIcon(reason)} **${closeLabel(reason)}**`,
-      `${SEPARATOR}`,
-      this.callbacks.getBalanceStr(),
-      `📌 Positions: \`${report.openPositions} / ${CONFIG.maxPositions}\``,
-      `📶 Mode: \`${mode}\``,
-    );
-
-    return lines.join("\n");
-  }
-
-  private buildSummary(report: PerformanceReport): string {
-    const mode = CONFIG.liveMode ? "📡 Live" : "🧪 Simulate";
-
-    const lines = [
-      `📊 **Performance Report**`,
-      `${SEPARATOR}`,
-      `📶 Mode: \`${mode}\``,
-      `${SEPARATOR}`,
-      this.callbacks.getBalanceStr(),
-      `${SEPARATOR}`,
-      `📌 Open Positions: \`${report.openPositions} / ${CONFIG.maxPositions}\``,
-      `✅ Closed Positions: \`${report.closedPositions}\``,
-      `📋 Total Positions: \`${report.totalPositions}\``,
-      `${SEPARATOR}`,
-      `${report.winRate >= 50 ? "🏆" : "⚠️"} **Trading Results**`,
-      `✅ Wins: \`${report.winningTrades}\``,
-      `❌ Losses: \`${report.losingTrades}\``,
-      `🎯 Win Rate: **${report.winRate.toFixed(1)}%**`,
-      `${SEPARATOR}`,
-      `**Profit & Loss**`,
-      `💰 Total: **${fmtSigned(report.totalProfitPct * 100)}%** (${fmtSigned(report.totalProfitUsd, "$")})`,
-      `📈 Best: **${fmtSigned(report.bestTradePct * 100)}%**`,
-      `📉 Worst: **${fmtSigned(report.worstTradePct * 100)}%**`,
-    ];
-
-    if (Object.keys(report.reasons).length > 0) {
-      lines.push(`${SEPARATOR}`);
-      lines.push(`**Close Reasons**`);
-      for (const [reason, count] of Object.entries(report.reasons)) {
-        lines.push(
-          `${closeIcon(reason)} **${closeLabel(reason)}**: \`${count}\``,
-        );
-      }
-    }
-
-    return lines.join("\n");
-  }
+  sendTelegram(lines.join("\n"));
 }

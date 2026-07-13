@@ -1,6 +1,6 @@
 import { Subject } from "rxjs";
 import { CONFIG, type PartialTpTier } from "../../config";
-import { http } from "./simulator_http";
+import { simHttp as http } from "../http";
 
 /* -------------------------------------------------------------------------- */
 /*                                   Types                                    */

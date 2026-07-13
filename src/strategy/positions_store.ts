@@ -1,26 +1,19 @@
-import { BehaviorSubject, Subject } from "rxjs";
+import { Subject } from "rxjs";
 
 import type { PriceInfo } from "../data_stream/types";
 import type { Position, PositionExitReason } from "./types";
 import { clearPendingExit } from "./scanner";
 
 const positions = new Map<string, Position>();
-const closedPositions: Position[] = [];
 
 let nextPositionId = 1;
 
 export { positions };
 
-export const openPositions$ = new BehaviorSubject<readonly Position[]>([]);
-
-export const positionOpened$ = new Subject<Position>();
-
 export const positionUpdated$ = new Subject<Position>();
 
-export const positionClosed$ = new Subject<Position>();
-
 function publishPositions(): void {
-  openPositions$.next([...positions.values()]);
+  /* no subscribers */
 }
 
 function createPositionId(): string {
@@ -74,8 +67,6 @@ export function addPosition(
 
   publishPositions();
 
-  positionOpened$.next(position);
-
   return position;
 }
 
@@ -98,11 +89,7 @@ export function removePosition(
 
   positions.delete(pair);
 
-  closedPositions.push(position);
-
   publishPositions();
-
-  positionClosed$.next(position);
 
   clearPendingExit(position.id);
 
@@ -141,30 +128,6 @@ export function updatePositionPrice(update: PriceInfo): void {
   positionUpdated$.next(position);
 }
 
-export function getPosition(pair: string): Position | undefined {
-  return positions.get(pair);
-}
-
 export function hasPosition(pair: string): boolean {
   return positions.has(pair);
-}
-
-export function getOpenPositions(): readonly Position[] {
-  return [...positions.values()];
-}
-
-export function getClosedPositions(): readonly Position[] {
-  return closedPositions;
-}
-
-export function positionCount(): number {
-  return positions.size;
-}
-
-export function clearPositions(): void {
-  positions.clear();
-
-  closedPositions.length = 0;
-
-  publishPositions();
 }

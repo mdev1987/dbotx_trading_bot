@@ -1,7 +1,7 @@
 import { Subject } from "rxjs";
 import { CONFIG } from "../../config";
-import { http } from "./simulator_http";
-import { SimulatorOrderStatus } from "./simulator_orders";
+import { simHttp as http } from "../http";
+import { SimulatorOrderStatus } from "./orders";
 
 /* -------------------------------------------------------------------------- */
 /*                                   Types                                    */

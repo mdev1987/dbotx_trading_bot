@@ -95,11 +95,7 @@ export const CONFIG = {
     const n = Number(raw);
     return Number.isFinite(n) ? n / 100 : 0;
   })(),
-  trailingTpDistancePct: (() => {
-    const raw = process.env.TRAILING_TP_PERCENT;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n / 100 : 0;
-  })(),
+
   partialTpEnabled: process.env.PARTIAL_TP_ENABLED?.toLowerCase() === "true",
   partialTpTiers: parsePartialTpTiers(process.env.PARTIAL_TP_TIERS),
   backstopTpPct: (() => {
@@ -132,9 +128,29 @@ export const CONFIG = {
   pnlOrderExpireExecute:
     (process.env.LIVE_PNL_ORDER_EXPIRE_EXECUTE ?? "true").toLowerCase() ===
     "true",
+  pnlOrderExpireExecuteSellAll:
+    (process.env.LIVE_PNL_ORDER_EXPIRE_EXECUTE_SELL_ALL ?? "false").toLowerCase() ===
+    "true",
   pnlOrderUseMidPrice:
     (process.env.LIVE_PNL_ORDER_USE_MID_PRICE ?? "true").toLowerCase() ===
     "true",
+
+  // Exit PnL custom config (separate fee/slippage for TP/SL tasks)
+  pnlCustomConfigEnabled:
+    (process.env.LIVE_PNL_CUSTOM_CONFIG_ENABLED ?? "true").toLowerCase() ===
+    "true",
+  exitCustomFeeAndTip:
+    (process.env.LIVE_EXIT_CUSTOM_FEE_AND_TIP ?? "false").toLowerCase() === "true",
+  exitPriorityFee: process.env.LIVE_EXIT_PRIORITY_FEE ?? "",
+  exitJitoEnabled:
+    (process.env.LIVE_EXIT_JITO_ENABLED ?? "true").toLowerCase() === "true",
+  exitJitoTip: number("LIVE_EXIT_JITO_TIP", 0.0001),
+  exitMaxSlippage: number("LIVE_EXIT_MAX_SLIPPAGE", 0.3),
+  exitConcurrentNodes: number("LIVE_EXIT_CONCURRENT_NODES", 2),
+  exitRetries: number("LIVE_EXIT_RETRIES", 2),
+
+  // Stop-loss tiers (graduated SL like "50%@-20,100%@-50")
+  stopLossTiers: parsePartialTpTiers(process.env.STOP_LOSS_TIERS),
 
   // Risk controls
   dailyLossLimitUsd: number("DAILY_LOSS_LIMIT_USD", 0),
