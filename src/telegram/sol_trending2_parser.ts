@@ -5,7 +5,7 @@ function parseHumanNumber(raw: string): number {
   const match = s.match(/^([\d.]+)\s*([KMB]?)$/i);
   if (!match) return Number(s) || 0;
   const num = Number(match[1]);
-  const suffix = match[2].toUpperCase();
+  const suffix = (match[2] ?? "").toUpperCase();
   const multipliers: Record<string, number> = { K: 1e3, M: 1e6, B: 1e9 };
   return num * (multipliers[suffix] ?? 1);
 }
@@ -18,13 +18,13 @@ export function parseTrendingssolSignal(text: string): AveScannerSignal | null {
       /^\s*(?:\[.*?\]\s*)?SOL TRENDING:\s*(.*?)\s*\(https:\/\/t\.me\//m,
     );
     if (!headerMatch) return null;
-    const tokenName = headerMatch[1].trim();
+    const tokenName = headerMatch[1]!.trim();
 
     const chartMatch = text.match(
       /📈\s*Chart\s*\(https:\/\/dexscreener\.com\/solana\/([A-Za-z0-9]+)\)/,
     );
     if (!chartMatch) return null;
-    const pairAddress = chartMatch[1];
+    const pairAddress = chartMatch[1]!;
 
     const mcapMatch = text.match(/💸\s*Market\s*Cap\s*\$([\d.\s]+)(?:\s*([KMB]))?/);
     const marketCapUSD = mcapMatch

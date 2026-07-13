@@ -1,3 +1,4 @@
+import { Subscription } from "rxjs";
 import { CONFIG } from "../../config";
 import { botHttp } from "../http";
 import {
@@ -14,7 +15,7 @@ import { sendTelegram } from "../../telegram/telegram_bot";
 /*                                 State                                      */
 /* -------------------------------------------------------------------------- */
 
-let unsub: (() => void) | null = null;
+let unsub: Subscription | null = null;
 let reconcileTimer: ReturnType<typeof setInterval> | null = null;
 
 /* -------------------------------------------------------------------------- */
@@ -102,6 +103,7 @@ async function reconcile(): Promise<void> {
 
       if (response.err || !response.res.length) continue;
       const task = response.res[0];
+      if (!task) continue;
 
       if (task.state === "done" || task.state === "fail" || task.state === "expired") {
         console.log(`[LiveMonitor] Reconcile: ${order.tokenName} state=${task.state}`);
@@ -129,7 +131,7 @@ export function startLiveMonitor(): void {
 
 export function stopLiveMonitor(): void {
   if (unsub) {
-    unsub();
+    unsub.unsubscribe();
     unsub = null;
   }
   if (reconcileTimer) {

@@ -106,8 +106,8 @@ export async function recoverLivePositions(): Promise<void> {
 
       // Try to get better price from pending exit tasks
       const activeExits = await findActiveExits(trade.id);
-      if (activeExits.length > 0 && activeExits[0].basePriceUsd > 0) {
-        entryPriceUsd = activeExits[0].basePriceUsd;
+      if (activeExits.length > 0 && activeExits[0]!.basePriceUsd > 0) {
+        entryPriceUsd = activeExits[0]!.basePriceUsd;
       }
 
       if (entryPriceUsd <= 0) {

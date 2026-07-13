@@ -37,7 +37,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let shouldReconnect = true;
 
-const ALL_SUBSCRIBE_TYPES: TradeResultType[] = [
+const ALL_SUBSCRIBE_TYPES: string[] = [
   "swap_buy_success",
   "swap_buy_fail",
   "swap_sell_success",
@@ -77,7 +77,7 @@ function stopHeartbeat(): void {
 function scheduleReconnect(): void {
   if (!shouldReconnect) return;
   if (reconnectTimer) clearTimeout(reconnectTimer);
-  reconnectTimer = setTimeout(connect, CONFIG.wsReconnectDelayMs);
+  reconnectTimer = setTimeout(connectTradeWs, CONFIG.wsReconnectDelayMs);
 }
 
 /* -------------------------------------------------------------------------- */
