@@ -135,9 +135,12 @@ function emitPrice(
   lastPrices.set(resolvedToken, priceUsd);
   tracked.timestamp = timestamp;
 
+  // Ensure pair is always set — resolve from tracked token when omitted
+  const resolvedPair = pair || tracked.pair;
+
   unifiedPriceUpdate$.next({
     token: resolvedToken,
-    pair,
+    pair: resolvedPair,
     priceUsd,
     source,
     timestamp,

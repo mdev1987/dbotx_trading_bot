@@ -45,8 +45,19 @@ export function subscribePairs(pairs: string[]): void {
   }
 }
 
+function buildUnsubscribePacket(pair: string): string {
+  return JSON.stringify({
+    method: "unsubscribe",
+    type: "tx",
+    args: { pair: [pair] },
+  });
+}
+
 export function unsubscribePair(pair: string): void {
   activePairs.delete(pair);
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(buildUnsubscribePacket(pair));
+  }
 }
 
 export function connectDataWs(): void {
