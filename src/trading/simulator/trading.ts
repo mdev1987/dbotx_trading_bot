@@ -30,7 +30,7 @@ async function execute(
 ): Promise<SimulatorTask> {
   const order = await orderPromise;
 
-  const task = await waitForTaskConfirmed(order.id).catch((err) => {
+  const task = await waitForTaskConfirmed(order.id, order.pair).catch((err) => {
     console.warn(`[SimTrading] Task polling failed for order ${order.id}:`, err);
     throw err;
   });

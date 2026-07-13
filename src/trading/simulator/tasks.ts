@@ -1,13 +1,13 @@
 import { Subject } from "rxjs";
 import { CONFIG } from "../../config";
-import { simHttp as http } from "../http";
+import { botHttp as http } from "../http";
 import { SimulatorOrderStatus } from "./orders";
 
 /* -------------------------------------------------------------------------- */
 /*                                   Types                                    */
 /* -------------------------------------------------------------------------- */
 
-type SwapOrderState = "init" | "processing" | "done" | "fail" | "expired";
+type SwapTradeState = "done" | "fail" | "expired" | "init" | "processing";
 
 export interface SimulatorTask {
   id: string;
@@ -31,28 +31,30 @@ export interface SimulatorTask {
   updatedAt: number;
 }
 
-interface SwapOrderInfo {
-  id: string;
+interface SwapTradeItem {
+  _id: string;
 
-  state: SwapOrderState;
+  state: SwapTradeState;
 
   chain: string;
 
-  tradeType: "buy" | "sell";
+  pair: string;
 
-  txPriceUsd?: number;
+  type: "buy" | "sell";
 
-  swapHash?: string;
+  send: { amount: string };
+
+  receive: { amount: string };
 
   errorCode?: string;
 
   errorMessage?: string;
 }
 
-interface SwapOrdersResponse {
+interface SwapTradesResponse {
   err: boolean;
 
-  res: SwapOrderInfo[];
+  res: SwapTradeItem[];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -68,7 +70,7 @@ export const simulatorTaskCompleted$ = new Subject<SimulatorTask>();
 /*                              State Mapping                                 */
 /* -------------------------------------------------------------------------- */
 
-function toSimulatorOrderStatus(state: SwapOrderState): SimulatorOrderStatus {
+function toSimulatorOrderStatus(state: SwapTradeState): SimulatorOrderStatus {
   switch (state) {
     case "done":
       return SimulatorOrderStatus.Executed;
@@ -88,33 +90,32 @@ function toSimulatorOrderStatus(state: SwapOrderState): SimulatorOrderStatus {
 /**
  * Downloads the latest task information.
  */
-export async function getTask(orderId: string): Promise<SimulatorTask> {
-  const response = await http.get<SwapOrdersResponse>(
-    `/automation/swap_orders?ids=${orderId}`,
+export async function getTask(
+  orderId: string,
+  pair: string,
+): Promise<SimulatorTask> {
+  const response = await http.get<SwapTradesResponse>(
+    `/simulator/swap_trades?chain=solana&page=0&size=20&wallet=&token=${pair}`,
   );
 
   if (response.err) {
     throw new Error("Simulator returned an error.");
   }
 
-  const info = response.res[0];
+  const info = response.res.find((t) => t._id === orderId);
 
   if (!info) {
     throw new Error("Simulator task not found.");
   }
 
   return {
-    id: info.id,
+    id: info._id,
     status: toSimulatorOrderStatus(info.state),
-    pair: "",
-    type: info.tradeType,
-    priceUsd: info.txPriceUsd,
-    txHash: info.swapHash,
-
+    pair: info.pair,
+    type: info.type,
+    amountSol: Number(info.send.amount) / 1e9,
+    amountToken: Number(info.receive.amount),
     error: info.errorMessage || info.errorCode,
-
-    amountSol: undefined,
-    amountToken: undefined,
     updatedAt: Date.now(),
   };
 }
@@ -128,13 +129,14 @@ export async function getTask(orderId: string): Promise<SimulatorTask> {
  */
 export async function waitForTaskConfirmed(
   orderId: string,
+  pair: string,
 ): Promise<SimulatorTask> {
   const timeout = CONFIG.simulatorTaskTimeoutSecs * 1000;
 
   const started = Date.now();
 
   while (true) {
-    const task = await getTask(orderId);
+    const task = await getTask(orderId, pair);
 
     switch (task.status) {
       case SimulatorOrderStatus.Executed:
