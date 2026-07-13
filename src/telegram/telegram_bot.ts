@@ -81,6 +81,9 @@ export function notifyBuyOpened(
   balanceUsd: number,
   mcap?: number,
   dex?: string,
+  openPositions?: number,
+  totalPositions?: number,
+  winRate?: number,
 ): void {
   const lines = [
     `🟢 **Position Opened**`,
@@ -93,6 +96,10 @@ export function notifyBuyOpened(
 
   if (mcap) lines.push(`📊 MCap: \`${fmtMcap(mcap)}\``);
   if (dex) lines.push(`🏛 Dex: \`${dex}\``);
+  if (openPositions !== undefined) {
+    const wr = winRate !== undefined ? ` · Win rate: \`${(winRate * 100).toFixed(0)}%\`` : "";
+    lines.push(`📊 Positions: \`${openPositions}/${totalPositions ?? openPositions}\`${wr}`);
+  }
 
   sendTelegram(lines.join("\n"));
 }
@@ -106,6 +113,9 @@ export function notifyTradeClosed(
   balanceUsd: number,
   reason: string,
   durationMs: number,
+  openPositions?: number,
+  totalPositions?: number,
+  winRate?: number,
 ): void {
   const label = pnl >= 0 ? "🟢" : "🔴";
 
@@ -120,8 +130,14 @@ export function notifyTradeClosed(
     `💳 Balance: \`$${balanceUsd.toFixed(2)}\``,
     `📋 Reason: \`${reason}\``,
     `⏱ Duration: \`${fmtDuration(durationMs)}\``,
-    `━━━━━━━━━━━━━━━━━━━`,
   ];
+
+  if (openPositions !== undefined) {
+    const wr = winRate !== undefined ? ` · Win rate: \`${(winRate * 100).toFixed(0)}%\`` : "";
+    lines.push(`📊 Positions: \`${openPositions}/${totalPositions ?? openPositions}\`${wr}`);
+  }
+
+  lines.push(`━━━━━━━━━━━━━━━━━━━`);
 
   sendTelegram(lines.join("\n"));
 }
@@ -161,6 +177,8 @@ export function sendTradeReport(
   worst: { tokenName: string; pnl: number },
   exitTypes: Record<string, number>,
   avgMcap?: number,
+  openPositions?: number,
+  queuedSignals?: number,
 ): void {
   const lines: string[] = [
     `📊 **Trade Report \\(last ${total}\\)**`,
@@ -186,6 +204,12 @@ export function sendTradeReport(
 
   if (avgMcap && avgMcap > 0) {
     lines.push(`Avg MCap: \`${fmtMcap(avgMcap)}\``);
+  }
+  if (openPositions !== undefined) {
+    lines.push(`Open: \`${openPositions}\``);
+  }
+  if (queuedSignals !== undefined) {
+    lines.push(`Queued: \`${queuedSignals}\``);
   }
 
   lines.push(`━━━━━━━━━━━━━━━━━━━`);

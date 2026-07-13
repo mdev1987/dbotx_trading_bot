@@ -66,6 +66,8 @@ export const CONFIG = {
   // Position sizing & limits
   positionSize: number("POSITION_SIZE_SOL", 0.1),
   maxOpenPositions: number("MAX_OPEN_POSITIONS", 5),
+  signalQueueMaxSize: number("SIGNAL_QUEUE_MAX_SIZE", 30),
+  signalQueueTtlMs: number("SIGNAL_QUEUE_TTL_MS", 600_000),
   baseTtlSecs: number("BASE_TTL_SECS", 90),
   minProfitForTtlExtensionPct:
     number("MIN_PROFIT_FOR_TTL_EXTENSION_PCT", 0) / 100,

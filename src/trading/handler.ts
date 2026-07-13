@@ -34,6 +34,53 @@ const pendingBuyPairs = new Set<string>();
 let trading: TradingApi | null = null;
 
 /* -------------------------------------------------------------------------- */
+/*                            Signal Queue                                     */
+/* -------------------------------------------------------------------------- */
+
+interface QueuedSignal {
+  signal: AveScannerSignal;
+  enqueuedAt: number;
+}
+
+const signalQueue: QueuedSignal[] = [];
+
+function enqueueSignal(signal: AveScannerSignal): void {
+  const key = signal.CA ?? signal.LP;
+  if (!key) return;
+
+  const idx = signalQueue.findIndex(
+    (q) => q.signal.CA === signal.CA || q.signal.LP === signal.LP,
+  );
+  if (idx !== -1) signalQueue.splice(idx, 1);
+
+  if (signalQueue.length >= CONFIG.signalQueueMaxSize) return;
+
+  signalQueue.push({ signal, enqueuedAt: Date.now() });
+}
+
+function purgeExpiredSignals(): void {
+  const now = Date.now();
+  for (let i = signalQueue.length - 1; i >= 0; i--) {
+    if (now - signalQueue[i]!.enqueuedAt > CONFIG.signalQueueTtlMs) {
+      signalQueue.splice(i, 1);
+    }
+  }
+}
+
+function dequeueSignal(): AveScannerSignal | null {
+  purgeExpiredSignals();
+  return signalQueue.shift()?.signal ?? null;
+}
+
+function getPositionStats(): { open: number; total: number; winRate: number } {
+  const open = positions.size;
+  const closed = completedTrades.length;
+  const wins = completedTrades.filter((t) => t.pnl >= 0).length;
+  const winRate = closed > 0 ? wins / closed : 0;
+  return { open, total: open + closed, winRate };
+}
+
+/* -------------------------------------------------------------------------- */
 /*                          Trade Stats & Reporting                           */
 /* -------------------------------------------------------------------------- */
 
@@ -70,10 +117,10 @@ function recordTrade(
     ...lastSignalMeta,
   });
 
-  if (completedTrades.length >= CONFIG.tradeReportBatchSize) sendTradeReport();
+  if (completedTrades.length >= CONFIG.tradeReportBatchSize) flushTradeReportBatch();
 }
 
-function sendTradeReport(): void {
+function flushTradeReportBatch(): void {
   const bucket = completedTrades.splice(0, CONFIG.tradeReportBatchSize);
   const total = bucket.length;
   if (total === 0) return;
@@ -137,6 +184,8 @@ function sendTradeReport(): void {
     { tokenName: worst.tokenName, pnl: worst.pnl },
     exitTypes,
     avgMcap,
+    positions.size,
+    signalQueue.length,
   );
 
   console.log("[SimTrading] Report sent");
@@ -178,7 +227,8 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
 
   if (hasPosition(pair) || pendingBuyPairs.has(pair)) return;
 
-  if (positions.size >= CONFIG.maxOpenPositions) {
+  if (CONFIG.maxOpenPositions > 0 && positions.size >= CONFIG.maxOpenPositions) {
+    enqueueSignal(signal);
     return;
   }
 
@@ -218,6 +268,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
     trackToken(token, pair);
       const account = await trading.getAccount();
 
+    const stats = getPositionStats();
     notifyBuyOpened(
       tokenName,
       fillPrice,
@@ -225,6 +276,9 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       account.balance,
       signal.marketCapUSD,
       signal.dex,
+      stats.open,
+      stats.total,
+      stats.winRate,
     );
   } catch (err) {
     console.error(`[SimTrading] Buy failed for ${tokenName}:`, err);
@@ -264,8 +318,10 @@ async function onExit(result: ExitCheckResult): Promise<void> {
       position.soldPct = Math.min(1, (position.soldPct ?? 0) + sellPct);
       clearPendingExit(position.id);
       const remainingPct = (1 - position.soldPct) * 100;
+      const stats = getPositionStats();
+      const wr = stats.winRate > 0 ? ` · Win rate: \`${(stats.winRate * 100).toFixed(0)}%\`` : "";
       sendTelegram(
-        `🟡 **Partial TP**\n━━━━━━━━━━━━━━━━━━━\n🔖 Token: \`${tokenName}\`\n💵 Sold at: \`${fmtPrice(closePrice)}\`\n📊 Sold: \`${(sellPct * 100).toFixed(0)}%\`\n📊 Remaining: \`${remainingPct.toFixed(0)}%\``,
+        `🟡 **Partial TP**\n━━━━━━━━━━━━━━━━━━━\n🔖 Token: \`${tokenName}\`\n💵 Sold at: \`${fmtPrice(closePrice)}\`\n📊 Sold: \`${(sellPct * 100).toFixed(0)}%\`\n📊 Remaining: \`${remainingPct.toFixed(0)}%\`\n📊 Positions: \`${stats.open}/${stats.total}\`${wr}`,
       );
       return;
     }
@@ -292,6 +348,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
 
       const account = await trading.getAccount();
 
+      const stats = getPositionStats();
       notifyTradeClosed(
         tokenName,
         pnl,
@@ -301,9 +358,17 @@ async function onExit(result: ExitCheckResult): Promise<void> {
         account.balance,
         reasonToLabel(reason),
         durationMs,
+        stats.open,
+        stats.total,
+        stats.winRate,
       );
 
       untrackToken(token);
+
+      const next = dequeueSignal();
+      if (next) {
+        onSignal(next);
+      }
     }
   } catch (err) {
     console.error(`[SimTrading] Sell failed for ${tokenName}:`, err);
