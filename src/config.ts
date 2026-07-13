@@ -64,20 +64,10 @@ export const CONFIG = {
   walletAddress: process.env.LIVE_WALLET_ADDRESS ?? "",
 
   // Position sizing & limits
-  maxPositions: number("MAX_POSITIONS", 5),
-  baseTtlSecs: number("BASE_TTL_SECS", 90),
-  minProfitForTtlExtensionPct:
-    number("MIN_PROFIT_FOR_TTL_EXTENSION_PCT", 0) / 100,
-  maxTtlSecs: number("MAX_TTL_SECS", 600),
   positionSize: number("POSITION_SIZE_SOL", 0.1),
-  minPositionSol: number("MIN_POSITION_SOL", 0.03),
-  maxPositionSol: number("MAX_POSITION_SOL", 0.1),
-  maxRiskPct: number("MAX_RISK_PCT", 1),
-
-  // Stop loss
-  stopLossEnabled: process.env.STOP_LOSS_ENABLED?.toLowerCase() === "true",
 
   // TP/SL
+  stopLossEnabled: process.env.STOP_LOSS_ENABLED?.toLowerCase() === "true",
   stopLossPct: (() => {
     const raw = process.env.STOP_LOSS_PERCENT;
     const n = Number(raw);
@@ -93,7 +83,6 @@ export const CONFIG = {
     const n = Number(raw);
     return Number.isFinite(n) ? n / 100 : 0;
   })(),
-
   partialTpEnabled: process.env.PARTIAL_TP_ENABLED?.toLowerCase() === "true",
   partialTpTiers: parsePartialTpTiers(process.env.PARTIAL_TP_TIERS),
   backstopTpPct: (() => {
@@ -101,11 +90,7 @@ export const CONFIG = {
     const n = Number(raw);
     return Number.isFinite(n) ? n / 100 : 0;
   })(),
-  maxSlippageExitPct: (() => {
-    const raw = process.env.MAX_SLIPPAGE_EXIT_PERCENT;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n / 100 : 0;
-  })(),
+  stopLossTiers: parsePartialTpTiers(process.env.STOP_LOSS_TIERS),
 
   // Live execution
   jitoEnabled:
@@ -133,7 +118,7 @@ export const CONFIG = {
     (process.env.LIVE_PNL_ORDER_USE_MID_PRICE ?? "true").toLowerCase() ===
     "true",
 
-  // Exit PnL custom config (separate fee/slippage for TP/SL tasks)
+  // Exit PnL custom config
   pnlCustomConfigEnabled:
     (process.env.LIVE_PNL_CUSTOM_CONFIG_ENABLED ?? "true").toLowerCase() ===
     "true",
@@ -147,45 +132,23 @@ export const CONFIG = {
   exitConcurrentNodes: number("LIVE_EXIT_CONCURRENT_NODES", 2),
   exitRetries: number("LIVE_EXIT_RETRIES", 2),
 
-  // Stop-loss tiers (graduated SL like "50%@-20,100%@-50")
-  stopLossTiers: parsePartialTpTiers(process.env.STOP_LOSS_TIERS),
-
-  // Risk controls
-  dailyLossLimitUsd: number("DAILY_LOSS_LIMIT_USD", 0),
-  maxBuysPerMinute: number("MAX_BUYS_PER_MINUTE", 3),
-  maxBuysPerHour: number("MAX_BUYS_PER_HOUR", 20),
-  maxTotalSolDeployed: number("MAX_TOTAL_SOL_DEPLOYED", 0),
-  maxPortfolioExposurePct: number("MAX_PORTFOLIO_EXPOSURE_PCT", 100) / 100,
-  maxConsecutiveApiFailures: number("MAX_CONSECUTIVE_API_FAILURES", 5),
-  duplicateLockWindowMs: number("DUPLICATE_LOCK_WINDOW_MS", 5_000),
-  stopTradingPath: process.env.STOP_TRADING_PATH ?? "./STOP_TRADING_LIVE",
-  maxPriceDeviationPct: number("MAX_PRICE_DEVIATION_PCT", 0) / 100,
-
   // Telegram
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
   telegramChatId: process.env.TELEGRAM_CHAT_ID,
-  reportIntervalMinutes: number("TELEGRAM_REPORT_INTERVAL_MINUTES", 5),
   telegramApiId: process.env.TELEGRAM_API_ID,
   telegramApiHash: process.env.TELEGRAM_API_HASH,
   telegramChannelUserName: required("TELEGRAM_CHANNEL_USERNAME")
     .trim()
     .toLocaleLowerCase(),
   telegramChannelId: process.env.TELEGRAM_CHANNEL_ID,
-  solTrendingChannelId: process.env.TELEGRAM_SOLTRENDING_CHANNEL_ID,
   telegramSessionName: process.env.TELEGRAM_SESSION_NAME ?? "telegram_session",
 
   // Polling & timing
   pnlTaskPollMs: number("PNL_TASK_POLL_MS", 5_000),
-  tradePairPollMs: number("TRADE_PAIR_POLL_MS", 30_000),
-  entryPricePollDelayMs: number("ENTRY_PRICE_POLL_DELAY_MS", 1_000),
-  maxEntryPriceAttempts: number("MAX_ENTRY_PRICE_ATTEMPTS", 10),
-  pendingBuyTtlMs: number("PENDING_BUY_TTL_MS", 60_000),
-  expiryCheckMs: number("POSITION_EXPIRY_CHECK_MS", 15_000),
-  accountPollIntervalMs: number("ACCOUNT_POLL_INTERVAL_MS", 60_000),
+  maxLiveBuyPollAttempts: number("LIVE_MAX_SWAP_ORDER_POLL_ATTEMPTS", 30),
 
   // WebSocket
   wsHeartbeatIntervalMs: number("WS_HEARTBEAT_INTERVAL_MS", 30_000),
-  wsDisconnectLogThrottleMs: number("WS_DISCONNECT_LOG_THROTTLE_MS", 30_000),
   wsReconnectDelayMs: number("WS_RECONNECT_DELAY_MS", 5_000),
 
   // Price Data Streams
@@ -195,33 +158,26 @@ export const CONFIG = {
     process.env.DEXSCREENER_API_URL ?? "https://api.dexscreener.com/tokens/v1/solana",
   dexscreenerPollIntervalMs: number("DEXSCREENER_POLL_INTERVAL_MS", 30_000),
   maxPriceChangeRatio: number("MAX_PRICE_CHANGE_RATIO", 100),
-
-  // DBotX Data WS reconnect
   wsDataMaxReconnectDelayMs: number("WS_DATA_MAX_RECONNECT_DELAY_MS", 30_000),
   wsDataInitialReconnectDelayMs: number("WS_DATA_INITIAL_RECONNECT_DELAY_MS", 1_000),
 
-  // Position engine scan interval
+  // Position engine
   positionScanIntervalMs: number("POSITION_SCAN_INTERVAL_MS", 1_000),
 
-  // Trade WS heartbeat
+  // Trade WS
   tradeWsHeartbeatIntervalMs: number("TRADE_WS_HEARTBEAT_INTERVAL_MS", 30_000),
 
-  // Live monitor reconcile interval (WS fallback)
+  // Live monitor
   liveReconcileIntervalMs: number("LIVE_RECONCILE_INTERVAL_MS", 300_000),
 
   // Recovery
   recoveryFetchPageSize: number("RECOVERY_FETCH_PAGE_SIZE", 20),
 
-  // Handler / trade reporting
+  // Handler / reporting
   liveSimStartBalance: number("LIVE_SIM_START_BALANCE", 10),
-  simInitialBalance: number("SIM_INITIAL_BALANCE", 10_000),
   maxRealisticPnlRatio: number("MAX_REALISTIC_PNL_RATIO", 10),
   bogusPnlTimeThresholdMs: number("BOGUS_PNL_TIME_THRESHOLD_MS", 60_000),
   tradeReportBatchSize: number("TRADE_REPORT_BATCH_SIZE", 100),
-
-  // Signal deduplication
-  signalCacheTtlSeconds: number("SIGNAL_CACHE_TTL_SECONDS", 3_600),
-  signalCleanupIntervalMs: number("SIGNAL_CLEANUP_INTERVAL_MS", 5_000),
 
   // HTTP
   httpMaxRetries: number("HTTP_MAX_RETRIES", 4),
@@ -242,22 +198,10 @@ export const CONFIG = {
 
   // Mode
   liveMode: process.env.LIVE_MODE?.toLowerCase() === "true",
-
-  // Recovery
   recoveryOnStart:
     (process.env.LIVE_RECOVERY_ON_START ?? "true").toLowerCase() === "true",
   liveDbPath: process.env.LIVE_DB_PATH ?? "./data/live_trading.sqlite",
 
-  // Watchdog
-  watchdogIntervalMs: number("WATCHDOG_INTERVAL_MS", 15_000),
-  watchdogWsStaleMs: number("WATCHDOG_WS_STALE_MS", 60_000),
-  watchdogBalanceStaleMs: number("WATCHDOG_BALANCE_STALE_MS", 120_000),
-  watchdogPriceStaleMs: number("WATCHDOG_PRICE_STALE_MS", 60_000),
-
   // Observability
   logLevel: process.env.LOG_LEVEL ?? "info",
-  swapOrderPollMs: number("LIVE_SWAP_ORDER_POLL_MS", 2_000),
-  maxSwapOrderPollAttempts: number("LIVE_MAX_SWAP_ORDER_POLL_ATTEMPTS", 30),
-  maxWsDisconnects: number("MAX_WS_DISCONNECTS", 5),
-  reconciliationIntervalMs: number("RECONCILIATION_INTERVAL_MS", 60_000),
 };

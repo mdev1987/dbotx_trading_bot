@@ -242,7 +242,7 @@ async function getTask(orderId: string): Promise<LiveTask> {
 /* -------------------------------------------------------------------------- */
 
 export async function waitForTaskConfirmed(orderId: string): Promise<LiveTask> {
-  const timeout = CONFIG.pnlTaskPollMs * CONFIG.maxSwapOrderPollAttempts;
+  const timeout = CONFIG.pnlTaskPollMs * CONFIG.maxLiveBuyPollAttempts;
   const started = Date.now();
 
   while (true) {
