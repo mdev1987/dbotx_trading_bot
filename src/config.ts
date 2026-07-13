@@ -157,6 +157,7 @@ export const CONFIG = {
     .trim()
     .toLocaleLowerCase(),
   telegramChannelId: process.env.TELEGRAM_CHANNEL_ID,
+  solTrendingChannelId: process.env.TELEGRAM_SOLTRENDING_CHANNEL_ID,
 
   // Polling & timing
   pnlTaskPollMs: number("PNL_TASK_POLL_MS", 5_000),

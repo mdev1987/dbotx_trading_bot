@@ -32,19 +32,12 @@ let debugSub: Subscription | null = null;
 const pendingBuyPairs = new Set<string>();
 
 const LIVE_SIM_START = 10;
-let liveCash = LIVE_SIM_START;
+let initialSimBalance = 0;
 
-/** Debit the live cash balance for a buy of `solAmount` SOL. */
-function debitBuy(solAmount: number): void {
-  const solPrice = getSolPriceUsd() || 80;
-  liveCash -= solAmount * solPrice;
-}
-
-/** Credit the live cash balance for a sell with realized PnL. */
-function creditSell(solAmount: number, pnlRatio: number, sellPct: number): void {
-  const solPrice = getSolPriceUsd() || 80;
-  const cost = solAmount * sellPct * solPrice;
-  liveCash += cost * (1 + pnlRatio);
+/** Total equity scaled to $10 (includes open positions). Only moves on PnL. */
+function getLiveCash(simBalance: number): number {
+  const base = initialSimBalance > 0 ? initialSimBalance : 10000;
+  return (simBalance / base) * LIVE_SIM_START;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -255,14 +248,9 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
   lastSignalMeta = { marketCapUSD: signal.marketCapUSD, dex: signal.dex };
 
   const tokenName = signal.Token ?? token.slice(0, 8);
-  const entryPrice = signal.initPriceUSD ?? 0;
-  if (entryPrice <= 0) {
-    pendingBuyPairs.delete(pair);
-    return;
-  }
-
+  const entryPrice = signal.initPriceUSD;
   console.log(
-    `[SimTrading] Buy signal: ${tokenName} @ ${fmtPrice(entryPrice)}`,
+    `[SimTrading] Buy signal: ${tokenName}${entryPrice ? ` @ ${fmtPrice(entryPrice)}` : " (no price)"}`,
   );
 
   try {
@@ -274,11 +262,24 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
     );
     const fillPrice = result.priceUsd ?? entryPrice;
 
-    addPosition(token, pair, tokenName, fillPrice, CONFIG.positionSize);
-    trackToken(token, pair);
-    debitBuy(CONFIG.positionSize);
+    if (!fillPrice || fillPrice <= 0) {
+      console.log(`[SimTrading] Skipping ${tokenName} — no valid price`);
+      pendingBuyPairs.delete(pair);
+      return;
+    }
 
+    const position = addPosition(token, pair, tokenName, fillPrice, CONFIG.positionSize);
+    if (!position) {
+      console.log(`[SimTrading] Skipping ${tokenName} — addPosition failed`);
+      pendingBuyPairs.delete(pair);
+      return;
+    }
+    trackToken(token, pair);
     const account = await simulatorTrading.getAccount();
+
+    if (initialSimBalance === 0) {
+      initialSimBalance = account.balance;
+    }
 
     const lines = [
       `🟢 **Position Opened**`,
@@ -287,7 +288,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       `💵 Entry: \`${fmtPrice(fillPrice)}\``,
       `💰 Size: \`${CONFIG.positionSize} SOL\``,
       `💳 Balance: \`$${account.balance.toFixed(2)}\``,
-      `💵 Live: \`$${liveCash.toFixed(4)}\``,
+      `💵 Live: \`$${getLiveCash(account.balance).toFixed(4)}\``,
     ];
 
     if (signal.marketCapUSD) {
@@ -352,7 +353,6 @@ async function onExit(result: ExitCheckResult): Promise<void> {
         return;
       }
 
-      creditSell(closed.sizeSol, pnl, sellPct);
       recordTrade(closed, closePrice, reason);
 
       const label = pnl >= 0 ? "🟢" : "🔴";
@@ -368,7 +368,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
         `💵 Exit: \`${fmtPrice(closePrice)}\``,
         `💰 Size: \`${closed.sizeSol} SOL\``,
         `💳 Balance: \`$${account.balance.toFixed(2)}\``,
-        `💵 Live: \`$${liveCash.toFixed(4)}\``,
+        `💵 Live: \`$${getLiveCash(account.balance).toFixed(4)}\``,
         `📋 Reason: \`${reasonToLabel(reason)}\``,
         `⏱ Duration: \`${fmtDuration(durationMs)}\``,
         `━━━━━━━━━━━━━━━━━━━`,

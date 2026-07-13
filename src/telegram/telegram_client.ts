@@ -10,6 +10,8 @@ import {
   parseAveScannerSignal,
   type AveScannerSignal,
 } from "./ave_scanner_parser";
+import { parseSolTrendingSignal } from "./sol_trading_parser";
+import { parseTrendingssolSignal } from "./sol_trending2_parser";
 
 /* -------------------------------------------------------------------------- */
 /*                           Configuration Validation                         */
@@ -108,8 +110,25 @@ let telegramEventBuilder: NewMessage | undefined;
 /*                          Telegram Listener Start                           */
 /* -------------------------------------------------------------------------- */
 
+function reconstructWithUrls(rawMessage: string, entities: any[]): string {
+  const textUrls = entities
+    .filter((e: any) => e.className === "MessageEntityTextUrl")
+    .map((e: any) => ({ offset: e.offset, length: e.length, url: e.url }))
+    .sort((a: any, b: any) => b.offset - a.offset);
+
+  let result = rawMessage;
+  for (const tu of textUrls) {
+    const before = result.slice(0, tu.offset + tu.length);
+    const after = result.slice(tu.offset + tu.length);
+    result = before + ` (${tu.url})` + after;
+  }
+
+  return result;
+}
+
 export async function startTelegramListener(): Promise<void> {
   const client = getTelegramClient();
+
   try {
     console.log("[Telegram] Connecting...");
     await client.start({
@@ -120,10 +139,13 @@ export async function startTelegramListener(): Promise<void> {
         console.error("[Telegram]", error);
       },
     });
-    // Persist login session.
     client.session.save();
     connectionStateInput$.next(true);
     console.log("[Telegram] Connected");
+
+    telegramChannelId = CONFIG.telegramChannelId
+      ? Number(CONFIG.telegramChannelId)
+      : undefined;
     if (!telegramChannelId) {
       const entity = await client.getEntity(CONFIG.telegramChannelUserName);
       telegramChannelId = Number(entity.id);
@@ -140,11 +162,19 @@ export async function startTelegramListener(): Promise<void> {
       }
     }
     telegramEventHandler = (event) => {
-      const text = removeMarkdown(event.message?.text ?? "");
-      const signal = parseAveScannerSignal(text);
+      const msg = event.message;
+      const rawMessage = (msg as any)?.message ?? "";
+      const entities: any[] = (msg as any)?.entities ?? [];
+      const text = reconstructWithUrls(rawMessage, entities);
+
+      const signal =
+        parseSolTrendingSignal(text) ??
+        parseTrendingssolSignal(text) ??
+        parseAveScannerSignal(text);
       if (!signal) {
         return;
       }
+      console.log("[Telegram] Parsed signal:", signal.Token, signal.CA?.slice(0, 8));
       telegramSignal$.next(signal);
     };
 

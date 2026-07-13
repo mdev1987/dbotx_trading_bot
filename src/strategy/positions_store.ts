@@ -28,6 +28,7 @@ function createPositionId(): string {
 }
 
 function calculateProfit(entry: number, current: number): number {
+  if (!Number.isFinite(entry) || entry <= 0) return 0;
   return (current - entry) / entry;
 }
 
@@ -37,7 +38,11 @@ export function addPosition(
   tokenName: string,
   entryPriceUsd: number,
   sizeSol: number,
-): Position {
+): Position | null {
+  if (!Number.isFinite(entryPriceUsd) || entryPriceUsd <= 0) {
+    return null;
+  }
+
   const now = Date.now();
 
   const position: Position = {
