@@ -161,7 +161,8 @@ async function findActiveExits(sourceId: string): Promise<PnlOrder[]> {
       `/automation/pnl_orders_from_swap_order?page=0&size=${CONFIG.recoveryFetchPageSize}&chain=solana&sourceId=${sourceId}`,
     );
     return response.err ? [] : response.res;
-  } catch {
+  } catch (err) {
+    console.warn(`[Recovery] Failed to fetch active exits for ${sourceId}:`, err);
     return [];
   }
 }

@@ -41,8 +41,8 @@ export function connectPumpStream(): void {
     heartbeatTimer = setInterval(() => {
       try {
         ws?.send(JSON.stringify({ type: "ping" }));
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn("[PumpAPI] Heartbeat ping failed:", err);
       }
     }, CONFIG.wsHeartbeatIntervalMs);
   };
@@ -69,8 +69,8 @@ export function connectPumpStream(): void {
       };
 
       pumpApiPriceUpdateEvent$.next(pumpEvent);
-    } catch {
-      // skip
+    } catch (err) {
+      console.warn("[PumpAPI] Failed to parse message:", err);
     }
   };
 

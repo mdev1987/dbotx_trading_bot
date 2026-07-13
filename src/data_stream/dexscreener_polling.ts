@@ -34,7 +34,7 @@ export async function pollDexScreener(tokens: string[]): Promise<void> {
         timestamp,
       });
     }
-  } catch {
-    // Ignore polling errors.
+  } catch (err) {
+    console.warn("[DexScreener] Polling failed:", err);
   }
 }

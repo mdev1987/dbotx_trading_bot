@@ -12,8 +12,8 @@ export { positions };
 
 export const positionUpdated$ = new Subject<Position>();
 
-function publishPositions(): void {
-  /* no subscribers */
+function publishPositions(position: Position): void {
+  positionUpdated$.next(position);
 }
 
 function createPositionId(): string {
@@ -65,7 +65,7 @@ export function addPosition(
 
   positions.set(pair, position);
 
-  publishPositions();
+  publishPositions(position);
 
   return position;
 }
@@ -87,9 +87,9 @@ export function removePosition(
   position.closedAt = Date.now();
   position.lastUpdateAt = Date.now();
 
-  positions.delete(pair);
+  publishPositions(position);
 
-  publishPositions();
+  positions.delete(pair);
 
   clearPendingExit(position.id);
 

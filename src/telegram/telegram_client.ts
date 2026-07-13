@@ -157,8 +157,8 @@ export async function startTelegramListener(): Promise<void> {
     if (telegramEventHandler && telegramEventBuilder) {
       try {
         client.removeEventHandler(telegramEventHandler, telegramEventBuilder);
-      } catch {
-        // Ignore if already removed.
+      } catch (err) {
+        console.warn("[Telegram] Failed to remove old event handler:", err);
       }
     }
     telegramEventHandler = (event) => {
@@ -201,8 +201,8 @@ export async function stopTelegramListener(): Promise<void> {
     if (telegramEventHandler && telegramEventBuilder) {
       try {
         client.removeEventHandler(telegramEventHandler, telegramEventBuilder);
-      } catch {
-        // Ignore removal errors.
+      } catch (err) {
+        console.warn("[Telegram] Failed to remove event handler on stop:", err);
       }
     }
     telegramEventHandler = undefined;

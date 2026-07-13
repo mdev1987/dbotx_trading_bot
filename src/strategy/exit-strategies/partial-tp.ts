@@ -16,6 +16,8 @@ export class PartialTakeProfitStrategy implements ExitStrategy {
       return null;
     }
 
+    let totalPct = 0;
+
     while (position.partialTierIndex < this.tiers.length) {
       const tier = this.tiers[position.partialTierIndex];
 
@@ -24,14 +26,15 @@ export class PartialTakeProfitStrategy implements ExitStrategy {
       }
 
       position.partialTierIndex++;
-
-      return {
-        position,
-        reason: PositionExitReason.PartialTP,
-        percentage: tier.pct,
-      };
+      totalPct += tier.pct;
     }
 
-    return null;
+    if (totalPct <= 0) return null;
+
+    return {
+      position,
+      reason: PositionExitReason.PartialTP,
+      percentage: Math.min(totalPct, 1),
+    };
   }
 }

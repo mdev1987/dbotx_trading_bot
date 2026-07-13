@@ -106,8 +106,8 @@ async function reconcile(): Promise<void> {
       if (task.state === "done" || task.state === "fail" || task.state === "expired") {
         console.log(`[LiveMonitor] Reconcile: ${order.tokenName} state=${task.state}`);
       }
-    } catch {
-      /* non-fatal */
+    } catch (err) {
+      console.warn(`[LiveMonitor] Reconciliation failed for ${order.tokenName}:`, err);
     }
   }
 }

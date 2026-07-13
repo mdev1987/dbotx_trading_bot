@@ -63,7 +63,7 @@ function sendSubscribe(): void {
 function startHeartbeat(): void {
   stopHeartbeat();
   heartbeatTimer = setInterval(() => {
-    try { ws?.ping(); } catch { /* ignore */ }
+    try { ws?.ping(); } catch (err) { console.warn("[TradeWS] Heartbeat ping failed:", err); }
   }, CONFIG.tradeWsHeartbeatIntervalMs);
 }
 
@@ -115,8 +115,8 @@ export function connectTradeWs(): void {
       if (msg.method === "tradeResultNotify" && msg.result) {
         tradeResult$.next(msg.result as TradeResultNotification);
       }
-    } catch {
-      /* ignore malformed messages */
+    } catch (err) {
+      console.warn("[TradeWS] Failed to parse message:", err);
     }
   };
 

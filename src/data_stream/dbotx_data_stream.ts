@@ -126,7 +126,8 @@ function onMessage(event: MessageEvent): void {
 
   try {
     packet = JSON.parse(raw) as DbotxWsPacket;
-  } catch {
+  } catch (err) {
+    console.warn("[DBotX Data] Failed to parse message:", err);
     return;
   }
 

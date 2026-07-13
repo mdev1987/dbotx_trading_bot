@@ -2,7 +2,6 @@ import {
   submitBuy,
   submitSell,
   waitForTaskConfirmed,
-  LiveOrderStatus,
   type LiveOrder,
 } from "./orders";
 import {
@@ -22,35 +21,20 @@ async function execute(
 ): Promise<OrderResult> {
   const order = await orderPromise;
 
-  let task:
-    | Awaited<ReturnType<typeof waitForTaskConfirmed>>
-    | null = null;
-
-  try {
-    task = await waitForTaskConfirmed(order.id);
-  } catch {
-    /* Polling may fail — assume the POST succeeded. */
-  }
-
-  if (task) {
-    return {
-      id: task.id,
-      status: task.status,
-      pair: task.pair || order.pair,
-      type: task.type,
-      priceUsd: task.priceUsd,
-      txHash: task.txHash,
-      error: task.error,
-      updatedAt: task.updatedAt,
-    };
-  }
+  const task = await waitForTaskConfirmed(order.id).catch((err) => {
+    console.warn(`[LiveTrading] Task polling failed for order ${order.id}:`, err);
+    throw err;
+  });
 
   return {
-    id: order.id,
-    status: LiveOrderStatus.Executed,
-    pair: order.pair,
-    type: order.type,
-    updatedAt: Date.now(),
+    id: task.id,
+    status: task.status,
+    pair: task.pair || order.pair,
+    type: task.type,
+    priceUsd: task.priceUsd,
+    txHash: task.txHash,
+    error: task.error,
+    updatedAt: task.updatedAt,
   };
 }
 

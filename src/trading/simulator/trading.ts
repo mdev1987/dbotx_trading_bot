@@ -1,7 +1,6 @@
 import {
   submitBuy,
   submitSell,
-  SimulatorOrderStatus,
   type SimulatorOrder,
 } from "./orders";
 
@@ -31,26 +30,14 @@ async function execute(
 ): Promise<SimulatorTask> {
   const order = await orderPromise;
 
-  let task: SimulatorTask | null = null;
-
-  try {
-    task = await waitForTaskConfirmed(order.id);
-  } catch {
-    /* Simulator doesn't expose a task status endpoint — assume immediate
-       execution when the POST succeeds. */
-  }
+  const task = await waitForTaskConfirmed(order.id).catch((err) => {
+    console.warn(`[SimTrading] Task polling failed for order ${order.id}:`, err);
+    throw err;
+  });
 
   await refreshSimulatorAccount();
 
-  if (task) return task;
-
-  return {
-    id: order.id,
-    status: SimulatorOrderStatus.Executed,
-    pair: order.pair,
-    type: order.type,
-    updatedAt: Date.now(),
-  };
+  return task;
 }
 
 /* -------------------------------------------------------------------------- */
