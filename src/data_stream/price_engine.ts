@@ -17,8 +17,6 @@ import {
 } from "./dbotx_data_stream";
 import { dexScreenerPriceUpdateEvent$, pollDexScreener } from "./dexscreener_polling";
 
-const MAX_PRICE_CHANGE_RATIO = 100;
-
 function isValidPrice(price: number): boolean {
   return Number.isFinite(price) && price > 0;
 }
@@ -60,7 +58,7 @@ function isPriceSpike(token: string, priceUsd: number): boolean {
   const last = lastPrices.get(token);
   if (last === undefined) return false;
   const ratio = Math.max(priceUsd, last) / Math.min(priceUsd, last);
-  return ratio > MAX_PRICE_CHANGE_RATIO;
+  return ratio > CONFIG.maxPriceChangeRatio;
 }
 
 /* -------------------------------------------------------------------------- */

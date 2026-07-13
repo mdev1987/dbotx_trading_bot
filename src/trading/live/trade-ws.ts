@@ -64,7 +64,7 @@ function startHeartbeat(): void {
   stopHeartbeat();
   heartbeatTimer = setInterval(() => {
     try { ws?.ping(); } catch { /* ignore */ }
-  }, 30_000);
+  }, CONFIG.tradeWsHeartbeatIntervalMs);
 }
 
 function stopHeartbeat(): void {

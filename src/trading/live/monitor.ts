@@ -121,8 +121,8 @@ export function startLiveMonitor(): void {
 
   unsub = tradeResult$.subscribe(handleTradeResult);
 
-  // Lightweight reconciliation every 5 min as WS fallback
-  reconcileTimer = setInterval(reconcile, 300_000);
+  // Lightweight reconciliation as WS fallback
+  reconcileTimer = setInterval(reconcile, CONFIG.liveReconcileIntervalMs);
 
   console.log("[LiveMonitor] Started (WS + 5min reconciliation)");
 }

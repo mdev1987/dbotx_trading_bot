@@ -1,6 +1,7 @@
 import type { Observable } from "rxjs";
 import { Subscription, timer } from "rxjs";
 
+import { CONFIG } from "../config";
 import type { PriceInfo } from "../data_stream/types";
 
 type PriceUpdateFn = (update: PriceInfo) => void;
@@ -14,7 +15,7 @@ export class PositionEngine {
     private readonly priceUpdate$: Observable<PriceInfo>,
     private readonly onPriceUpdate: PriceUpdateFn,
     private readonly onScan: ScannerFn,
-    private readonly scanIntervalMs = 1000,
+    private readonly scanIntervalMs = CONFIG.positionScanIntervalMs,
   ) {}
 
   start(): void {

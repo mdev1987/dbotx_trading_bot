@@ -1,7 +1,6 @@
 import { Subject } from "rxjs";
+import { CONFIG } from "../config";
 import { PriceSource, type DexPair, type DexScreenerEvent } from "./types";
-
-const DEX_API = "https://api.dexscreener.com/tokens/v1/solana";
 
 export const dexScreenerPriceUpdateEvent$ = new Subject<DexScreenerEvent>();
 
@@ -11,7 +10,7 @@ export async function pollDexScreener(tokens: string[]): Promise<void> {
   }
 
   try {
-    const res = await fetch(`${DEX_API}/${tokens.join(",")}`);
+    const res = await fetch(`${CONFIG.dexscreenerApiUrl}/${tokens.join(",")}`);
 
     if (!res.ok) {
       return;

@@ -77,7 +77,7 @@ export async function recoverLivePositions(): Promise<void> {
   console.log("[Recovery] Fetching recent trades for recovery...");
   try {
     const trades = await botHttp.get<SwapTradesResponse>(
-      `/account/swap_trades?page=0&size=20&chain=solana&wallet=${CONFIG.walletAddress}`,
+      `/account/swap_trades?page=0&size=${CONFIG.recoveryFetchPageSize}&chain=solana&wallet=${CONFIG.walletAddress}`,
     );
 
     if (trades.err || !trades.res) {
@@ -158,7 +158,7 @@ export async function recoverLivePositions(): Promise<void> {
 async function findActiveExits(sourceId: string): Promise<PnlOrder[]> {
   try {
     const response = await botHttp.get<PnlOrdersResponse>(
-      `/automation/pnl_orders_from_swap_order?page=0&size=20&chain=solana&sourceId=${sourceId}`,
+      `/automation/pnl_orders_from_swap_order?page=0&size=${CONFIG.recoveryFetchPageSize}&chain=solana&sourceId=${sourceId}`,
     );
     return response.err ? [] : response.res;
   } catch {

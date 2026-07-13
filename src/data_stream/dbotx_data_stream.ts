@@ -3,8 +3,6 @@ import { Subject } from "rxjs";
 import { CONFIG } from "../config";
 import { PriceSource, type DbotxEvent, type DbotxTrade, type DbotxWsPacket } from "./types";
 
-const MAX_RECONNECT_DELAY_MS = 30_000;
-
 interface PairState {
   pair: string;
   priceUsd: number;
@@ -26,7 +24,7 @@ let ws: WebSocket | null = null;
 let heartbeat: ReturnType<typeof setInterval> | null = null;
 let reconnect: ReturnType<typeof setTimeout> | null = null;
 
-let reconnectDelay = 1000;
+let reconnectDelay = CONFIG.wsDataInitialReconnectDelayMs;
 
 const activePairs = new Set<string>();
 
@@ -74,7 +72,7 @@ export function connectDataWs(): void {
 function onOpen(): void {
   console.log("[DBotX Data] Connected");
 
-  reconnectDelay = 1000;
+  reconnectDelay = CONFIG.wsDataInitialReconnectDelayMs;
 
   if (activePairs.size > 0) ws!.send(buildSubscribePacket());
 
@@ -98,7 +96,7 @@ function onClose(): void {
   reconnect = setTimeout(() => {
     reconnect = null;
 
-    reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
+    reconnectDelay = Math.min(reconnectDelay * 2, CONFIG.wsDataMaxReconnectDelayMs);
 
     connectDataWs();
   }, reconnectDelay);

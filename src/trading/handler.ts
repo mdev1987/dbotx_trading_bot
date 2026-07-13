@@ -32,15 +32,6 @@ const pendingBuyPairs = new Set<string>();
 /** Trading backend — set by startTrading. */
 let trading: TradingApi | null = null;
 
-const LIVE_SIM_START = 10;
-let initialSimBalance = 0;
-
-/** Total equity scaled to $10 (includes open positions). Only moves on PnL. */
-function getLiveCash(simBalance: number): number {
-  const base = initialSimBalance > 0 ? initialSimBalance : 10000;
-  return (simBalance / base) * LIVE_SIM_START;
-}
-
 /* -------------------------------------------------------------------------- */
 /*                          Trade Stats & Reporting                           */
 /* -------------------------------------------------------------------------- */
@@ -55,8 +46,6 @@ interface TradeRecord {
   marketCapUSD?: number;
   dex?: string;
 }
-
-const MAX_REALISTIC_PNL = 10;
 
 const completedTrades: TradeRecord[] = [];
 
@@ -80,11 +69,11 @@ function recordTrade(
     ...lastSignalMeta,
   });
 
-  if (completedTrades.length >= 100) sendTradeReport();
+  if (completedTrades.length >= CONFIG.tradeReportBatchSize) sendTradeReport();
 }
 
 function sendTradeReport(): void {
-  const bucket = completedTrades.splice(0, 100);
+  const bucket = completedTrades.splice(0, CONFIG.tradeReportBatchSize);
   const total = bucket.length;
   if (total === 0) return;
 
@@ -224,10 +213,6 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
     trackToken(token, pair);
       const account = await trading.getAccount();
 
-    if (initialSimBalance === 0) {
-      initialSimBalance = account.balance;
-    }
-
     notifyBuyOpened(
       tokenName,
       fillPrice,
@@ -278,7 +263,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
       const durationMs = now() - closed.openedAt;
 
       const isBogus =
-        Math.abs(pnl) > MAX_REALISTIC_PNL && durationMs < 60000;
+        Math.abs(pnl) > CONFIG.maxRealisticPnlRatio && durationMs < CONFIG.bogusPnlTimeThresholdMs;
 
       if (isBogus) {
         console.warn(
@@ -336,7 +321,7 @@ export async function startTrading(api: TradingApi): Promise<void> {
   trading = api;
 
   console.log(
-    `[SimTrading] Live sim: $${LIVE_SIM_START}`,
+    `[SimTrading] Live sim: $${CONFIG.liveSimStartBalance}`,
   );
 
   signalSub = telegramSignal$.subscribe(onSignal);

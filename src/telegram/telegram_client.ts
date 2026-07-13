@@ -38,7 +38,7 @@ export function getTelegramClient(): TelegramClient {
     return telegramClient;
   }
   telegramClient = new TelegramClient(
-    new StoreSession("telegram_session"),
+    new StoreSession(CONFIG.telegramSessionName),
     Number(CONFIG.telegramApiId),
     CONFIG.telegramApiHash!,
     {

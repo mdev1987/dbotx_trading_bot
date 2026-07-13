@@ -69,8 +69,6 @@ export const CONFIG = {
   minProfitForTtlExtensionPct:
     number("MIN_PROFIT_FOR_TTL_EXTENSION_PCT", 0) / 100,
   maxTtlSecs: number("MAX_TTL_SECS", 600),
-  signalQueueSize: number("SIGNAL_QUEUE_SIZE", 30),
-  signalQueueTtlSecs: number("SIGNAL_QUEUE_TTL_SECS", 600),
   positionSize: number("POSITION_SIZE_SOL", 0.1),
   minPositionSol: number("MIN_POSITION_SOL", 0.03),
   maxPositionSol: number("MAX_POSITION_SOL", 0.1),
@@ -174,6 +172,7 @@ export const CONFIG = {
     .toLocaleLowerCase(),
   telegramChannelId: process.env.TELEGRAM_CHANNEL_ID,
   solTrendingChannelId: process.env.TELEGRAM_SOLTRENDING_CHANNEL_ID,
+  telegramSessionName: process.env.TELEGRAM_SESSION_NAME ?? "telegram_session",
 
   // Polling & timing
   pnlTaskPollMs: number("PNL_TASK_POLL_MS", 5_000),
@@ -195,6 +194,30 @@ export const CONFIG = {
   dexscreenerApiUrl:
     process.env.DEXSCREENER_API_URL ?? "https://api.dexscreener.com/tokens/v1/solana",
   dexscreenerPollIntervalMs: number("DEXSCREENER_POLL_INTERVAL_MS", 30_000),
+  maxPriceChangeRatio: number("MAX_PRICE_CHANGE_RATIO", 100),
+
+  // DBotX Data WS reconnect
+  wsDataMaxReconnectDelayMs: number("WS_DATA_MAX_RECONNECT_DELAY_MS", 30_000),
+  wsDataInitialReconnectDelayMs: number("WS_DATA_INITIAL_RECONNECT_DELAY_MS", 1_000),
+
+  // Position engine scan interval
+  positionScanIntervalMs: number("POSITION_SCAN_INTERVAL_MS", 1_000),
+
+  // Trade WS heartbeat
+  tradeWsHeartbeatIntervalMs: number("TRADE_WS_HEARTBEAT_INTERVAL_MS", 30_000),
+
+  // Live monitor reconcile interval (WS fallback)
+  liveReconcileIntervalMs: number("LIVE_RECONCILE_INTERVAL_MS", 300_000),
+
+  // Recovery
+  recoveryFetchPageSize: number("RECOVERY_FETCH_PAGE_SIZE", 20),
+
+  // Handler / trade reporting
+  liveSimStartBalance: number("LIVE_SIM_START_BALANCE", 10),
+  simInitialBalance: number("SIM_INITIAL_BALANCE", 10_000),
+  maxRealisticPnlRatio: number("MAX_REALISTIC_PNL_RATIO", 10),
+  bogusPnlTimeThresholdMs: number("BOGUS_PNL_TIME_THRESHOLD_MS", 60_000),
+  tradeReportBatchSize: number("TRADE_REPORT_BATCH_SIZE", 100),
 
   // Signal deduplication
   signalCacheTtlSeconds: number("SIGNAL_CACHE_TTL_SECONDS", 3_600),
@@ -219,8 +242,6 @@ export const CONFIG = {
 
   // Mode
   liveMode: process.env.LIVE_MODE?.toLowerCase() === "true",
-  liveBuyEnabled:
-    (process.env.LIVE_BUY_ENABLED ?? "true").toLowerCase() === "true",
 
   // Recovery
   recoveryOnStart:
