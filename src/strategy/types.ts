@@ -47,6 +47,9 @@ export interface Position {
   closePriceUsd?: number;
   closedAt?: number;
 
+  renewedAt: number;
+  renewPriceUsd: number;
+
   lastUpdateAt: number;
   currentProfitPct: number;
   priceSource?: PriceSource;

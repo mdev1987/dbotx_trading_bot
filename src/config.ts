@@ -69,9 +69,9 @@ export const CONFIG = {
   signalQueueMaxSize: number("SIGNAL_QUEUE_MAX_SIZE", 30),
   signalQueueTtlMs: number("SIGNAL_QUEUE_TTL_MS", 600_000),
   baseTtlSecs: number("BASE_TTL_SECS", 90),
-  minProfitForTtlExtensionPct:
-    number("MIN_PROFIT_FOR_TTL_EXTENSION_PCT", 0) / 100,
   maxTtlSecs: number("MAX_TTL_SECS", 600),
+  profitPercentChange:
+    number("PROFIT_PERCENT_CHANGE", 8) / 100,
 
   // TP/SL
   stopLossEnabled: process.env.STOP_LOSS_ENABLED?.toLowerCase() === "true",
@@ -114,7 +114,7 @@ export const CONFIG = {
   devSellPercent: number("LIVE_DEV_SELL_PERCENT", 0),
 
   // PnL order lifecycle
-  pnlOrderExpireDeltaMs: number("LIVE_PNL_ORDER_EXPIRE_DELTA_MS", 43_200_000),
+  pnlOrderExpireDeltaMs: number("LIVE_PNL_ORDER_EXPIRE_DELTA_MS", 600_000),
   pnlOrderExpireExecute:
     (process.env.LIVE_PNL_ORDER_EXPIRE_EXECUTE ?? "true").toLowerCase() ===
     "true",

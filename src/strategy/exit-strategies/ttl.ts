@@ -8,20 +8,29 @@ export class TtlStrategy implements ExitStrategy {
   constructor(
     private readonly baseTtlSecs: number,
     private readonly maxTtlSecs: number,
-    private readonly minProfitForExtensionPct: number,
+    private readonly profitPercentChange: number,
   ) {}
 
   check(position: Position, now: number): ExitCheckResult | null {
-    const ageSeconds = (now - position.openedAt) / 1000;
+    const ageSinceRenew = (now - position.renewedAt) / 1000;
 
-    if (ageSeconds < this.baseTtlSecs) {
+    if (ageSinceRenew < this.baseTtlSecs) {
       return null;
     }
 
-    const profitable =
-      position.currentProfitPct >= this.minProfitForExtensionPct;
+    const totalAge = (now - position.openedAt) / 1000;
 
-    if (profitable && ageSeconds < this.maxTtlSecs) {
+    if (totalAge >= this.maxTtlSecs) {
+      return { position, reason: PositionExitReason.Expired };
+    }
+
+    const priceChange = Math.abs(
+      (position.currentPriceUsd - position.renewPriceUsd) / position.renewPriceUsd,
+    );
+
+    if (priceChange >= this.profitPercentChange) {
+      position.renewedAt = now;
+      position.renewPriceUsd = position.currentPriceUsd;
       return null;
     }
 

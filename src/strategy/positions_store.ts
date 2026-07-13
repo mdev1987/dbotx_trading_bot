@@ -61,6 +61,9 @@ export function addPosition(
 
     soldPct: 0,
     partialTierIndex: 0,
+
+    renewedAt: now,
+    renewPriceUsd: entryPriceUsd,
   };
 
   positions.set(pair, position);

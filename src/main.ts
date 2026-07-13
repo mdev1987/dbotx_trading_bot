@@ -27,7 +27,7 @@ if (!CONFIG.liveMode) {
     new StopLossStrategy(CONFIG.stopLossEnabled, CONFIG.stopLossPct),
     new TrailingStopStrategy(CONFIG.trailingActivationPct, CONFIG.trailingDistancePct),
     new PartialTakeProfitStrategy(CONFIG.partialTpEnabled, CONFIG.partialTpTiers),
-    new TtlStrategy(CONFIG.baseTtlSecs, CONFIG.maxTtlSecs, CONFIG.minProfitForTtlExtensionPct),
+    new TtlStrategy(CONFIG.baseTtlSecs, CONFIG.maxTtlSecs, CONFIG.profitPercentChange),
   ]);
 }
 
