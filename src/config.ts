@@ -65,6 +65,10 @@ export const CONFIG = {
 
   // Position sizing & limits
   positionSize: number("POSITION_SIZE_SOL", 0.1),
+  baseTtlSecs: number("BASE_TTL_SECS", 90),
+  minProfitForTtlExtensionPct:
+    number("MIN_PROFIT_FOR_TTL_EXTENSION_PCT", 0) / 100,
+  maxTtlSecs: number("MAX_TTL_SECS", 600),
 
   // TP/SL
   stopLossEnabled: process.env.STOP_LOSS_ENABLED?.toLowerCase() === "true",

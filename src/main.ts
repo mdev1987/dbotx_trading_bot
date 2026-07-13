@@ -53,11 +53,10 @@ const services = {
 
       connectTradeWs();
       startLiveMonitor();
-      await startTrading(liveTrading);
-    } else {
-      positionEngine.start();
-      await startTrading(simulatorTrading);
     }
+
+    positionEngine.start();
+    await startTrading(CONFIG.liveMode ? liveTrading : simulatorTrading);
 
     startTelegramListener().catch((err) =>
       console.error("[Main] Telegram listener failed:", err),
@@ -70,10 +69,9 @@ const services = {
     if (CONFIG.liveMode) {
       stopLiveMonitor();
       disconnectTradeWs();
-    } else {
-      stopTrading();
-      positionEngine.stop();
     }
+    stopTrading();
+    positionEngine.stop();
     stopPriceEngine();
     disconnectDataWs();
     disconnectPumpStream();

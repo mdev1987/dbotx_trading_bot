@@ -2,7 +2,7 @@ import { Subscription } from "rxjs";
 
 import { CONFIG } from "../config";
 import { telegramSignal$ } from "../telegram/telegram_client";
-import { positionExitRequested$ } from "../strategy/scanner";
+import { positionExitRequested$, clearPendingExit } from "../strategy/scanner";
 import {
   addPosition,
   removePosition,
@@ -255,6 +255,16 @@ async function onExit(result: ExitCheckResult): Promise<void> {
     );
     const closePrice = sellResult.priceUsd ?? position.currentPriceUsd;
 
+    if (reason === PositionExitReason.PartialTP) {
+      position.soldPct = Math.min(1, (position.soldPct ?? 0) + sellPct);
+      clearPendingExit(position.id);
+      const remainingPct = (1 - position.soldPct) * 100;
+      sendTelegram(
+        `🟡 **Partial TP**\n━━━━━━━━━━━━━━━━━━━\n🔖 Token: \`${tokenName}\`\n💵 Sold at: \`${fmtPrice(closePrice)}\`\n📊 Sold: \`${(sellPct * 100).toFixed(0)}%\`\n📊 Remaining: \`${remainingPct.toFixed(0)}%\``,
+      );
+      return;
+    }
+
     const closed = removePosition(pair, closePrice, reason);
 
     if (closed) {
@@ -269,9 +279,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
         console.warn(
           `[SimTrading] Bogus PnL for ${tokenName}: ${fmtPct(pnl)} in ${fmtDuration(durationMs)} — discarded`,
         );
-        if (reason !== PositionExitReason.PartialTP) {
-          untrackToken(token);
-        }
+        untrackToken(token);
         return;
       }
 
@@ -290,9 +298,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
         durationMs,
       );
 
-      if (reason !== PositionExitReason.PartialTP) {
-        untrackToken(token);
-      }
+      untrackToken(token);
     }
   } catch (err) {
     console.error(`[SimTrading] Sell failed for ${tokenName}:`, err);
