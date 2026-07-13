@@ -8,6 +8,7 @@ import {
   removePosition,
   hasPosition,
   positionUpdated$,
+  positions,
 } from "../strategy/positions_store";
 import { trackToken, untrackToken, getSolPriceUsd } from "../data_stream/price_engine";
 import { PositionExitReason, type Position } from "../strategy/types";
@@ -176,6 +177,10 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
   if (!token || !pair) return;
 
   if (hasPosition(pair) || pendingBuyPairs.has(pair)) return;
+
+  if (positions.size >= CONFIG.maxOpenPositions) {
+    return;
+  }
 
   pendingBuyPairs.add(pair);
 
