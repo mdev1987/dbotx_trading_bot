@@ -386,8 +386,6 @@ export async function startTrading(api: TradingApi): Promise<void> {
 
   trading = api;
 
-  console.log(`[Handler] Live sim: $${CONFIG.liveSimStartBalance}`);
-
   signalSub = signalQueued$.subscribe(() => processNextSignal());
   exitSub = positionExitRequested$.subscribe(onExit);
 

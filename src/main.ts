@@ -2,14 +2,9 @@ import { CONFIG } from "./config";
 
 import { simulatorTrading } from "./trading/simulator/trading";
 import { liveTrading } from "./trading/live/trading";
-import {
-  initLiveStore,
-  recoverLivePositions,
-  startLiveMonitor,
-  stopLiveMonitor,
-  connectTradeWs,
-  disconnectTradeWs,
-} from "./trading/live";
+import { initLiveStore } from "./trading/live/store";
+import { recoverLivePositions } from "./trading/live/recovery";
+import { connectTradeWs, disconnectTradeWs, startLiveMonitor, stopLiveMonitor } from "./trading/live/trade-ws";
 
 import {
   unifiedPriceUpdate$,

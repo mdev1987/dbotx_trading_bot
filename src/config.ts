@@ -70,8 +70,7 @@ export const CONFIG = {
   signalQueueTtlMs: number("SIGNAL_QUEUE_TTL_MS", 600_000),
   baseTtlSecs: number("BASE_TTL_SECS", 90),
   maxTtlSecs: number("MAX_TTL_SECS", 600),
-  profitPercentChange:
-    number("PROFIT_PERCENT_CHANGE", 8) / 100,
+  profitPercentChange: number("PROFIT_PERCENT_CHANGE", 8) / 100,
 
   // TP/SL
   stopLossEnabled: process.env.STOP_LOSS_ENABLED?.toLowerCase() === "true",
@@ -119,8 +118,9 @@ export const CONFIG = {
     (process.env.LIVE_PNL_ORDER_EXPIRE_EXECUTE ?? "true").toLowerCase() ===
     "true",
   pnlOrderExpireExecuteSellAll:
-    (process.env.LIVE_PNL_ORDER_EXPIRE_EXECUTE_SELL_ALL ?? "false").toLowerCase() ===
-    "true",
+    (
+      process.env.LIVE_PNL_ORDER_EXPIRE_EXECUTE_SELL_ALL ?? "false"
+    ).toLowerCase() === "true",
   pnlOrderUseMidPrice:
     (process.env.LIVE_PNL_ORDER_USE_MID_PRICE ?? "true").toLowerCase() ===
     "true",
@@ -130,7 +130,8 @@ export const CONFIG = {
     (process.env.LIVE_PNL_CUSTOM_CONFIG_ENABLED ?? "true").toLowerCase() ===
     "true",
   exitCustomFeeAndTip:
-    (process.env.LIVE_EXIT_CUSTOM_FEE_AND_TIP ?? "false").toLowerCase() === "true",
+    (process.env.LIVE_EXIT_CUSTOM_FEE_AND_TIP ?? "false").toLowerCase() ===
+    "true",
   exitPriorityFee: process.env.LIVE_EXIT_PRIORITY_FEE ?? "",
   exitJitoEnabled:
     (process.env.LIVE_EXIT_JITO_ENABLED ?? "true").toLowerCase() === "true",
@@ -159,13 +160,16 @@ export const CONFIG = {
   wsReconnectDelayMs: number("WS_RECONNECT_DELAY_MS", 5_000),
 
   // Price Data Streams
-  pumpapiWsUrl:
-    process.env.PUMPAPI_WS_URL ?? "wss://stream.pumpapi.io/",
+  pumpapiWsUrl: process.env.PUMPAPI_WS_URL ?? "wss://stream.pumpapi.io/",
   dexscreenerApiUrl:
-    process.env.DEXSCREENER_API_URL ?? "https://api.dexscreener.com/tokens/v1/solana",
+    process.env.DEXSCREENER_API_URL ??
+    "https://api.dexscreener.com/tokens/v1/solana",
   dexscreenerPollIntervalMs: number("DEXSCREENER_POLL_INTERVAL_MS", 30_000),
   wsDataMaxReconnectDelayMs: number("WS_DATA_MAX_RECONNECT_DELAY_MS", 30_000),
-  wsDataInitialReconnectDelayMs: number("WS_DATA_INITIAL_RECONNECT_DELAY_MS", 1_000),
+  wsDataInitialReconnectDelayMs: number(
+    "WS_DATA_INITIAL_RECONNECT_DELAY_MS",
+    1_000,
+  ),
 
   // Position engine
   positionScanIntervalMs: number("POSITION_SCAN_INTERVAL_MS", 1_000),
@@ -180,7 +184,6 @@ export const CONFIG = {
   recoveryFetchPageSize: number("RECOVERY_FETCH_PAGE_SIZE", 20),
 
   // Handler / reporting
-  liveSimStartBalance: number("LIVE_SIM_START_BALANCE", 10),
   maxRealisticPnlRatio: number("MAX_REALISTIC_PNL_RATIO", 10),
   bogusPnlTimeThresholdMs: number("BOGUS_PNL_TIME_THRESHOLD_MS", 60_000),
   tradeReportBatchSize: number("TRADE_REPORT_BATCH_SIZE", 100),

@@ -3,6 +3,7 @@ import { Subject } from "rxjs";
 import type { PriceInfo } from "../data_stream/types";
 import type { Position, PositionExitReason } from "./types";
 import { clearPendingExit } from "./scanner";
+import { getSolPriceUsd } from "../data_stream/price_engine";
 
 const positions = new Map<string, Position>();
 
@@ -57,7 +58,7 @@ export function addPosition(
     currentProfitPct: 0,
 
     sizeSol,
-    sizeToken: sizeSol / entryPriceUsd,
+    sizeToken: entryPriceUsd > 0 ? (sizeSol * getSolPriceUsd()) / entryPriceUsd : 0,
 
     soldPct: 0,
     partialTierIndex: 0,
