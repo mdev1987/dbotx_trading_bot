@@ -10,10 +10,6 @@ import {
   type StoredPosition,
 } from "./store";
 
-/* -------------------------------------------------------------------------- */
-/*                                   Types                                    */
-/* -------------------------------------------------------------------------- */
-
 interface SwapTrade {
   id: string;
   timestamp: number;
@@ -47,10 +43,7 @@ interface PnlOrdersResponse {
   res: PnlOrder[];
 }
 
-/* -------------------------------------------------------------------------- */
-/*                                Recovery                                    */
-/* -------------------------------------------------------------------------- */
-
+/** Rebuild in-memory positions from the local store (fast path) or remote API (fallback). */
 export async function recoverLivePositions(): Promise<void> {
   const storeOrders = getStoreOrders();
   const storeOpenPositions = getStoreOpenPositions();
@@ -76,17 +69,23 @@ export async function recoverLivePositions(): Promise<void> {
 
   console.log("[Recovery] Fetching recent trades for recovery...");
   try {
-    const trades = await botHttp.get<SwapTradesResponse>(
-      `/account/swap_trades?page=0&size=${CONFIG.recoveryFetchPageSize}&chain=solana&wallet=${CONFIG.walletAddress}`,
-    );
+    const solPrice = getSolPriceUsd();
+    let page = 0;
+    let allTrades: SwapTrade[] = [];
 
-    if (trades.err || !trades.res) {
-      console.warn("[Recovery] Failed to fetch trades");
-      return;
+    while (true) {
+      const trades = await botHttp.get<SwapTradesResponse>(
+        `/account/swap_trades?page=${page}&size=${CONFIG.recoveryFetchPageSize}&chain=solana&wallet=${CONFIG.walletAddress}`,
+      );
+
+      if (trades.err || !trades.res || trades.res.length === 0) break;
+
+      allTrades = allTrades.concat(trades.res);
+      if (trades.res.length < CONFIG.recoveryFetchPageSize) break;
+      page++;
     }
 
-    const solPrice = getSolPriceUsd();
-    const recentBuys = trades.res.filter((t) => t.type === "buy" && t.state === "done");
+    const recentBuys = allTrades.filter((t) => t.type === "buy" && t.state === "done");
 
     for (const trade of recentBuys) {
       const pair = trade.pair;
@@ -150,10 +149,6 @@ export async function recoverLivePositions(): Promise<void> {
     console.error("[Recovery] Error during recovery:", err);
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/*                           Find active exit tasks                            */
-/* -------------------------------------------------------------------------- */
 
 async function findActiveExits(sourceId: string): Promise<PnlOrder[]> {
   try {

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
 
 export interface StoredOrder {
@@ -36,6 +36,17 @@ const DEFAULT_DATA: StoreData = { orders: [], positions: [] };
 let data: StoreData;
 let filePath: string;
 
+function tmpPath(): string {
+  return filePath + ".tmp";
+}
+
+function flush(): void {
+  const tmp = tmpPath();
+  writeFileSync(tmp, JSON.stringify(data, null, 2));
+  renameSync(tmp, filePath);
+}
+
+/** Initialise or load the JSON store at the given path. */
 export function initLiveStore(path: string): void {
   filePath = path;
   const dir = dirname(filePath);
@@ -54,17 +65,15 @@ export function initLiveStore(path: string): void {
   }
 }
 
-function flush(): void {
-  writeFileSync(filePath, JSON.stringify(data, null, 2));
-}
-
+/** Persist a new order. */
 export function addOrder(order: StoredOrder): void {
   data.orders.push(order);
   flush();
 }
 
+/** Upsert an open position by pair. Replaces existing open position for the same pair. */
 export function addPosition(pos: StoredPosition): void {
-  const existing = data.positions.findIndex((p) => p.pair === pos.pair);
+  const existing = data.positions.findIndex((p) => p.pair === pos.pair && p.status === "open");
   if (existing >= 0) {
     data.positions[existing] = pos;
   } else {
@@ -73,25 +82,29 @@ export function addPosition(pos: StoredPosition): void {
   flush();
 }
 
+/** Mark an open position as closed, recording exit price, PnL, and reason. */
 export function closePosition(pair: string, exitPriceUsd: number, reason: string): void {
   const pos = data.positions.find((p) => p.pair === pair && p.status === "open");
   if (!pos) return;
   pos.status = "closed";
   pos.closedAt = Date.now();
   pos.exitPriceUsd = exitPriceUsd;
-  pos.pnl = (exitPriceUsd - pos.entryPriceUsd) / pos.entryPriceUsd;
+  pos.pnl = pos.entryPriceUsd > 0 ? (exitPriceUsd - pos.entryPriceUsd) / pos.entryPriceUsd : 0;
   pos.reason = reason;
   flush();
 }
 
+/** Read-only snapshot of all orders. */
 export function getStoreOrders(): readonly StoredOrder[] {
   return data.orders;
 }
 
+/** Filter currently open positions. */
 export function getStoreOpenPositions(): StoredPosition[] {
   return data.positions.filter((p) => p.status === "open");
 }
 
+/** Update token/name metadata for a stored order. No-op if orderId not found. */
 export function updateOrderMeta(orderId: string, meta: Partial<Pick<StoredOrder, "token" | "tokenName">>): void {
   const order = data.orders.find((o) => o.id === orderId);
   if (!order) return;

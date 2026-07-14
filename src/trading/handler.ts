@@ -166,7 +166,7 @@ function flushTradeReportBatch(): void {
     queueSize(),
   );
 
-  console.log("[SimTrading] Report sent");
+  console.log("[Handler] Report sent");
 }
 
 /* -------------------------------------------------------------------------- */
@@ -212,7 +212,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
   const tokenName = signal.Token ?? token.slice(0, 8);
   const entryPrice = signal.initPriceUSD;
   console.log(
-    `[SimTrading] Buy signal: ${tokenName}${entryPrice ? ` @ ${fmtPrice(entryPrice)}` : " (no price)"}`,
+    `[Handler] Buy signal: ${tokenName}${entryPrice ? ` @ ${fmtPrice(entryPrice)}` : " (no price)"}`,
   );
 
   if (!trading) return;
@@ -227,7 +227,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
     const fillPrice = result.priceUsd ?? entryPrice;
 
     if (!fillPrice || fillPrice <= 0) {
-      console.log(`[SimTrading] Skipping ${tokenName} — no valid price`);
+      console.log(`[Handler] Skipping ${tokenName} — no valid price`);
       pendingBuyPairs.delete(pair);
       return;
     }
@@ -240,7 +240,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       CONFIG.positionSize,
     );
     if (!position) {
-      console.log(`[SimTrading] Skipping ${tokenName} — addPosition failed`);
+      console.log(`[Handler] Skipping ${tokenName} — addPosition failed`);
       pendingBuyPairs.delete(pair);
       return;
     }
@@ -260,7 +260,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       stats.winRate,
     );
   } catch (err) {
-    console.error(`[SimTrading] Buy failed for ${tokenName}:`, err);
+    console.error(`[Handler] Buy failed for ${tokenName}:`, err);
     untrackToken(token);
   } finally {
     pendingBuyPairs.delete(pair);
@@ -293,7 +293,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
   const tokenName = position.tokenName;
 
   console.log(
-    `[SimTrading] Exit: ${tokenName} reason=${reason} pct=${(sellPct * 100).toFixed(0)}%`,
+    `[Handler] Exit: ${tokenName} reason=${reason} pct=${(sellPct * 100).toFixed(0)}%`,
   );
 
   if (!trading) return;
@@ -329,7 +329,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
 
       if (isBogus) {
         console.warn(
-          `[SimTrading] Bogus PnL for ${tokenName}: ${fmtPct(pnl)} in ${fmtDuration(durationMs)} — discarded`,
+          `[Handler] Bogus PnL for ${tokenName}: ${fmtPct(pnl)} in ${fmtDuration(durationMs)} — discarded`,
         );
         untrackToken(token);
         return;
@@ -359,7 +359,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
       processNextSignal();
     }
   } catch (err) {
-    console.error(`[SimTrading] Sell failed for ${tokenName}:`, err);
+    console.error(`[Handler] Sell failed for ${tokenName}:`, err);
     clearPendingExit(position.id);
     processNextSignal();
   }
@@ -373,7 +373,7 @@ function onPositionUpdate(position: Position): void {
   if (!DEBUG) return;
   const pnl = fmtPct(position.currentProfitPct);
   console.log(
-    `[SimTrading] ${position.tokenName}: ${fmtPrice(position.currentPriceUsd)} pnl=${pnl}`,
+    `[Handler] ${position.tokenName}: ${fmtPrice(position.currentPriceUsd)} pnl=${pnl}`,
   );
 }
 
@@ -386,7 +386,7 @@ export async function startTrading(api: TradingApi): Promise<void> {
 
   trading = api;
 
-  console.log(`[SimTrading] Live sim: $${CONFIG.liveSimStartBalance}`);
+  console.log(`[Handler] Live sim: $${CONFIG.liveSimStartBalance}`);
 
   signalSub = signalQueued$.subscribe(() => processNextSignal());
   exitSub = positionExitRequested$.subscribe(onExit);
@@ -397,7 +397,7 @@ export async function startTrading(api: TradingApi): Promise<void> {
 
   processNextSignal();
 
-  console.log("[SimTrading] Started");
+  console.log("[Handler] Started");
 }
 
 export function stopTrading(): void {
@@ -409,5 +409,5 @@ export function stopTrading(): void {
   exitSub = null;
   debugSub = null;
 
-  console.log("[SimTrading] Stopped");
+  console.log("[Handler] Stopped");
 }

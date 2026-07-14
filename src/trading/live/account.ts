@@ -3,10 +3,6 @@ import { CONFIG } from "../../config";
 import { dataHttp } from "../http";
 import type { TradingAccount } from "../types";
 
-/* -------------------------------------------------------------------------- */
-/*                                   Types                                    */
-/* -------------------------------------------------------------------------- */
-
 interface WalletBalanceResponse {
   err: boolean;
   res: {
@@ -18,24 +14,13 @@ interface WalletBalanceResponse {
 
 export interface LiveAccount {
   balance: number;
-  holdTokens: number;
 }
 
-/* -------------------------------------------------------------------------- */
-/*                               Account State                                */
-/* -------------------------------------------------------------------------- */
-
-let liveAccount: LiveAccount = {
-  balance: 0,
-  holdTokens: 0,
-};
+let liveAccount: LiveAccount = { balance: 0 };
 
 export const liveAccount$ = new BehaviorSubject<LiveAccount>(liveAccount);
 
-/* -------------------------------------------------------------------------- */
-/*                              Fetch Balance                                 */
-/* -------------------------------------------------------------------------- */
-
+/** Fetch SOL balance from wallet-balance API. Returns last known balance on failure. */
 export async function fetchLiveBalance(): Promise<LiveAccount> {
   try {
     const response = await dataHttp.get<WalletBalanceResponse>(
@@ -46,10 +31,7 @@ export async function fetchLiveBalance(): Promise<LiveAccount> {
       throw new Error("Wallet balance API returned an error.");
     }
 
-    liveAccount = {
-      balance: response.res.uiAmount,
-      holdTokens: 0,
-    };
+    liveAccount = { balance: response.res.uiAmount };
 
     liveAccount$.next(liveAccount);
   } catch (error) {
@@ -59,25 +41,17 @@ export async function fetchLiveBalance(): Promise<LiveAccount> {
   return liveAccount;
 }
 
-/* -------------------------------------------------------------------------- */
-/*                            TradingAccount Adapter                          */
-/* -------------------------------------------------------------------------- */
-
+/** Convert live account into the generic TradingAccount shape used by the handler. */
 export function toTradingAccount(account: LiveAccount, solPriceUsd: number): TradingAccount {
   return {
     balance: account.balance * solPriceUsd,
     change24h: 0,
     changeAll: 0,
-    holdTokens: account.holdTokens,
+    holdTokens: 0,
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*                                   Getter                                   */
-/* -------------------------------------------------------------------------- */
-
+/** Snapshot of the latest cached balance. */
 export function getLiveAccount(): LiveAccount {
   return liveAccount;
 }
-
-

@@ -1,12 +1,9 @@
 export { liveAccount$, fetchLiveBalance, getLiveAccount, toTradingAccount } from "./account";
 export type { LiveAccount } from "./account";
 
-export { liveOrderSubmitted$, liveTaskCompleted$, submitBuy, submitSell, waitForTaskConfirmed } from "./orders";
-export type { LiveOrder, LiveTask, LiveOrderSide } from "./orders";
-export { LiveOrderStatus } from "./orders";
+export { liveOrderSubmitted$, liveTaskCompleted$, submitBuy, submitSell, waitForTaskConfirmed, liveTrading } from "./trading";
+export type { LiveOrder, LiveTask, LiveOrderSide } from "./trading";
 
-export { liveTrading } from "./trading";
 export { initLiveStore } from "./store";
 export { recoverLivePositions } from "./recovery";
-export { startLiveMonitor, stopLiveMonitor } from "./monitor";
-export { connectTradeWs, disconnectTradeWs } from "./trade-ws";
+export { connectTradeWs, disconnectTradeWs, startLiveMonitor, stopLiveMonitor } from "./trade-ws";

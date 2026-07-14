@@ -206,7 +206,7 @@ export const CONFIG = {
   liveMode: process.env.LIVE_MODE?.toLowerCase() === "true",
   recoveryOnStart:
     (process.env.LIVE_RECOVERY_ON_START ?? "true").toLowerCase() === "true",
-  liveDbPath: process.env.LIVE_DB_PATH ?? "./data/live_trading.sqlite",
+  liveDbPath: process.env.LIVE_DB_PATH ?? "./data/live_trading.json",
 
   // Observability
   logLevel: process.env.LOG_LEVEL ?? "info",

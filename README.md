@@ -27,6 +27,15 @@ First run requires Telegram phone + code for MTProto auth (cached in `telegram_s
 | `MAX_POSITIONS` | `5` | Concurrent positions |
 | `LIVE_WALLET_ID` | — | Required for live mode |
 | `LIVE_WALLET_ADDRESS` | — | Required for live mode |
+| `LIVE_MODE` | `false` | `true` = live trades via DBotX automated API |
+| `RECOVERY_FETCH_PAGE_SIZE` | `20` | Trades per page during startup recovery |
+| `LIVE_DB_PATH` | `./data/live_trading.json` | JSON store for order/position metadata |
+
+## Live Module
+
+`src/trading/live/` — JSON-persisted order store (`store.ts`), SOL balance polling (`account.ts`), swap-order submission with task polling (`trading.ts`), trade-result WebSocket consumer with Telegram notifications (`trade-ws.ts`), and startup recovery from store or API (`recovery.ts`).
+
+Tests: `bun test src/trading/live/`
 
 ## Build
 
