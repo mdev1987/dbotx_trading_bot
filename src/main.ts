@@ -57,13 +57,16 @@ if (!CONFIG.liveMode) {
       CONFIG.partialTpEnabled,
       CONFIG.partialTpTiers,
     ),
-    new TtlStrategy(
-      CONFIG.baseTtlSecs,
-      CONFIG.maxTtlSecs,
-      CONFIG.profitPercentChange / 100,
-    ),
   ]);
 }
+
+registerStrategies([
+  new TtlStrategy(
+    CONFIG.baseTtlSecs,
+    CONFIG.maxTtlSecs,
+    CONFIG.profitPercentChange / 100,
+  ),
+]);
 
 const positionEngine = new PositionEngine(
   unifiedPriceUpdate$,

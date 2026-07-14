@@ -259,6 +259,17 @@ async function execute(orderPromise: Promise<LiveOrder>): Promise<OrderResult> {
   };
 }
 
+async function executeSell(orderPromise: Promise<LiveOrder>): Promise<OrderResult> {
+  const order = await orderPromise;
+  return {
+    id: order.id,
+    status: "done",
+    pair: order.pair,
+    type: "sell",
+    updatedAt: Date.now(),
+  };
+}
+
 /** Live trading adapter implementing TradingApi. */
 export const liveTrading: TradingApi = {
   /** Buy: place order, wait for confirmation, update store metadata. */
@@ -280,9 +291,9 @@ export const liveTrading: TradingApi = {
     return result;
   },
 
-  /** Sell: place sell order and wait for confirmation. */
+  /** Sell: submit sell order and return immediately without polling. */
   async sell(pair: string, percentage: number, _tokenName: string, _token: string): Promise<OrderResult> {
-    return execute(submitSell(pair, percentage));
+    return executeSell(submitSell(pair, percentage));
   },
 
   /** Fetch wallet balance and derive TradingAccount. */
