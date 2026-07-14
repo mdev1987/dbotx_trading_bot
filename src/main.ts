@@ -2,11 +2,28 @@ import { CONFIG } from "./config";
 
 import { simulatorTrading } from "./trading/simulator/trading";
 import { liveTrading } from "./trading/live/trading";
-import { initLiveStore, recoverLivePositions, startLiveMonitor, stopLiveMonitor, connectTradeWs, disconnectTradeWs } from "./trading/live";
+import {
+  initLiveStore,
+  recoverLivePositions,
+  startLiveMonitor,
+  stopLiveMonitor,
+  connectTradeWs,
+  disconnectTradeWs,
+} from "./trading/live";
 
-import { unifiedPriceUpdate$, initPriceEngine, stopPriceEngine } from "./data_stream/price_engine";
-import { connectDataWs, disconnectDataWs } from "./data_stream/dbotx_data_stream";
-import { connectPumpStream, disconnectPumpStream } from "./data_stream/pumpapi_data_stream";
+import {
+  unifiedPriceUpdate$,
+  initPriceEngine,
+  stopPriceEngine,
+} from "./data_stream/price_engine";
+import {
+  connectDataWs,
+  disconnectDataWs,
+} from "./data_stream/dbotx_data_stream";
+import {
+  connectPumpStream,
+  disconnectPumpStream,
+} from "./data_stream/pumpapi_data_stream";
 import { updatePositionPrice } from "./strategy/positions_store";
 import { registerStrategies, scanPositions } from "./strategy/scanner";
 import { PositionEngine } from "./strategy/positions_engine";
@@ -14,8 +31,15 @@ import { StopLossStrategy } from "./strategy/exit-strategies/stop-loss";
 import { TrailingStopStrategy } from "./strategy/exit-strategies/trailing-stop";
 import { PartialTakeProfitStrategy } from "./strategy/exit-strategies/partial-tp";
 import { TtlStrategy } from "./strategy/exit-strategies/ttl";
-import { startTelegramListener, stopTelegramListener } from "./telegram/telegram_client";
+import {
+  startTelegramListener,
+  stopTelegramListener,
+} from "./telegram/telegram_client";
 import { initTelegramBot, shutdownTelegramBot } from "./telegram/telegram_bot";
+import {
+  initSignalQueue,
+  stopSignalQueue,
+} from "./telegram/telegram_signal_queue";
 import { startTrading, stopTrading } from "./trading/handler";
 
 /* -------------------------------------------------------------------------- */
@@ -24,10 +48,20 @@ import { startTrading, stopTrading } from "./trading/handler";
 
 if (!CONFIG.liveMode) {
   registerStrategies([
-    new StopLossStrategy(CONFIG.stopLossEnabled, CONFIG.stopLossPct),
-    new TrailingStopStrategy(CONFIG.trailingActivationPct, CONFIG.trailingDistancePct),
-    new PartialTakeProfitStrategy(CONFIG.partialTpEnabled, CONFIG.partialTpTiers),
-    new TtlStrategy(CONFIG.baseTtlSecs, CONFIG.maxTtlSecs, CONFIG.profitPercentChange),
+    new StopLossStrategy(CONFIG.stopLossEnabled, CONFIG.stopLossPct / 100),
+    new TrailingStopStrategy(
+      CONFIG.trailingActivationPct / 100,
+      CONFIG.trailingDistancePct / 100,
+    ),
+    new PartialTakeProfitStrategy(
+      CONFIG.partialTpEnabled,
+      CONFIG.partialTpTiers,
+    ),
+    new TtlStrategy(
+      CONFIG.baseTtlSecs,
+      CONFIG.maxTtlSecs,
+      CONFIG.profitPercentChange / 100,
+    ),
   ]);
 }
 
@@ -41,7 +75,7 @@ const services = {
   async start(): Promise<void> {
     initTelegramBot();
     connectDataWs();
-    connectPumpStream();
+    // connectPumpStream();   // Uncomment this line if you want to enable pumpapi data stream
     initPriceEngine();
 
     if (CONFIG.liveMode) {
@@ -58,9 +92,11 @@ const services = {
     positionEngine.start();
     await startTrading(CONFIG.liveMode ? liveTrading : simulatorTrading);
 
-    startTelegramListener().catch((err) =>
-      console.error("[Main] Telegram listener failed:", err),
-    );
+    startTelegramListener()
+      .then(() => {
+        initSignalQueue(CONFIG.telegramChannelUserName);
+      })
+      .catch((err) => console.error("[Main] Telegram listener failed:", err));
 
     console.log("[Main] All services started");
   },
@@ -71,30 +107,34 @@ const services = {
       disconnectTradeWs();
     }
     stopTrading();
+    stopSignalQueue();
     positionEngine.stop();
     stopPriceEngine();
     disconnectDataWs();
-    disconnectPumpStream();
+    // disconnectPumpStream(); // Uncomment this line if you want to disable pumpapi data stream
     stopTelegramListener();
     shutdownTelegramBot();
     console.log("[Main] All services stopped");
   },
 };
 
-services.start().then(() => {
-  process.on("SIGINT", () => {
-    console.log("\n[Main] SIGINT received");
-    services.stop();
-    process.exit(0);
-  });
+services
+  .start()
+  .then(() => {
+    process.on("SIGINT", () => {
+      console.log("\n[Main] SIGINT received");
+      services.stop();
+      process.exit(0);
+    });
 
-  process.on("SIGTERM", () => {
-    console.log("[Main] SIGTERM received");
+    process.on("SIGTERM", () => {
+      console.log("[Main] SIGTERM received");
+      services.stop();
+      process.exit(0);
+    });
+  })
+  .catch((err) => {
+    console.error("[Main] Startup failed:", err);
     services.stop();
-    process.exit(0);
+    process.exit(1);
   });
-}).catch((err) => {
-  console.error("[Main] Startup failed:", err);
-  services.stop();
-  process.exit(1);
-});

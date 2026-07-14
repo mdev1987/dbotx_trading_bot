@@ -3,19 +3,17 @@ import { Subject, Subscription, timer } from "rxjs";
 import { CONFIG } from "../config";
 import type {
   PriceInfo,
-  PumpEvent,
   DbotxEvent,
   TrackedToken,
-  DexScreenerEvent,
 } from "./types";
 import { PriceSource } from "./types";
-import { pumpApiPriceUpdateEvent$ } from "./pumpapi_data_stream";
+// import { pumpApiPriceUpdateEvent$ } from "./pumpapi_data_stream";
 import {
   dbotxPriceUpdateEvent$,
   subscribePairs,
   unsubscribePair,
 } from "./dbotx_data_stream";
-import { dexScreenerPriceUpdateEvent$, pollDexScreener } from "./dexscreener_polling";
+// import { dexScreenerPriceUpdateEvent$, pollDexScreener } from "./dexscreener_polling";
 
 function isValidPrice(price: number): boolean {
   return Number.isFinite(price) && price > 0;
@@ -26,10 +24,10 @@ const pairToToken = new Map<string, string>();
 
 export const unifiedPriceUpdate$ = new Subject<PriceInfo>();
 
-let pumpApiSub: Subscription | null = null;
+// let pumpApiSub: Subscription | null = null;
 let dbotxSub: Subscription | null = null;
-let dexScreenerSub: Subscription | null = null;
-let dexScreenerPollSub: Subscription | null = null;
+// let dexScreenerSub: Subscription | null = null;
+// let dexScreenerPollSub: Subscription | null = null;
 
 /* -------------------------------------------------------------------------- */
 /*                            SOL → USD rate                                  */
@@ -125,24 +123,24 @@ function emitPrice(
   });
 }
 
-function initPumpSub(): void {
-  pumpApiSub = pumpApiPriceUpdateEvent$.subscribe((event: PumpEvent) => {
-    const price = parseFloat(event.price);
-    const timestamp = event.timestamp || Date.now();
-    if (!isValidPrice(price)) return;
-
-    let priceUsd: number;
-
-    if (event.quoteMint === "So11111111111111111111111111111111111111112") {
-      if (solPriceUsd <= 0) return;
-      priceUsd = price * solPriceUsd;
-    } else {
-      priceUsd = price;
-    }
-
-    emitPrice(event.mint, undefined, priceUsd, PriceSource.PUMPAPI, timestamp);
-  });
-}
+// function initPumpSub(): void {
+//   pumpApiSub = pumpApiPriceUpdateEvent$.subscribe((event: PumpEvent) => {
+//     const price = parseFloat(event.price);
+//     const timestamp = event.timestamp || Date.now();
+//     if (!isValidPrice(price)) return;
+// 
+//     let priceUsd: number;
+// 
+//     if (event.quoteMint === "So11111111111111111111111111111111111111112") {
+//       if (solPriceUsd <= 0) return;
+//       priceUsd = price * solPriceUsd;
+//     } else {
+//       priceUsd = price;
+//     }
+// 
+//     emitPrice(event.mint, undefined, priceUsd, PriceSource.PUMPAPI, timestamp);
+//   });
+// }
 
 function initDbotxSub(): void {
   dbotxSub = dbotxPriceUpdateEvent$.subscribe((update: DbotxEvent) => {
@@ -159,55 +157,55 @@ function initDbotxSub(): void {
   });
 }
 
-function initDexScreenerSub(): void {
-  dexScreenerSub = dexScreenerPriceUpdateEvent$.subscribe(
-    (update: DexScreenerEvent) => {
-      const price = update.priceUsd;
-      if (!isValidPrice(price)) return;
-      emitPrice(
-        update.token,
-        update.pair,
-        price,
-        update.source,
-        update.timestamp,
-      );
-    },
-  );
-}
+// function initDexScreenerSub(): void {
+//   dexScreenerSub = dexScreenerPriceUpdateEvent$.subscribe(
+//     (update: DexScreenerEvent) => {
+//       const price = update.priceUsd;
+//       if (!isValidPrice(price)) return;
+//       emitPrice(
+//         update.token,
+//         update.pair,
+//         price,
+//         update.source,
+//         update.timestamp,
+//       );
+//     },
+//   );
+// }
 
-function initDexScreenerPolling(): void {
-  dexScreenerPollSub = timer(
-    CONFIG.dexscreenerPollIntervalMs,
-    CONFIG.dexscreenerPollIntervalMs,
-  ).subscribe(() => {
-    const tokens = [...trackedTokens.keys()];
-    if (tokens.length > 0) {
-      pollDexScreener(tokens);
-    }
-  });
-}
+// function initDexScreenerPolling(): void {
+//   dexScreenerPollSub = timer(
+//     CONFIG.dexscreenerPollIntervalMs,
+//     CONFIG.dexscreenerPollIntervalMs,
+//   ).subscribe(() => {
+//     const tokens = [...trackedTokens.keys()];
+//     if (tokens.length > 0) {
+//       pollDexScreener(tokens);
+//     }
+//   });
+// }
 
 export function initPriceEngine(): void {
-  if (pumpApiSub || dbotxSub || dexScreenerSub) {
+  if (dbotxSub) {
     return;
   }
-  initPumpSub();
   initDbotxSub();
-  initDexScreenerSub();
-  initDexScreenerPolling();
+  // initPumpSub();
+  // initDexScreenerSub();
+  // initDexScreenerPolling();
   console.log("[PriceEngine] Initialized");
 }
 
 export function stopPriceEngine(): void {
-  pumpApiSub?.unsubscribe();
+  // pumpApiSub?.unsubscribe();
   dbotxSub?.unsubscribe();
-  dexScreenerSub?.unsubscribe();
-  dexScreenerPollSub?.unsubscribe();
+  // dexScreenerSub?.unsubscribe();
+  // dexScreenerPollSub?.unsubscribe();
 
-  pumpApiSub = null;
+  // pumpApiSub = null;
   dbotxSub = null;
-  dexScreenerSub = null;
-  dexScreenerPollSub = null;
+  // dexScreenerSub = null;
+  // dexScreenerPollSub = null;
 
   for (const tracked of trackedTokens.values()) {
     unsubscribePair(tracked.pair);

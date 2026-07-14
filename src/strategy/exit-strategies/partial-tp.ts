@@ -16,6 +16,10 @@ export class PartialTakeProfitStrategy implements ExitStrategy {
       return null;
     }
 
+    if (!Number.isFinite(position.currentProfitPct)) {
+      return null;
+    }
+
     let totalPct = 0;
 
     while (position.partialTierIndex < this.tiers.length) {

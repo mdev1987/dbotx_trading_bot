@@ -1,5 +1,4 @@
 import readline from "readline";
-import removeMarkdown from "remove-markdown";
 import { TelegramClient } from "teleproto";
 import { StoreSession } from "teleproto/sessions";
 import { NewMessage, NewMessageEvent } from "teleproto/events";
@@ -10,8 +9,6 @@ import {
   parseAveScannerSignal,
   type AveScannerSignal,
 } from "./ave_scanner_parser";
-import { parseSolTrendingSignal } from "./sol_trading_parser";
-import { parseTrendingssolSignal } from "./sol_trending2_parser";
 
 /* -------------------------------------------------------------------------- */
 /*                           Configuration Validation                         */
@@ -167,14 +164,16 @@ export async function startTelegramListener(): Promise<void> {
       const entities: any[] = (msg as any)?.entities ?? [];
       const text = reconstructWithUrls(rawMessage, entities);
 
-      const signal =
-        parseSolTrendingSignal(text) ??
-        parseTrendingssolSignal(text) ??
-        parseAveScannerSignal(text);
+      const signal = parseAveScannerSignal(text);
       if (!signal) {
+        console.error("[Telegram] Failed to parse signal:", text);
         return;
       }
-      console.log("[Telegram] Parsed signal:", signal.Token, signal.CA?.slice(0, 8));
+      console.log(
+        "[Telegram] Parsed signal:",
+        signal.Token,
+        signal.CA?.slice(0, 8),
+      );
       telegramSignal$.next(signal);
     };
 

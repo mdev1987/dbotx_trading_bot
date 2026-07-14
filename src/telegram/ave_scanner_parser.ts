@@ -1,3 +1,5 @@
+import removeMarkdown from "remove-markdown";
+
 export interface Security {
   score?: number;
   riskLevel?: string;
@@ -63,6 +65,7 @@ function parseInitPriceUSD(match: RegExpMatchArray | null): number {
 
 export function parseAveScannerSignal(text: string): AveScannerSignal | null {
   try {
+    text = removeMarkdown(text);
     // Normalize line endings
     text = text.replace(/\r\n/g, "\n");
 

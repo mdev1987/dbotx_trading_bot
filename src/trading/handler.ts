@@ -1,7 +1,11 @@
 import { Subscription } from "rxjs";
 
 import { CONFIG } from "../config";
-import { telegramSignal$ } from "../telegram/telegram_client";
+import {
+  dequeueSignal,
+  queueSize,
+  signalQueued$,
+} from "../telegram/telegram_signal_queue";
 import { positionExitRequested$, clearPendingExit } from "../strategy/scanner";
 import {
   addPosition,
@@ -10,12 +14,25 @@ import {
   positionUpdated$,
   positions,
 } from "../strategy/positions_store";
-import { trackToken, untrackToken, getSolPriceUsd } from "../data_stream/price_engine";
+import {
+  trackToken,
+  untrackToken,
+  getSolPriceUsd,
+} from "../data_stream/price_engine";
 import { PositionExitReason, type Position } from "../strategy/types";
 import type { AveScannerSignal } from "../telegram/ave_scanner_parser";
 import type { ExitCheckResult } from "../strategy/exit-strategies/types";
 import type { TradingApi } from "./types";
-import { sendTelegram, fmtPrice, fmtPct, fmtMcap, fmtDuration, notifyBuyOpened, notifyTradeClosed, sendTradeReport } from "../telegram/telegram_bot";
+import {
+  sendTelegram,
+  fmtPrice,
+  fmtPct,
+  fmtMcap,
+  fmtDuration,
+  notifyBuyOpened,
+  notifyTradeClosed,
+  sendTradeReport,
+} from "../telegram/telegram_bot";
 
 /* -------------------------------------------------------------------------- */
 /*                                   State                                    */
@@ -33,51 +50,13 @@ const pendingBuyPairs = new Set<string>();
 /** Trading backend — set by startTrading. */
 let trading: TradingApi | null = null;
 
-/* -------------------------------------------------------------------------- */
-/*                            Signal Queue                                     */
-/* -------------------------------------------------------------------------- */
-
-interface QueuedSignal {
-  signal: AveScannerSignal;
-  enqueuedAt: number;
-}
-
-const signalQueue: QueuedSignal[] = [];
-
-function enqueueSignal(signal: AveScannerSignal): void {
-  const key = signal.CA ?? signal.LP;
-  if (!key) return;
-
-  const idx = signalQueue.findIndex(
-    (q) => q.signal.CA === signal.CA || q.signal.LP === signal.LP,
-  );
-  if (idx !== -1) signalQueue.splice(idx, 1);
-
-  if (signalQueue.length >= CONFIG.signalQueueMaxSize) return;
-
-  signalQueue.push({ signal, enqueuedAt: Date.now() });
-}
-
-function purgeExpiredSignals(): void {
-  const now = Date.now();
-  for (let i = signalQueue.length - 1; i >= 0; i--) {
-    if (now - signalQueue[i]!.enqueuedAt > CONFIG.signalQueueTtlMs) {
-      signalQueue.splice(i, 1);
-    }
-  }
-}
-
-function dequeueSignal(): AveScannerSignal | null {
-  purgeExpiredSignals();
-  return signalQueue.shift()?.signal ?? null;
-}
-
 function getPositionStats(): { open: number; total: number; winRate: number } {
   const open = positions.size;
   const closed = completedTrades.length;
   const wins = completedTrades.filter((t) => t.pnl >= 0).length;
   const winRate = closed > 0 ? wins / closed : 0;
-  return { open, total: open + closed, winRate };
+  // return { open, total: open + closed, winRate };
+  return { open, total: CONFIG.maxOpenPositions, winRate };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -117,7 +96,8 @@ function recordTrade(
     ...lastSignalMeta,
   });
 
-  if (completedTrades.length >= CONFIG.tradeReportBatchSize) flushTradeReportBatch();
+  if (completedTrades.length >= CONFIG.tradeReportBatchSize)
+    flushTradeReportBatch();
 }
 
 function flushTradeReportBatch(): void {
@@ -146,9 +126,7 @@ function flushTradeReportBatch(): void {
       ? winRate * (avgWin / avgLossAbs) - (1 - winRate)
       : winRate * avgWin;
 
-  const sortedDurations = bucket
-    .map((t) => t.durationMs)
-    .sort((a, b) => a - b);
+  const sortedDurations = bucket.map((t) => t.durationMs).sort((a, b) => a - b);
   const mid = Math.floor(sortedDurations.length / 2);
   const medianDurationMs: number =
     sortedDurations.length % 2 === 0
@@ -185,7 +163,7 @@ function flushTradeReportBatch(): void {
     exitTypes,
     avgMcap,
     positions.size,
-    signalQueue.length,
+    queueSize(),
   );
 
   console.log("[SimTrading] Report sent");
@@ -227,11 +205,6 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
 
   if (hasPosition(pair) || pendingBuyPairs.has(pair)) return;
 
-  if (CONFIG.maxOpenPositions > 0 && positions.size >= CONFIG.maxOpenPositions) {
-    enqueueSignal(signal);
-    return;
-  }
-
   pendingBuyPairs.add(pair);
 
   lastSignalMeta = { marketCapUSD: signal.marketCapUSD, dex: signal.dex };
@@ -259,14 +232,20 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       return;
     }
 
-    const position = addPosition(token, pair, tokenName, fillPrice, CONFIG.positionSize);
+    const position = addPosition(
+      token,
+      pair,
+      tokenName,
+      fillPrice,
+      CONFIG.positionSize,
+    );
     if (!position) {
       console.log(`[SimTrading] Skipping ${tokenName} — addPosition failed`);
       pendingBuyPairs.delete(pair);
       return;
     }
     trackToken(token, pair);
-      const account = await trading.getAccount();
+    const account = await trading.getAccount();
 
     const stats = getPositionStats();
     notifyBuyOpened(
@@ -288,6 +267,20 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
   }
 }
 
+function processNextSignal(): void {
+  if (
+    CONFIG.maxOpenPositions > 0 &&
+    positions.size >= CONFIG.maxOpenPositions
+  ) {
+    return;
+  }
+
+  const queued = dequeueSignal();
+  if (queued) {
+    onSignal(queued.signal);
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /*                              Exit → Sell                                   */
 /* -------------------------------------------------------------------------- */
@@ -306,12 +299,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
   if (!trading) return;
 
   try {
-    const sellResult = await trading.sell(
-      pair,
-      sellPct,
-      tokenName,
-      token,
-    );
+    const sellResult = await trading.sell(pair, sellPct, tokenName, token);
     const closePrice = sellResult.priceUsd ?? position.currentPriceUsd;
 
     if (reason === PositionExitReason.PartialTP) {
@@ -319,7 +307,10 @@ async function onExit(result: ExitCheckResult): Promise<void> {
       clearPendingExit(position.id);
       const remainingPct = (1 - position.soldPct) * 100;
       const stats = getPositionStats();
-      const wr = stats.winRate > 0 ? ` · Win rate: \`${(stats.winRate * 100).toFixed(0)}%\`` : "";
+      const wr =
+        stats.winRate > 0
+          ? ` · Win rate: \`${(stats.winRate * 100).toFixed(0)}%\``
+          : "";
       sendTelegram(
         `🟡 **Partial TP**\n━━━━━━━━━━━━━━━━━━━\n🔖 Token: \`${tokenName}\`\n💵 Sold at: \`${fmtPrice(closePrice)}\`\n📊 Sold: \`${(sellPct * 100).toFixed(0)}%\`\n📊 Remaining: \`${remainingPct.toFixed(0)}%\`\n📊 Positions: \`${stats.open}/${stats.total}\`${wr}`,
       );
@@ -329,12 +320,12 @@ async function onExit(result: ExitCheckResult): Promise<void> {
     const closed = removePosition(pair, closePrice, reason);
 
     if (closed) {
-      const pnl =
-        (closePrice - closed.entryPriceUsd) / closed.entryPriceUsd;
+      const pnl = (closePrice - closed.entryPriceUsd) / closed.entryPriceUsd;
       const durationMs = now() - closed.openedAt;
 
       const isBogus =
-        Math.abs(pnl) > CONFIG.maxRealisticPnlRatio && durationMs < CONFIG.bogusPnlTimeThresholdMs;
+        Math.abs(pnl) > CONFIG.maxRealisticPnlRatio &&
+        durationMs < CONFIG.bogusPnlTimeThresholdMs;
 
       if (isBogus) {
         console.warn(
@@ -365,13 +356,12 @@ async function onExit(result: ExitCheckResult): Promise<void> {
 
       untrackToken(token);
 
-      const next = dequeueSignal();
-      if (next) {
-        onSignal(next);
-      }
+      processNextSignal();
     }
   } catch (err) {
     console.error(`[SimTrading] Sell failed for ${tokenName}:`, err);
+    clearPendingExit(position.id);
+    processNextSignal();
   }
 }
 
@@ -392,20 +382,20 @@ function onPositionUpdate(position: Position): void {
 /* -------------------------------------------------------------------------- */
 
 export async function startTrading(api: TradingApi): Promise<void> {
-  if (signalSub) return;
+  if (trading) return;
 
   trading = api;
 
-  console.log(
-    `[SimTrading] Live sim: $${CONFIG.liveSimStartBalance}`,
-  );
+  console.log(`[SimTrading] Live sim: $${CONFIG.liveSimStartBalance}`);
 
-  signalSub = telegramSignal$.subscribe(onSignal);
+  signalSub = signalQueued$.subscribe(() => processNextSignal());
   exitSub = positionExitRequested$.subscribe(onExit);
 
   if (DEBUG) {
     debugSub = positionUpdated$.subscribe(onPositionUpdate);
   }
+
+  processNextSignal();
 
   console.log("[SimTrading] Started");
 }

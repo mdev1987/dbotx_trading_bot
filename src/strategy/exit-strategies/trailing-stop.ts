@@ -14,6 +14,9 @@ export class TrailingStopStrategy implements ExitStrategy {
     const entry = position.entryPriceUsd;
     if (!Number.isFinite(entry) || entry <= 0) return null;
 
+    if (!Number.isFinite(position.currentProfitPct)) return null;
+    if (!Number.isFinite(position.peakPriceUsd) || position.peakPriceUsd <= 0) return null;
+
     const peakProfit = (position.peakPriceUsd - entry) / entry;
 
     if (peakProfit < this.activationPct) {

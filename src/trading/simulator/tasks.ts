@@ -7,7 +7,7 @@ import { SimulatorOrderStatus } from "./orders";
 /*                                   Types                                    */
 /* -------------------------------------------------------------------------- */
 
-type SwapTradeState = "done" | "fail" | "expired" | "init" | "processing";
+type PnLOrderState = "done" | "fail" | "expired" | "init" | "processing";
 
 export interface SimulatorTask {
   id: string;
@@ -31,30 +31,30 @@ export interface SimulatorTask {
   updatedAt: number;
 }
 
-interface SwapTradeItem {
+interface PnLOrderItem {
   _id: string;
 
-  state: SwapTradeState;
-
-  chain: string;
+  state: PnLOrderState;
 
   pair: string;
 
-  type: "buy" | "sell";
+  tradeType: "buy" | "sell";
 
-  send: { amount: string };
+  sourceId: string;
 
-  receive: { amount: string };
+  basePriceUsd: number;
+
+  currencyAmountUI: number;
 
   errorCode?: string;
 
   errorMessage?: string;
 }
 
-interface SwapTradesResponse {
+interface PnLOrdersResponse {
   err: boolean;
 
-  res: SwapTradeItem[];
+  res: PnLOrderItem[];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -70,7 +70,7 @@ export const simulatorTaskCompleted$ = new Subject<SimulatorTask>();
 /*                              State Mapping                                 */
 /* -------------------------------------------------------------------------- */
 
-function toSimulatorOrderStatus(state: SwapTradeState): SimulatorOrderStatus {
+function toSimulatorOrderStatus(state: PnLOrderState): SimulatorOrderStatus {
   switch (state) {
     case "done":
       return SimulatorOrderStatus.Executed;
@@ -94,27 +94,45 @@ export async function getTask(
   orderId: string,
   pair: string,
 ): Promise<SimulatorTask> {
-  const response = await http.get<SwapTradesResponse>(
-    `/simulator/swap_trades?chain=solana&page=0&size=20&wallet=&token=${pair}`,
+  const response = await http.get<PnLOrdersResponse>(
+    `/simulator/pnl_orders_from_swap_order?page=0&size=20&chain=solana&state=&groupId=&token=&sourceId=${orderId}&sortBy=&sort=-1`,
   );
 
   if (response.err) {
     throw new Error("Simulator returned an error.");
   }
 
-  const info = response.res.find((t) => t._id === orderId);
+  const orders = response.res.filter((t) => t.sourceId === orderId);
 
-  if (!info) {
+  if (orders.length === 0) {
     throw new Error("Simulator task not found.");
   }
 
+  const allExpired = orders.every((o) => o.state === "expired");
+  if (allExpired) {
+    return {
+      id: orderId,
+      status: SimulatorOrderStatus.Cancelled,
+      pair: orders[0]!.pair,
+      type: orders[0]!.tradeType,
+      error: "All PnL orders expired",
+      updatedAt: Date.now(),
+    };
+  }
+
+  const info =
+    orders.find((o) => o.state !== "expired") ??
+    orders.find((o) => o.state === "done") ??
+    orders[0]!;
+
   return {
-    id: info._id,
+    id: info.sourceId,
     status: toSimulatorOrderStatus(info.state),
     pair: info.pair,
-    type: info.type,
-    amountSol: Number(info.send.amount) / 1e9,
-    amountToken: Number(info.receive.amount),
+    type: info.tradeType,
+    priceUsd: info.basePriceUsd,
+    amountSol: info.currencyAmountUI,
+    amountToken: undefined,
     error: info.errorMessage || info.errorCode,
     updatedAt: Date.now(),
   };

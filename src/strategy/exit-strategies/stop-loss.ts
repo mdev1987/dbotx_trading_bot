@@ -15,6 +15,10 @@ export class StopLossStrategy implements ExitStrategy {
       return null;
     }
 
+    if (!Number.isFinite(position.currentProfitPct)) {
+      return null;
+    }
+
     if (position.currentProfitPct > this.stopLossPct) {
       return null;
     }
