@@ -26,7 +26,7 @@ export class PositionEngine {
     this.priceSub = this.priceUpdate$.subscribe(this.onPriceUpdate);
 
     this.scanSub = timer(this.scanIntervalMs, this.scanIntervalMs).subscribe(
-      this.onScan,
+      () => this.onScan(Date.now()),
     );
 
     console.log("[PositionEngine] Started");
