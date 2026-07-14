@@ -78,11 +78,15 @@ export const queueCleared$ = new Subject<void>();
  * and the signal is not already queued.
  */
 export function enqueueSignal(signal: QueuedSignal): boolean {
-  if (
-    signalQueue.size >= signalQueueMaxSize &&
-    !signalQueue.has(signal.signal.Token!)
-  ) {
-    return false;
+  if (signalQueue.has(signal.signal.Token!)) {
+    signalQueue.set(signal.signal.Token!, signal);
+    signalQueue$.next([...signalQueue.values()]);
+    signalQueued$.next(signal);
+    return true;
+  }
+
+  if (signalQueue.size >= signalQueueMaxSize) {
+    dequeueSignal();
   }
 
   signalQueue.set(signal.signal.Token!, signal);
