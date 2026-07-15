@@ -279,7 +279,9 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       priceCurrency,
     );
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     console.error(`[Handler] Buy failed for ${tokenName}:`, err);
+    sendTelegram(`🔴 **Buy Failed**\n━━━━━━━━━━━━━━━━━━━\n🔖 Token: \`${tokenName}\`\n❌ Error: \`${msg}\``);
     untrackToken(token);
   } finally {
     pendingBuyPairs.delete(pair);
