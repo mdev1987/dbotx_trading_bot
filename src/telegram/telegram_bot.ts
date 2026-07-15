@@ -45,6 +45,7 @@ export function sendTelegram(text: string): void {
 /* -------------------------------------------------------------------------- */
 
 export function fmtPrice(price: number, currency?: "SOL" | "USD"): string {
+  if (!Number.isFinite(price) || price <= 0) return "—";
   const s = price >= 1
     ? price.toFixed(4)
     : price >= 0.001
@@ -62,6 +63,7 @@ function fmtBalance(balance: number, currency: "SOL" | "USD"): string {
 }
 
 export function fmtPct(value: number): string {
+  if (!Number.isFinite(value)) return "—";
   const sign = value >= 0 ? "+" : "";
   return `${sign}${(value * 100).toFixed(2)}%`;
 }
@@ -130,7 +132,7 @@ export function notifyTradeClosed(
   winRate?: number,
   priceCurrency?: "SOL" | "USD",
 ): void {
-  const label = pnl >= 0 ? "🟢" : "🔴";
+  const label = !Number.isFinite(pnl) ? "⚪" : pnl >= 0 ? "🟢" : "🔴";
 
   const lines = [
     `${label} **Trade Closed**`,

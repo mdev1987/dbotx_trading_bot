@@ -63,6 +63,27 @@ export class TtlStrategy implements ExitStrategy {
    */
   check(position: Position, now: number): ExitDecision | null {
     // -----------------------------------------------------------------------
+    // Skip positions that never received a price.
+    //
+    // This prevents premature expiry before the WebSocket price stream
+    // initializes the position. The hard maxTtlSecs cap still applies to
+    // avoid zombie positions when the stream is permanently down.
+    // -----------------------------------------------------------------------
+
+    if (position.entryPrice <= 0) {
+      const totalAge = this.totalAge(position, now);
+      if (totalAge < this.maxTtlSecs) {
+        return null;
+      }
+      return {
+        position,
+        action: ExitAction.Close,
+        reason: PositionExitReason.Expired,
+        metadata: { totalAge, maxTtl: this.maxTtlSecs },
+      };
+    }
+
+    // -----------------------------------------------------------------------
     // Wait until the base TTL has elapsed.
     // -----------------------------------------------------------------------
 

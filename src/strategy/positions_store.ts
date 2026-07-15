@@ -231,6 +231,7 @@ function initializePositionPrice(position: Position, update: PriceInfo): void {
   position.currentPrice = update.priceUsd;
   position.peakPrice = update.priceUsd;
   position.renewPrice = update.priceUsd;
+  position.renewedAt = update.timestamp;
 
   position.currentProfitPct = 0;
 

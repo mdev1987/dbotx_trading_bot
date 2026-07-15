@@ -237,11 +237,12 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
     const priceCurrency: "SOL" | "USD" =
       CONFIG.tradingEngine === "dbotx" ? "USD" : "SOL";
 
+    const entryPrice = result.price ?? 0;
     const position = addPosition(
       token,
       pair,
       tokenName,
-      0,
+      entryPrice,
       CONFIG.positionSize,
       signalMeta,
       priceCurrency,
@@ -339,10 +340,13 @@ async function onExit(result: ExitDecision): Promise<void> {
     clearPendingExit(position.id);
 
     if (closed) {
-      const pnl = (closePrice - closed.entryPrice) / closed.entryPrice;
+      const pnl = closed.entryPrice > 0
+        ? (closePrice - closed.entryPrice) / closed.entryPrice
+        : NaN;
       const durationMs = now() - closed.openedAt;
 
       const isBogus =
+        Number.isFinite(pnl) &&
         Math.abs(pnl) > CONFIG.maxRealisticPnlRatio &&
         durationMs < CONFIG.bogusPnlTimeThresholdMs;
 
@@ -354,25 +358,27 @@ async function onExit(result: ExitDecision): Promise<void> {
         return;
       }
 
-      recordTrade(closed, closePrice, reason);
+      if (Number.isFinite(pnl)) {
+        recordTrade(closed, closePrice, reason);
 
-      // Track consecutive losses for circuit breaker
-      if (pnl < 0) {
-        consecutiveLosses++;
-        if (
-          consecutiveLosses >= MAX_CONSECUTIVE_LOSSES &&
-          circuitBreakerTrippedAt === 0
-        ) {
-          circuitBreakerTrippedAt = Date.now();
-          console.warn(
-            `[Handler] Circuit breaker tripped after ${consecutiveLosses} consecutive losses — pausing for ${CIRCUIT_BREAKER_COOLDOWN_MS / 1000}s`,
-          );
-          sendTelegram(
-            `🔴 **Circuit Breaker Tripped**\n━━━━━━━━━━━━━━━━━━━\n📊 ${consecutiveLosses} consecutive losses\n⏸️ Pausing for ${CIRCUIT_BREAKER_COOLDOWN_MS / 60_000} min`,
-          );
+        // Track consecutive losses for circuit breaker
+        if (pnl < 0) {
+          consecutiveLosses++;
+          if (
+            consecutiveLosses >= MAX_CONSECUTIVE_LOSSES &&
+            circuitBreakerTrippedAt === 0
+          ) {
+            circuitBreakerTrippedAt = Date.now();
+            console.warn(
+              `[Handler] Circuit breaker tripped after ${consecutiveLosses} consecutive losses — pausing for ${CIRCUIT_BREAKER_COOLDOWN_MS / 1000}s`,
+            );
+            sendTelegram(
+              `🔴 **Circuit Breaker Tripped**\n━━━━━━━━━━━━━━━━━━━\n📊 ${consecutiveLosses} consecutive losses\n⏸️ Pausing for ${CIRCUIT_BREAKER_COOLDOWN_MS / 60_000} min`,
+            );
+          }
+        } else {
+          consecutiveLosses = Math.max(0, consecutiveLosses - 1);
         }
-      } else {
-        consecutiveLosses = Math.max(0, consecutiveLosses - 1);
       }
 
       const account = await trading.getAccount();
