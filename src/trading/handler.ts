@@ -14,10 +14,7 @@ import {
   positionUpdated$,
   positions,
 } from "../strategy/positions_store";
-import {
-  trackToken,
-  untrackToken,
-} from "../data_stream/price_engine";
+import { trackToken, untrackToken } from "../data_stream/price_engine";
 import { PositionExitReason, type Position } from "../strategy/types";
 import type { AveScannerSignal } from "../telegram/ave_scanner_parser";
 import type { ExitCheckResult } from "../strategy/exit-strategies/types";
@@ -97,12 +94,12 @@ function recordTrade(
   closePrice: number,
   reason: PositionExitReason,
 ): void {
-  const pnl = (closePrice - closed.entryPriceUsd) / closed.entryPriceUsd;
+  const pnl = (closePrice - closed.entryPrice) / closed.entryPrice;
   if (reason === PositionExitReason.PartialTP) return;
 
   completedTrades.push({
     tokenName: closed.tokenName,
-    entryPriceUsd: closed.entryPriceUsd,
+    entryPriceUsd: closed.entryPrice,
     exitPriceUsd: closePrice,
     pnl,
     durationMs: now() - closed.openedAt,
@@ -223,9 +220,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
 
   const signalMeta = { marketCapUSD: signal.marketCapUSD, dex: signal.dex };
   const tokenName = signal.Token ?? token.slice(0, 8);
-  console.log(
-    `[Handler] Buy signal: ${tokenName}`,
-  );
+  console.log(`[Handler] Buy signal: ${tokenName}`);
 
   if (!trading) return;
 
@@ -237,7 +232,8 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       token,
     );
 
-    const priceCurrency: "SOL" | "USD" = CONFIG.tradingEngine === "dbotx" ? "USD" : "SOL";
+    const priceCurrency: "SOL" | "USD" =
+      CONFIG.tradingEngine === "dbotx" ? "USD" : "SOL";
 
     const position = addPosition(
       token,
@@ -272,7 +268,9 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[Handler] Buy failed for ${tokenName}:`, err);
-    sendTelegram(`🔴 **Buy Failed**\n━━━━━━━━━━━━━━━━━━━\n🔖 Token: \`${tokenName}\`\n❌ Error: \`${msg}\``);
+    sendTelegram(
+      `🔴 **Buy Failed**\n━━━━━━━━━━━━━━━━━━━\n🔖 Token: \`${tokenName}\`\n❌ Error: \`${msg}\``,
+    );
     untrackToken(token);
   } finally {
     pendingBuyPairs.delete(pair);
@@ -317,7 +315,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
 
   try {
     const sellResult = await trading.sell(pair, sellPct, tokenName, token);
-    const closePrice = sellResult.priceUsd ?? position.currentPriceUsd;
+    const closePrice = sellResult.price ?? position.currentPrice;
 
     if (reason === PositionExitReason.PartialTP) {
       position.soldPct = Math.min(1, (position.soldPct ?? 0) + sellPct);
@@ -337,7 +335,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
     const closed = removePosition(pair, closePrice, reason);
 
     if (closed) {
-      const pnl = (closePrice - closed.entryPriceUsd) / closed.entryPriceUsd;
+      const pnl = (closePrice - closed.entryPrice) / closed.entryPrice;
       const durationMs = now() - closed.openedAt;
 
       const isBogus =
@@ -357,7 +355,10 @@ async function onExit(result: ExitCheckResult): Promise<void> {
       // Track consecutive losses for circuit breaker
       if (pnl < 0) {
         consecutiveLosses++;
-        if (consecutiveLosses >= MAX_CONSECUTIVE_LOSSES && circuitBreakerTrippedAt === 0) {
+        if (
+          consecutiveLosses >= MAX_CONSECUTIVE_LOSSES &&
+          circuitBreakerTrippedAt === 0
+        ) {
           circuitBreakerTrippedAt = Date.now();
           console.warn(
             `[Handler] Circuit breaker tripped after ${consecutiveLosses} consecutive losses — pausing for ${CIRCUIT_BREAKER_COOLDOWN_MS / 1000}s`,
@@ -376,9 +377,9 @@ async function onExit(result: ExitCheckResult): Promise<void> {
       notifyTradeClosed(
         tokenName,
         pnl,
-        closed.entryPriceUsd,
+        closed.entryPrice,
         closePrice,
-        closed.peakPriceUsd,
+        closed.peakPrice,
         closed.sizeSol,
         account.balance,
         account.currency,
@@ -409,7 +410,7 @@ function onPositionUpdate(position: Position): void {
   if (!DEBUG) return;
   const pnl = fmtPct(position.currentProfitPct);
   console.log(
-    `[Handler] ${position.tokenName}: ${fmtPrice(position.currentPriceUsd)} pnl=${pnl}`,
+    `[Handler] ${position.tokenName}: ${fmtPrice(position.currentPrice)} pnl=${pnl}`,
   );
 }
 

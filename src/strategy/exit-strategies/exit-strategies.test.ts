@@ -13,17 +13,17 @@ function makePos(overrides: Partial<Position> = {}): Position {
     pair: "pair1",
     token: "token1",
     tokenName: "TestToken",
-    entryPriceUsd: 1,
+    entryPrice: 1,
     sizeSol: 0.1,
     sizeToken: 100,
     openedAt: now,
-    currentPriceUsd: 1,
-    peakPriceUsd: 1,
+    currentPrice: 1,
+    peakPrice: 1,
     soldPct: 0,
     partialTierIndex: 0,
     status: "open",
     renewedAt: now,
-    renewPriceUsd: 1,
+    renewPrice: 1,
     lastUpdateAt: now,
     currentProfitPct: 0,
     lastPriceTimestamp: now,
@@ -66,19 +66,31 @@ describe("StopLossStrategy", () => {
 describe("TrailingStopStrategy", () => {
   test("returns null when activation not met", () => {
     const s = new TrailingStopStrategy(0.2, 0.08);
-    const pos = makePos({ entryPriceUsd: 1, peakPriceUsd: 1.1, currentProfitPct: 0.05 });
+    const pos = makePos({
+      entryPrice: 1,
+      peakPrice: 1.1,
+      currentProfitPct: 0.05,
+    });
     expect(s.check(pos, 0)).toBeNull();
   });
 
   test("returns null when drawdown is within distance", () => {
     const s = new TrailingStopStrategy(0.2, 0.08);
-    const pos = makePos({ entryPriceUsd: 1, peakPriceUsd: 1.5, currentProfitPct: 0.45 });
+    const pos = makePos({
+      entryPrice: 1,
+      peakPrice: 1.5,
+      currentProfitPct: 0.45,
+    });
     expect(s.check(pos, 0)).toBeNull();
   });
 
   test("triggers when drawdown exceeds distance after activation", () => {
     const s = new TrailingStopStrategy(0.2, 0.08);
-    const pos = makePos({ entryPriceUsd: 1, peakPriceUsd: 1.5, currentProfitPct: 0.3 });
+    const pos = makePos({
+      entryPrice: 1,
+      peakPrice: 1.5,
+      currentProfitPct: 0.3,
+    });
     const r = s.check(pos, 0);
     expect(r).not.toBeNull();
     expect(r!.reason).toBe(PositionExitReason.TrailingStop);
@@ -86,13 +98,17 @@ describe("TrailingStopStrategy", () => {
 
   test("returns null for non-finite values", () => {
     const s = new TrailingStopStrategy(0.2, 0.08);
-    expect(s.check(makePos({ entryPriceUsd: 0, peakPriceUsd: 0 }), 0)).toBeNull();
-    expect(s.check(makePos({ entryPriceUsd: NaN }), 0)).toBeNull();
+    expect(s.check(makePos({ entryPrice: 0, peakPrice: 0 }), 0)).toBeNull();
+    expect(s.check(makePos({ entryPrice: NaN }), 0)).toBeNull();
   });
 });
 
 describe("PartialTakeProfitStrategy", () => {
-  const tiers = [{ pct: 0.25, at: 0.3 }, { pct: 0.25, at: 0.6 }, { pct: 0.25, at: 1.0 }];
+  const tiers = [
+    { pct: 0.25, at: 0.3 },
+    { pct: 0.25, at: 0.6 },
+    { pct: 0.25, at: 1.0 },
+  ];
 
   test("returns null when disabled", () => {
     const s = new PartialTakeProfitStrategy(false, tiers);
@@ -149,7 +165,10 @@ describe("TtlStrategy", () => {
 
   test("triggers expired when total age >= max TTL", () => {
     const s = new TtlStrategy(base, max, pctChange);
-    const pos = makePos({ renewedAt: Date.now() - 120_000, openedAt: Date.now() - 300_000 });
+    const pos = makePos({
+      renewedAt: Date.now() - 120_000,
+      openedAt: Date.now() - 300_000,
+    });
     const r = s.check(pos, Date.now());
     expect(r).not.toBeNull();
     expect(r!.reason).toBe(PositionExitReason.Expired);
@@ -160,19 +179,24 @@ describe("TtlStrategy", () => {
     const oldRenew = Date.now() - 120_000;
     const pos = makePos({
       renewedAt: oldRenew,
-      renewPriceUsd: 1,
-      currentPriceUsd: 1.1,
+      renewPrice: 1,
+      currentPrice: 1.1,
       openedAt: Date.now() - 120_000,
     });
     const r = s.check(pos, Date.now());
     expect(r).toBeNull();
     expect(pos.renewedAt).toBeGreaterThan(oldRenew);
-    expect(pos.renewPriceUsd).toBe(1.1);
+    expect(pos.renewPrice).toBe(1.1);
   });
 
   test("triggers expired when not renewed and base TTL passed", () => {
     const s = new TtlStrategy(base, max, pctChange);
-    const pos = makePos({ renewedAt: Date.now() - 120_000, currentPriceUsd: 1.01, renewPriceUsd: 1, openedAt: Date.now() - 120_000 });
+    const pos = makePos({
+      renewedAt: Date.now() - 120_000,
+      currentPrice: 1.01,
+      renewPrice: 1,
+      openedAt: Date.now() - 120_000,
+    });
     const r = s.check(pos, Date.now());
     expect(r).not.toBeNull();
     expect(r!.reason).toBe(PositionExitReason.Expired);

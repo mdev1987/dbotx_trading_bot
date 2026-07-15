@@ -26,7 +26,7 @@ export function scanPositions(now: number): void {
         continue;
       }
 
-      if (position.entryPriceUsd <= 0) {
+      if (position.entryPrice <= 0) {
         continue;
       }
 

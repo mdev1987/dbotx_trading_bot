@@ -4,7 +4,6 @@ import type { PriceCurrency, PriceInfo } from "../data_stream/types";
 import type { Position, PositionExitReason } from "./types";
 import { clearPendingExit } from "./scanner";
 
-
 const positions = new Map<string, Position>();
 
 let nextPositionId = 1;
@@ -32,47 +31,47 @@ export function addPosition(
   tokenName: string,
   entryPriceUsd: number,
   sizeSol: number,
-    signalMeta?: { marketCapUSD?: number; dex?: string },
-    priceCurrency: PriceCurrency = "USD",
-  ): Position | null {
-    if (!Number.isFinite(sizeSol) || sizeSol <= 0) {
-      return null;
-    }
+  signalMeta?: { marketCapUSD?: number; dex?: string },
+  priceCurrency: PriceCurrency = "USD",
+): Position | null {
+  if (!Number.isFinite(sizeSol) || sizeSol <= 0) {
+    return null;
+  }
 
-    const now = Date.now();
-    const hasEntry = Number.isFinite(entryPriceUsd) && entryPriceUsd > 0;
+  const now = Date.now();
+  const hasEntry = Number.isFinite(entryPriceUsd) && entryPriceUsd > 0;
 
-    const position: Position = {
-      id: createPositionId(),
-      token,
-      pair,
-      tokenName,
+  const position: Position = {
+    id: createPositionId(),
+    token,
+    pair,
+    tokenName,
 
-      status: "open",
+    status: "open",
 
-      openedAt: now,
-      lastUpdateAt: now,
-      lastPriceTimestamp: now,
+    openedAt: now,
+    lastUpdateAt: now,
+    lastPriceTimestamp: now,
 
-      entryPriceUsd: hasEntry ? entryPriceUsd : 0,
-      currentPriceUsd: hasEntry ? entryPriceUsd : 0,
-      peakPriceUsd: hasEntry ? entryPriceUsd : 0,
+    entryPrice: hasEntry ? entryPriceUsd : 0,
+    currentPrice: hasEntry ? entryPriceUsd : 0,
+    peakPrice: hasEntry ? entryPriceUsd : 0,
 
-      currentProfitPct: 0,
+    currentProfitPct: 0,
 
-      sizeSol,
-      sizeToken: hasEntry ? sizeSol / entryPriceUsd : 0,
+    sizeSol,
+    sizeToken: hasEntry ? sizeSol / entryPriceUsd : 0,
 
-      soldPct: 0,
-      partialTierIndex: 0,
+    soldPct: 0,
+    partialTierIndex: 0,
 
-      renewedAt: now,
-      renewPriceUsd: hasEntry ? entryPriceUsd : 0,
+    renewedAt: now,
+    renewPrice: hasEntry ? entryPriceUsd : 0,
 
-      priceCurrency,
+    priceCurrency,
 
-      signalMeta,
-    };
+    signalMeta,
+  };
 
   positions.set(pair, position);
 
@@ -93,7 +92,7 @@ export function removePosition(
   }
 
   position.status = "closed";
-  position.closePriceUsd = closePriceUsd ?? position.currentPriceUsd;
+  position.closePrice = closePriceUsd ?? position.currentPrice;
   position.reason = reason;
   position.closedAt = Date.now();
   position.lastUpdateAt = Date.now();
@@ -121,11 +120,11 @@ export function updatePositionPrice(update: PriceInfo): void {
     return;
   }
 
-  if (position.entryPriceUsd <= 0) {
-    position.entryPriceUsd = price;
-    position.currentPriceUsd = price;
-    position.peakPriceUsd = price;
-    position.renewPriceUsd = price;
+  if (position.entryPrice <= 0) {
+    position.entryPrice = price;
+    position.currentPrice = price;
+    position.peakPrice = price;
+    position.renewPrice = price;
     position.currentProfitPct = 0;
     position.lastPriceTimestamp = update.timestamp;
     position.lastUpdateAt = update.timestamp;
@@ -139,17 +138,17 @@ export function updatePositionPrice(update: PriceInfo): void {
     return;
   }
 
-  position.currentPriceUsd = price;
+  position.currentPrice = price;
   position.lastPriceTimestamp = update.timestamp;
   position.lastUpdateAt = update.timestamp;
   position.priceSource = update.source;
   position.priceCurrency = update.currency;
 
-  if (price > position.peakPriceUsd) {
-    position.peakPriceUsd = price;
+  if (price > position.peakPrice) {
+    position.peakPrice = price;
   }
 
-  position.currentProfitPct = calculateProfit(position.entryPriceUsd, price);
+  position.currentProfitPct = calculateProfit(position.entryPrice, price);
 
   positionUpdated$.next(position);
 }

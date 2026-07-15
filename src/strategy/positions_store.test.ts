@@ -1,5 +1,11 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import { addPosition, removePosition, updatePositionPrice, hasPosition, positions } from "./positions_store";
+import {
+  addPosition,
+  removePosition,
+  updatePositionPrice,
+  hasPosition,
+  positions,
+} from "./positions_store";
 import { PositionExitReason } from "./types";
 import * as priceEngine from "../data_stream/price_engine";
 import type { PriceInfo } from "../data_stream/types";
@@ -15,7 +21,7 @@ describe("addPosition", () => {
     expect(pos).not.toBeNull();
     expect(pos!.token).toBe("token1");
     expect(pos!.pair).toBe("pair1");
-    expect(pos!.entryPriceUsd).toBe(1.5);
+    expect(pos!.entryPrice).toBe(1.5);
     expect(pos!.sizeSol).toBe(0.1);
     expect(pos!.status).toBe("open");
     expect(pos!.currentProfitPct).toBe(0);
@@ -30,7 +36,7 @@ describe("addPosition", () => {
   test("accepts entryPriceUsd = 0 (pending stream price)", () => {
     const pos = addPosition("token1", "pair1", "TestToken", 0, 0.1);
     expect(pos).not.toBeNull();
-    expect(pos!.entryPriceUsd).toBe(0);
+    expect(pos!.entryPrice).toBe(0);
   });
 
   test("stores position keyed by pair", () => {
@@ -45,7 +51,7 @@ describe("removePosition", () => {
     const removed = removePosition("pair1", 2.0, PositionExitReason.TakeProfit);
     expect(removed).not.toBeNull();
     expect(removed!.status).toBe("closed");
-    expect(removed!.closePriceUsd).toBe(2.0);
+    expect(removed!.closePrice).toBe(2.0);
     expect(removed!.reason).toBe(PositionExitReason.TakeProfit);
     expect(removed!.closedAt).toBeGreaterThan(0);
     expect(positions.has("pair1")).toBe(false);
@@ -58,9 +64,9 @@ describe("removePosition", () => {
   test("uses currentPriceUsd when no closePrice given", () => {
     addPosition("token1", "pair1", "TestToken", 1.5, 0.1);
     const pos = positions.get("pair1")!;
-    pos.currentPriceUsd = 2.5;
+    pos.currentPrice = 2.5;
     const removed = removePosition("pair1");
-    expect(removed!.closePriceUsd).toBe(2.5);
+    expect(removed!.closePrice).toBe(2.5);
   });
 });
 
@@ -78,7 +84,7 @@ describe("updatePositionPrice", () => {
       currency: "SOL",
     };
     updatePositionPrice(update);
-    expect(pos.currentPriceUsd).toBe(1.5);
+    expect(pos.currentPrice).toBe(1.5);
     expect(pos.currentProfitPct).toBeCloseTo(0.5);
   });
 
@@ -95,27 +101,48 @@ describe("updatePositionPrice", () => {
       currency: "SOL",
     };
     updatePositionPrice(stale);
-    expect(pos.currentPriceUsd).toBe(1.0);
+    expect(pos.currentPrice).toBe(1.0);
   });
 
   test("tracks peak price", () => {
     addPosition("token1", "pair1", "TestToken", 1.0, 0.1);
     const pos = positions.get("pair1")!;
     pos.lastPriceTimestamp = 0;
-    const update1: PriceInfo = { token: "token1", pair: "pair1", priceUsd: 2.0, source: PriceSource.PUMPAPI, timestamp: 2000, currency: "SOL" };
+    const update1: PriceInfo = {
+      token: "token1",
+      pair: "pair1",
+      priceUsd: 2.0,
+      source: PriceSource.PUMPAPI,
+      timestamp: 2000,
+      currency: "SOL",
+    };
     updatePositionPrice(update1);
-    const update2: PriceInfo = { token: "token1", pair: "pair1", priceUsd: 1.5, source: PriceSource.PUMPAPI, timestamp: 3000, currency: "SOL" };
+    const update2: PriceInfo = {
+      token: "token1",
+      pair: "pair1",
+      priceUsd: 1.5,
+      source: PriceSource.PUMPAPI,
+      timestamp: 3000,
+      currency: "SOL",
+    };
     updatePositionPrice(update2);
-    expect(pos.peakPriceUsd).toBe(2.0);
+    expect(pos.peakPrice).toBe(2.0);
   });
 
   test("ignores invalid prices", () => {
     addPosition("token1", "pair1", "TestToken", 1.0, 0.1);
     const pos = positions.get("pair1")!;
     pos.lastPriceTimestamp = 0;
-    const bad: PriceInfo = { token: "token1", pair: "pair1", priceUsd: -1, source: PriceSource.PUMPAPI, timestamp: 1000, currency: "SOL" };
+    const bad: PriceInfo = {
+      token: "token1",
+      pair: "pair1",
+      priceUsd: -1,
+      source: PriceSource.PUMPAPI,
+      timestamp: 1000,
+      currency: "SOL",
+    };
     updatePositionPrice(bad);
-    expect(pos.currentPriceUsd).toBe(1.0);
+    expect(pos.currentPrice).toBe(1.0);
   });
 });
 

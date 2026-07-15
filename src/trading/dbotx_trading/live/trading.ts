@@ -2,13 +2,27 @@ import { Subject } from "rxjs";
 import { CONFIG, type PartialTpTier } from "../../../config";
 import { botHttp } from "../../http";
 import { getLiveAccount, toTradingAccount } from "./account";
-import { addOrder, updateOrderMeta, addPosition as storeAddPosition } from "./store";
-import { buildStopEarnGroup, buildStopLossGroup, type StopEarnGroupItem, type TrailingStopGroupItem } from "../exit-config";
+import {
+  addOrder,
+  updateOrderMeta,
+  addPosition as storeAddPosition,
+} from "./store";
+import {
+  buildStopEarnGroup,
+  buildStopLossGroup,
+  type StopEarnGroupItem,
+  type TrailingStopGroupItem,
+} from "../exit-config";
 import type { OrderResult, TradingAccount, TradingApi } from "../../types";
 
 export type LiveOrderSide = "buy" | "sell";
 
-export type LiveOrderStatus = "init" | "processing" | "done" | "fail" | "expired";
+export type LiveOrderStatus =
+  | "init"
+  | "processing"
+  | "done"
+  | "fail"
+  | "expired";
 
 export interface LiveOrder {
   id: string;
@@ -59,21 +73,30 @@ async function submitOrder(
   tokenName?: string,
   token?: string,
 ): Promise<LiveOrder> {
-  const hasPartialTp = CONFIG.partialTpEnabled && CONFIG.partialTpTiers.length > 0;
+  const hasPartialTp =
+    CONFIG.partialTpEnabled && CONFIG.partialTpTiers.length > 0;
   const stopEarnGroup = hasPartialTp
     ? buildStopEarnGroup(CONFIG.partialTpTiers, CONFIG.backstopTpPct)
     : null;
 
-  const stopLossPercent = CONFIG.stopLossPct !== 0 ? Math.abs(CONFIG.stopLossPct) : null;
+  const stopLossPercent =
+    CONFIG.stopLossPct !== 0 ? Math.abs(CONFIG.stopLossPct) : null;
 
   const hasStopLossTiers = CONFIG.stopLossTiers.length > 0;
   const stopLossGroup = hasStopLossTiers
     ? buildStopLossGroup(CONFIG.stopLossTiers)
     : null;
 
-  const hasTrailing = CONFIG.trailingActivationPct > 0 && CONFIG.trailingDistancePct > 0;
+  const hasTrailing =
+    CONFIG.trailingActivationPct > 0 && CONFIG.trailingDistancePct > 0;
   const trailingStopGroup = hasTrailing
-    ? [{ pricePercent: CONFIG.trailingDistancePct, amountPercent: 1, activePricePercent: CONFIG.trailingActivationPct }] as TrailingStopGroupItem[]
+    ? ([
+        {
+          pricePercent: CONFIG.trailingDistancePct,
+          amountPercent: 1,
+          activePricePercent: CONFIG.trailingActivationPct,
+        },
+      ] as TrailingStopGroupItem[])
     : null;
 
   const hasExitCustomConfig = CONFIG.pnlCustomConfigEnabled;
@@ -91,36 +114,40 @@ async function submitOrder(
       }
     : undefined;
 
-  const response = await botHttp.post<SubmitOrderResponse>("/automation/swap_order", {
-    chain: "solana",
-    pair,
-    walletId: CONFIG.walletId,
-    type,
-    amountOrPercent: amount,
-    customFeeAndTip: CONFIG.customFeeAndTip,
-    priorityFee: CONFIG.priorityFee,
-    gasFeeDelta: CONFIG.defaultGasFeeDelta,
-    maxFeePerGas: CONFIG.defaultMaxFeePerGas,
-    jitoEnabled: CONFIG.jitoEnabled,
-    jitoTip: CONFIG.jitoTip,
-    maxSlippage: CONFIG.maxSlippage,
-    concurrentNodes: CONFIG.concurrentNodes,
-    retries: CONFIG.retries,
-    migrateSellPercent: type === "buy" ? CONFIG.migrateSellPercent : undefined,
-    minDevSellPercent: type === "buy" ? CONFIG.minDevSellPercent : undefined,
-    devSellPercent: type === "buy" ? CONFIG.devSellPercent : undefined,
-    stopEarnPercent: null,
-    stopLossPercent: type === "buy" ? stopLossPercent : null,
-    stopEarnGroup: type === "buy" ? stopEarnGroup : null,
-    stopLossGroup: type === "buy" ? stopLossGroup : null,
-    trailingStopGroup: type === "buy" ? trailingStopGroup : null,
-    pnlOrderExpireDelta: CONFIG.pnlOrderExpireDeltaMs,
-    pnlOrderExpireExecute: CONFIG.pnlOrderExpireExecute,
-    pnlOrderExpireExecuteSellAll: CONFIG.pnlOrderExpireExecuteSellAll,
-    pnlOrderUseMidPrice: CONFIG.pnlOrderUseMidPrice,
-    pnlCustomConfigEnabled: hasExitCustomConfig ? true : undefined,
-    pnlCustomConfig,
-  });
+  const response = await botHttp.post<SubmitOrderResponse>(
+    "/automation/swap_order",
+    {
+      chain: "solana",
+      pair,
+      walletId: CONFIG.walletId,
+      type,
+      amountOrPercent: amount,
+      customFeeAndTip: CONFIG.customFeeAndTip,
+      priorityFee: CONFIG.priorityFee,
+      gasFeeDelta: CONFIG.defaultGasFeeDelta,
+      maxFeePerGas: CONFIG.defaultMaxFeePerGas,
+      jitoEnabled: CONFIG.jitoEnabled,
+      jitoTip: CONFIG.jitoTip,
+      maxSlippage: CONFIG.maxSlippage,
+      concurrentNodes: CONFIG.concurrentNodes,
+      retries: CONFIG.retries,
+      migrateSellPercent:
+        type === "buy" ? CONFIG.migrateSellPercent : undefined,
+      minDevSellPercent: type === "buy" ? CONFIG.minDevSellPercent : undefined,
+      devSellPercent: type === "buy" ? CONFIG.devSellPercent : undefined,
+      stopEarnPercent: null,
+      stopLossPercent: type === "buy" ? stopLossPercent : null,
+      stopEarnGroup: type === "buy" ? stopEarnGroup : null,
+      stopLossGroup: type === "buy" ? stopLossGroup : null,
+      trailingStopGroup: type === "buy" ? trailingStopGroup : null,
+      pnlOrderExpireDelta: CONFIG.pnlOrderExpireDeltaMs,
+      pnlOrderExpireExecute: CONFIG.pnlOrderExpireExecute,
+      pnlOrderExpireExecuteSellAll: CONFIG.pnlOrderExpireExecuteSellAll,
+      pnlOrderUseMidPrice: CONFIG.pnlOrderUseMidPrice,
+      pnlCustomConfigEnabled: hasExitCustomConfig ? true : undefined,
+      pnlCustomConfig,
+    },
+  );
 
   if (response.err) {
     throw new Error("Live trading rejected the order.");
@@ -150,7 +177,9 @@ async function submitOrder(
 }
 
 async function getTask(orderId: string): Promise<LiveTask> {
-  const response = await botHttp.get<SwapOrdersResponse>(`/automation/swap_orders?ids=${orderId}`);
+  const response = await botHttp.get<SwapOrdersResponse>(
+    `/automation/swap_orders?ids=${orderId}`,
+  );
 
   if (response.err) {
     throw new Error("Live trading returned an error.");
@@ -205,7 +234,12 @@ export async function submitBuy(
   return submitOrder("buy", pair, amountSol, tokenName, token);
 }
 
-export async function submitSell(pair: string, percentage: number, tokenName?: string, token?: string): Promise<LiveOrder> {
+export async function submitSell(
+  pair: string,
+  percentage: number,
+  tokenName?: string,
+  token?: string,
+): Promise<LiveOrder> {
   if (percentage <= 0 || percentage > 1) {
     throw new Error("Sell percentage must be between 0 and 1.");
   }
@@ -215,7 +249,10 @@ export async function submitSell(pair: string, percentage: number, tokenName?: s
 async function execute(orderPromise: Promise<LiveOrder>): Promise<OrderResult> {
   const order = await orderPromise;
   const task = await waitForTaskConfirmed(order.id).catch((err) => {
-    console.warn(`[LiveTrading] Task polling failed for order ${order.id}:`, err);
+    console.warn(
+      `[LiveTrading] Task polling failed for order ${order.id}:`,
+      err,
+    );
     throw err;
   });
   return {
@@ -223,7 +260,7 @@ async function execute(orderPromise: Promise<LiveOrder>): Promise<OrderResult> {
     status: task.status,
     pair: order.pair,
     type: task.type,
-    priceUsd: task.priceUsd,
+    price: task.priceUsd,
     txHash: task.txHash,
     error: task.error,
     updatedAt: task.updatedAt,
@@ -231,7 +268,12 @@ async function execute(orderPromise: Promise<LiveOrder>): Promise<OrderResult> {
 }
 
 export const dbotxLiveTrading: TradingApi = {
-  async buy(pair: string, amountSol: number, tokenName: string, token: string): Promise<OrderResult> {
+  async buy(
+    pair: string,
+    amountSol: number,
+    tokenName: string,
+    token: string,
+  ): Promise<OrderResult> {
     const result = await execute(submitBuy(pair, amountSol, tokenName, token));
     if (result.id && (tokenName || token)) {
       updateOrderMeta(result.id, { token, tokenName });
@@ -241,7 +283,7 @@ export const dbotxLiveTrading: TradingApi = {
       pair,
       token,
       tokenName,
-      entryPriceUsd: result.priceUsd ?? 0,
+      entryPriceUsd: result.price ?? 0,
       sizeSol: amountSol,
       status: "open",
       openedAt: Date.now(),
@@ -249,8 +291,15 @@ export const dbotxLiveTrading: TradingApi = {
     return result;
   },
 
-  async sell(pair: string, percentage: number, tokenName: string, token: string): Promise<OrderResult> {
-    const result = await execute(submitSell(pair, percentage, tokenName, token));
+  async sell(
+    pair: string,
+    percentage: number,
+    tokenName: string,
+    token: string,
+  ): Promise<OrderResult> {
+    const result = await execute(
+      submitSell(pair, percentage, tokenName, token),
+    );
     if (result.id && (tokenName || token)) {
       updateOrderMeta(result.id, { token, tokenName });
     }

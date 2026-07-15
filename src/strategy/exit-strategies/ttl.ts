@@ -25,12 +25,12 @@ export class TtlStrategy implements ExitStrategy {
     }
 
     const priceChange = Math.abs(
-      (position.currentPriceUsd - position.renewPriceUsd) / position.renewPriceUsd,
+      (position.currentPrice - position.renewPrice) / position.renewPrice,
     );
 
     if (priceChange >= this.profitPercentChange) {
       position.renewedAt = now;
-      position.renewPriceUsd = position.currentPriceUsd;
+      position.renewPrice = position.currentPrice;
       return null;
     }
 

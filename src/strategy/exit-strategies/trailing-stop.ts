@@ -11,13 +11,14 @@ export class TrailingStopStrategy implements ExitStrategy {
   ) {}
 
   check(position: Position, _now: number): ExitCheckResult | null {
-    const entry = position.entryPriceUsd;
+    const entry = position.entryPrice;
     if (!Number.isFinite(entry) || entry <= 0) return null;
 
     if (!Number.isFinite(position.currentProfitPct)) return null;
-    if (!Number.isFinite(position.peakPriceUsd) || position.peakPriceUsd <= 0) return null;
+    if (!Number.isFinite(position.peakPrice) || position.peakPrice <= 0)
+      return null;
 
-    const peakProfit = (position.peakPriceUsd - entry) / entry;
+    const peakProfit = (position.peakPrice - entry) / entry;
 
     if (peakProfit < this.activationPct) {
       return null;

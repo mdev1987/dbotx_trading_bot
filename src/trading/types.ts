@@ -3,7 +3,7 @@ export interface OrderResult {
   status: string;
   pair: string;
   type: "buy" | "sell";
-  priceUsd?: number;
+  price?: number;
   amountSol?: number;
   amountToken?: number;
   txHash?: string;
@@ -14,9 +14,7 @@ export interface OrderResult {
 export interface TradingAccount {
   balance: number;
   currency: "SOL" | "USD";
-  change24h: number;
   changeAll: number;
-  holdTokens: number;
 }
 
 export interface TradingApi {

@@ -31,24 +31,24 @@ export interface Position {
   token: string;
   tokenName: string;
 
-  entryPriceUsd: number;
+  entryPrice: number;
   sizeSol: number;
   sizeToken: number;
 
   openedAt: number;
-  currentPriceUsd: number;
-  peakPriceUsd: number;
+  currentPrice: number;
+  peakPrice: number;
 
   soldPct: number;
   partialTierIndex: number;
 
   status: "open" | "closed";
   reason?: PositionExitReason;
-  closePriceUsd?: number;
+  closePrice?: number;
   closedAt?: number;
 
   renewedAt: number;
-  renewPriceUsd: number;
+  renewPrice: number;
 
   lastUpdateAt: number;
   currentProfitPct: number;
