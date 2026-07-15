@@ -86,7 +86,6 @@ export function fmtDuration(ms: number): string {
 
 export function notifyBuyOpened(
   tokenName: string,
-  fillPrice: number,
   sizeSol: number,
   balance: number,
   balanceCurrency: "SOL" | "USD",
@@ -101,7 +100,6 @@ export function notifyBuyOpened(
     `🟢 **Position Opened**`,
     `━━━━━━━━━━━━━━━━━━━`,
     `🔖 Token: \`${tokenName}\``,
-    `💵 Entry: \`${fmtPrice(fillPrice, priceCurrency)}\``,
     `💰 Size: \`${sizeSol} SOL\``,
     `💳 Balance: \`${fmtBalance(balance, balanceCurrency)}\``,
   ];
@@ -121,6 +119,7 @@ export function notifyTradeClosed(
   pnl: number,
   entryPrice: number,
   exitPrice: number,
+  peakPrice: number,
   sizeSol: number,
   balance: number,
   balanceCurrency: "SOL" | "USD",
@@ -140,6 +139,7 @@ export function notifyTradeClosed(
     `📈 PnL: **${fmtPct(pnl)}**`,
     `💵 Entry: \`${fmtPrice(entryPrice, priceCurrency)}\``,
     `💵 Exit: \`${fmtPrice(exitPrice, priceCurrency)}\``,
+    `📊 Peak: \`${fmtPrice(peakPrice, priceCurrency)}\``,
     `💰 Size: \`${sizeSol} SOL\``,
     `💳 Balance: \`${fmtBalance(balance, balanceCurrency)}\``,
     `📋 Reason: \`${reason}\``,

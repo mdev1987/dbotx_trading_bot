@@ -26,6 +26,10 @@ export function scanPositions(now: number): void {
         continue;
       }
 
+      if (position.entryPriceUsd <= 0) {
+        continue;
+      }
+
       if (pendingExitIds.has(position.id)) {
         continue;
       }

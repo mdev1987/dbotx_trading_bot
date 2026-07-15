@@ -35,11 +35,12 @@ export function addPosition(
     signalMeta?: { marketCapUSD?: number; dex?: string },
     priceCurrency: PriceCurrency = "USD",
   ): Position | null {
-    if (!Number.isFinite(entryPriceUsd) || entryPriceUsd <= 0) {
+    if (!Number.isFinite(sizeSol) || sizeSol <= 0) {
       return null;
     }
 
     const now = Date.now();
+    const hasEntry = Number.isFinite(entryPriceUsd) && entryPriceUsd > 0;
 
     const position: Position = {
       id: createPositionId(),
@@ -53,22 +54,20 @@ export function addPosition(
       lastUpdateAt: now,
       lastPriceTimestamp: now,
 
-      entryPriceUsd,
-      currentPriceUsd: entryPriceUsd,
-      peakPriceUsd: entryPriceUsd,
+      entryPriceUsd: hasEntry ? entryPriceUsd : 0,
+      currentPriceUsd: hasEntry ? entryPriceUsd : 0,
+      peakPriceUsd: hasEntry ? entryPriceUsd : 0,
 
       currentProfitPct: 0,
 
       sizeSol,
-      sizeToken: entryPriceUsd > 0
-        ? sizeSol / entryPriceUsd
-        : 0,
+      sizeToken: hasEntry ? sizeSol / entryPriceUsd : 0,
 
       soldPct: 0,
       partialTierIndex: 0,
 
       renewedAt: now,
-      renewPriceUsd: entryPriceUsd,
+      renewPriceUsd: hasEntry ? entryPriceUsd : 0,
 
       priceCurrency,
 
@@ -116,13 +115,27 @@ export function updatePositionPrice(update: PriceInfo): void {
     return;
   }
 
-  if (update.timestamp <= position.lastPriceTimestamp) {
-    return;
-  }
-
   const price = update.priceUsd;
 
   if (!Number.isFinite(price) || price <= 0) {
+    return;
+  }
+
+  if (position.entryPriceUsd <= 0) {
+    position.entryPriceUsd = price;
+    position.currentPriceUsd = price;
+    position.peakPriceUsd = price;
+    position.renewPriceUsd = price;
+    position.currentProfitPct = 0;
+    position.lastPriceTimestamp = update.timestamp;
+    position.lastUpdateAt = update.timestamp;
+    position.priceSource = update.source;
+    position.priceCurrency = update.currency;
+    positionUpdated$.next(position);
+    return;
+  }
+
+  if (update.timestamp <= position.lastPriceTimestamp) {
     return;
   }
 

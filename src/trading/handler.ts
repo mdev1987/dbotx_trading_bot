@@ -223,9 +223,8 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
 
   const signalMeta = { marketCapUSD: signal.marketCapUSD, dex: signal.dex };
   const tokenName = signal.Token ?? token.slice(0, 8);
-  const entryPrice = signal.initPriceUSD;
   console.log(
-    `[Handler] Buy signal: ${tokenName}${entryPrice ? ` @ ${fmtPrice(entryPrice)}` : " (no price)"}`,
+    `[Handler] Buy signal: ${tokenName}`,
   );
 
   if (!trading) return;
@@ -237,13 +236,6 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       tokenName,
       token,
     );
-    const fillPrice = result.priceUsd ?? entryPrice;
-
-    if (!fillPrice || fillPrice <= 0) {
-      console.log(`[Handler] Skipping ${tokenName} — no valid price`);
-      pendingBuyPairs.delete(pair);
-      return;
-    }
 
     const priceCurrency: "SOL" | "USD" = CONFIG.tradingEngine === "dbotx" ? "USD" : "SOL";
 
@@ -251,7 +243,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       token,
       pair,
       tokenName,
-      fillPrice,
+      0,
       CONFIG.positionSize,
       signalMeta,
       priceCurrency,
@@ -267,7 +259,6 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
     const stats = getPositionStats();
     notifyBuyOpened(
       tokenName,
-      fillPrice,
       CONFIG.positionSize,
       account.balance,
       account.currency,
@@ -387,6 +378,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
         pnl,
         closed.entryPriceUsd,
         closePrice,
+        closed.peakPriceUsd,
         closed.sizeSol,
         account.balance,
         account.currency,

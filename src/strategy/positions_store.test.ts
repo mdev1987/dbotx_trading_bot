@@ -23,10 +23,14 @@ describe("addPosition", () => {
     expect(pos!.partialTierIndex).toBe(0);
   });
 
-  test("returns null for invalid entry price", () => {
-    expect(addPosition("token1", "pair1", "TestToken", 0, 0.1)).toBeNull();
-    expect(addPosition("token1", "pair1", "TestToken", -1, 0.1)).toBeNull();
-    expect(addPosition("token1", "pair1", "TestToken", NaN, 0.1)).toBeNull();
+  test("returns null for invalid size", () => {
+    expect(addPosition("token1", "pair1", "TestToken", 1, 0)).toBeNull();
+  });
+
+  test("accepts entryPriceUsd = 0 (pending stream price)", () => {
+    const pos = addPosition("token1", "pair1", "TestToken", 0, 0.1);
+    expect(pos).not.toBeNull();
+    expect(pos!.entryPriceUsd).toBe(0);
   });
 
   test("stores position keyed by pair", () => {
