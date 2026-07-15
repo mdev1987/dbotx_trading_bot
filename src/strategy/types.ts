@@ -54,4 +54,6 @@ export interface Position {
   currentProfitPct: number;
   priceSource?: PriceSource;
   lastPriceTimestamp: number;
+
+  signalMeta?: { marketCapUSD?: number; dex?: string };
 }

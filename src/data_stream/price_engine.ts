@@ -1,4 +1,4 @@
-import { Subject, Subscription, timer } from "rxjs";
+import { Subject, Subscription } from "rxjs";
 
 import { CONFIG } from "../config";
 import type {

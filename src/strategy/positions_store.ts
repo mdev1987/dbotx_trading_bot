@@ -32,6 +32,7 @@ export function addPosition(
   tokenName: string,
   entryPriceUsd: number,
   sizeSol: number,
+  signalMeta?: { marketCapUSD?: number; dex?: string },
 ): Position | null {
   if (!Number.isFinite(entryPriceUsd) || entryPriceUsd <= 0) {
     return null;
@@ -65,6 +66,8 @@ export function addPosition(
 
     renewedAt: now,
     renewPriceUsd: entryPriceUsd,
+
+    signalMeta,
   };
 
   positions.set(pair, position);

@@ -93,8 +93,6 @@ interface TradeRecord {
 
 const completedTrades: TradeRecord[] = [];
 
-let lastSignalMeta: { marketCapUSD?: number; dex?: string } = {};
-
 function recordTrade(
   closed: NonNullable<ReturnType<typeof removePosition>>,
   closePrice: number,
@@ -110,7 +108,7 @@ function recordTrade(
     pnl,
     durationMs: now() - closed.openedAt,
     reason,
-    ...lastSignalMeta,
+    ...closed.signalMeta,
   });
 
   if (completedTrades.length >= CONFIG.tradeReportBatchSize)
@@ -224,8 +222,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
 
   pendingBuyPairs.add(pair);
 
-  lastSignalMeta = { marketCapUSD: signal.marketCapUSD, dex: signal.dex };
-
+  const signalMeta = { marketCapUSD: signal.marketCapUSD, dex: signal.dex };
   const tokenName = signal.Token ?? token.slice(0, 8);
   const entryPrice = signal.initPriceUSD;
   console.log(
@@ -255,6 +252,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       tokenName,
       fillPrice,
       CONFIG.positionSize,
+      signalMeta,
     );
     if (!position) {
       console.log(`[Handler] Skipping ${tokenName} — addPosition failed`);

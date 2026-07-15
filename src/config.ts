@@ -170,7 +170,6 @@ export const CONFIG = {
     "WS_DATA_INITIAL_RECONNECT_DELAY_MS",
     1_000,
   ),
-
   // Position engine
   positionScanIntervalMs: number("POSITION_SCAN_INTERVAL_MS", 1_000),
 

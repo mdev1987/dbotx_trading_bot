@@ -22,6 +22,7 @@ const states = new Map<string, PairState>();
 let ws: WebSocket | null = null;
 
 let heartbeat: ReturnType<typeof setInterval> | null = null;
+let pongTimeout: ReturnType<typeof setTimeout> | null = null;
 let reconnect: ReturnType<typeof setTimeout> | null = null;
 
 let reconnectDelay = CONFIG.wsDataInitialReconnectDelayMs;
@@ -70,14 +71,55 @@ export function connectDataWs(): void {
 
   console.log("[DBotX Data] Connecting...");
 
-  ws = new WebSocket(CONFIG.wsUrl, {
-    headers: { "x-api-key": CONFIG.dbotxApiKey },
-  });
+  try {
+    ws = new WebSocket(CONFIG.wsUrl, {
+      headers: { "x-api-key": CONFIG.dbotxApiKey },
+    });
+  } catch (err) {
+    console.error("[DBotX Data] Connection failed:", err);
+    scheduleReconnect();
+    return;
+  }
 
   ws.addEventListener("open", onOpen);
   ws.addEventListener("message", onMessage);
   ws.addEventListener("close", onClose);
   ws.addEventListener("error", onError);
+  ws.addEventListener("pong", onPong);
+}
+
+function startHeartbeat(): void {
+  stopHeartbeat();
+  heartbeat = setInterval(() => {
+    try {
+      ws?.ping();
+    } catch (err) {
+      console.warn("[DBotX Data] Heartbeat ping failed:", err);
+    }
+    if (pongTimeout) clearTimeout(pongTimeout);
+    pongTimeout = setTimeout(() => {
+      console.warn("[DBotX Data] Pong timeout — closing connection");
+      ws?.close();
+    }, CONFIG.wsHeartbeatIntervalMs / 2);
+  }, CONFIG.wsHeartbeatIntervalMs);
+}
+
+function stopHeartbeat(): void {
+  if (heartbeat) {
+    clearInterval(heartbeat);
+    heartbeat = null;
+  }
+  if (pongTimeout) {
+    clearTimeout(pongTimeout);
+    pongTimeout = null;
+  }
+}
+
+function onPong(): void {
+  if (pongTimeout) {
+    clearTimeout(pongTimeout);
+    pongTimeout = null;
+  }
 }
 
 function onOpen(): void {
@@ -87,40 +129,36 @@ function onOpen(): void {
 
   if (activePairs.size > 0) ws!.send(buildSubscribePacket());
 
-  if (heartbeat) clearInterval(heartbeat);
-
-  heartbeat = setInterval(() => {
-    ws?.ping();
-  }, CONFIG.wsHeartbeatIntervalMs);
+  startHeartbeat();
 }
 
-function onClose(): void {
-  console.log("[DBotX Data] Disconnected");
+function onClose(event: CloseEvent): void {
+  console.log("[DBotX Data] Disconnected — code:", event.code, "reason:", event.reason);
 
-  if (heartbeat) {
-    clearInterval(heartbeat);
-    heartbeat = null;
-  }
+  stopHeartbeat();
 
   if (reconnect) return;
 
+  scheduleReconnect();
+}
+
+function scheduleReconnect(): void {
+  const delay = Math.min(reconnectDelay, CONFIG.wsDataMaxReconnectDelayMs);
+  const jitter = delay * 0.2 * Math.random();
+  reconnectDelay = Math.min(reconnectDelay * 2, CONFIG.wsDataMaxReconnectDelayMs);
+
   reconnect = setTimeout(() => {
     reconnect = null;
-
-    reconnectDelay = Math.min(reconnectDelay * 2, CONFIG.wsDataMaxReconnectDelayMs);
-
     connectDataWs();
-  }, reconnectDelay);
+  }, delay + jitter);
 }
 
 function onError(error: Event): void {
-  console.error("[DBotX Data]", error);
+  console.error("[DBotX Data] Error:", error);
 }
 
 function onMessage(event: MessageEvent): void {
   const raw = event.data.toString();
-
-  if (raw.includes('"status":"ack"')) return;
 
   let packet: DbotxWsPacket;
 
@@ -130,6 +168,8 @@ function onMessage(event: MessageEvent): void {
     console.warn("[DBotX Data] Failed to parse message:", err);
     return;
   }
+
+  if (packet.status === "ack") return;
 
   if (packet.type !== "tx") return;
 
@@ -147,10 +187,7 @@ export function disconnectDataWs(): void {
     clearTimeout(reconnect);
     reconnect = null;
   }
-  if (heartbeat) {
-    clearInterval(heartbeat);
-    heartbeat = null;
-  }
+  stopHeartbeat();
   ws?.close();
   ws = null;
 }

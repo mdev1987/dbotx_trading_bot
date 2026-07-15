@@ -2,7 +2,7 @@ import { Subject } from "rxjs";
 import { CONFIG, type PartialTpTier } from "../../config";
 import { botHttp } from "../http";
 import { getSolPriceUsd } from "../../data_stream/price_engine";
-import { fetchLiveBalance, toTradingAccount } from "./account";
+import { getLiveAccount, toTradingAccount } from "./account";
 import { addOrder, updateOrderMeta, addPosition as storeAddPosition } from "./store";
 import type { OrderResult, TradingAccount, TradingApi } from "../types";
 
@@ -289,9 +289,9 @@ export const liveTrading: TradingApi = {
     return result;
   },
 
-  /** Fetch wallet balance and derive TradingAccount. */
+  /** Return cached wallet balance (no API call — 5 credits each). */
   async getAccount(): Promise<TradingAccount> {
-    const account = await fetchLiveBalance();
+    const account = getLiveAccount();
     const solPrice = getSolPriceUsd();
     return toTradingAccount(account, solPrice);
   },

@@ -2,6 +2,7 @@ import { CONFIG } from "./config";
 
 import { simulatorTrading } from "./trading/simulator/trading";
 import { liveTrading } from "./trading/live/trading";
+import { refreshLiveBalance } from "./trading/live/account";
 import { initLiveStore } from "./trading/live/store";
 import { recoverLivePositions } from "./trading/live/recovery";
 import { connectTradeWs, disconnectTradeWs, startLiveMonitor, stopLiveMonitor } from "./trading/live/trade-ws";
@@ -89,6 +90,12 @@ const services = {
 
     positionEngine.start();
     await startTrading(CONFIG.liveMode ? liveTrading : simulatorTrading);
+
+    if (CONFIG.liveMode) {
+      refreshLiveBalance().catch((err) =>
+        console.warn("[Main] Failed to refresh wallet balance:", err),
+      );
+    }
 
     startTelegramListener()
       .then(() => {
