@@ -1,19 +1,18 @@
 import { Subject, Subscription } from "rxjs";
 
-import { CONFIG } from "../config";
 import type {
   PriceInfo,
   DbotxEvent,
+  PumpEvent,
   TrackedToken,
 } from "./types";
 import { PriceSource } from "./types";
-// import { pumpApiPriceUpdateEvent$ } from "./pumpapi_data_stream";
 import {
   dbotxPriceUpdateEvent$,
   subscribePairs,
   unsubscribePair,
 } from "./dbotx_data_stream";
-// import { dexScreenerPriceUpdateEvent$, pollDexScreener } from "./dexscreener_polling";
+import { pumpApiPriceUpdateEvent$ } from "./pumpapi_data_stream";
 
 function isValidPrice(price: number): boolean {
   return Number.isFinite(price) && price > 0;
@@ -24,10 +23,8 @@ const pairToToken = new Map<string, string>();
 
 export const unifiedPriceUpdate$ = new Subject<PriceInfo>();
 
-// let pumpApiSub: Subscription | null = null;
+let pumpApiSub: Subscription | null = null;
 let dbotxSub: Subscription | null = null;
-// let dexScreenerSub: Subscription | null = null;
-// let dexScreenerPollSub: Subscription | null = null;
 
 /* -------------------------------------------------------------------------- */
 /*                            SOL → USD rate                                  */
@@ -35,7 +32,6 @@ let dbotxSub: Subscription | null = null;
 
 let solPriceUsd = 0;
 
-/** Latest SOL/USD rate derived from DBotX trades. */
 export function getSolPriceUsd(): number {
   return solPriceUsd;
 }
@@ -111,7 +107,6 @@ function emitPrice(
 
   tracked.timestamp = timestamp;
 
-  // Ensure pair is always set — resolve from tracked token when omitted
   const resolvedPair = pair || tracked.pair;
 
   unifiedPriceUpdate$.next({
@@ -122,25 +117,6 @@ function emitPrice(
     timestamp,
   });
 }
-
-// function initPumpSub(): void {
-//   pumpApiSub = pumpApiPriceUpdateEvent$.subscribe((event: PumpEvent) => {
-//     const price = parseFloat(event.price);
-//     const timestamp = event.timestamp || Date.now();
-//     if (!isValidPrice(price)) return;
-// 
-//     let priceUsd: number;
-// 
-//     if (event.quoteMint === "So11111111111111111111111111111111111111112") {
-//       if (solPriceUsd <= 0) return;
-//       priceUsd = price * solPriceUsd;
-//     } else {
-//       priceUsd = price;
-//     }
-// 
-//     emitPrice(event.mint, undefined, priceUsd, PriceSource.PUMPAPI, timestamp);
-//   });
-// }
 
 function initDbotxSub(): void {
   dbotxSub = dbotxPriceUpdateEvent$.subscribe((update: DbotxEvent) => {
@@ -157,55 +133,40 @@ function initDbotxSub(): void {
   });
 }
 
-// function initDexScreenerSub(): void {
-//   dexScreenerSub = dexScreenerPriceUpdateEvent$.subscribe(
-//     (update: DexScreenerEvent) => {
-//       const price = update.priceUsd;
-//       if (!isValidPrice(price)) return;
-//       emitPrice(
-//         update.token,
-//         update.pair,
-//         price,
-//         update.source,
-//         update.timestamp,
-//       );
-//     },
-//   );
-// }
+function initPumpSub(): void {
+  pumpApiSub = pumpApiPriceUpdateEvent$.subscribe((event: PumpEvent) => {
+    const rawPrice = Number(event.price);
+    if (!isValidPrice(rawPrice)) return;
 
-// function initDexScreenerPolling(): void {
-//   dexScreenerPollSub = timer(
-//     CONFIG.dexscreenerPollIntervalMs,
-//     CONFIG.dexscreenerPollIntervalMs,
-//   ).subscribe(() => {
-//     const tokens = [...trackedTokens.keys()];
-//     if (tokens.length > 0) {
-//       pollDexScreener(tokens);
-//     }
-//   });
-// }
+    let priceUsd: number;
+    if (event.quoteMint === "So11111111111111111111111111111111111111112") {
+      if (solPriceUsd <= 0) return;
+      priceUsd = rawPrice * solPriceUsd;
+    } else {
+      priceUsd = rawPrice;
+    }
 
-export function initPriceEngine(): void {
-  if (dbotxSub) {
-    return;
+    emitPrice(event.mint, undefined, priceUsd, PriceSource.PUMPAPI, event.timestamp ?? Date.now());
+  });
+}
+
+export function initPriceEngine(usePumpApi?: boolean): void {
+  if (usePumpApi) {
+    if (pumpApiSub) return;
+    initPumpSub();
+  } else {
+    if (dbotxSub) return;
+    initDbotxSub();
   }
-  initDbotxSub();
-  // initPumpSub();
-  // initDexScreenerSub();
-  // initDexScreenerPolling();
-  console.log("[PriceEngine] Initialized");
+  console.log(`[PriceEngine] Initialized (source: ${usePumpApi ? "PumpAPI" : "DBotX"})`);
 }
 
 export function stopPriceEngine(): void {
-  // pumpApiSub?.unsubscribe();
+  pumpApiSub?.unsubscribe();
   dbotxSub?.unsubscribe();
-  // dexScreenerSub?.unsubscribe();
-  // dexScreenerPollSub?.unsubscribe();
 
-  // pumpApiSub = null;
+  pumpApiSub = null;
   dbotxSub = null;
-  // dexScreenerSub = null;
-  // dexScreenerPollSub = null;
 
   for (const tracked of trackedTokens.values()) {
     unsubscribePair(tracked.pair);

@@ -75,8 +75,12 @@ const positionEngine = new PositionEngine(
 const services = {
   async start(): Promise<void> {
     initTelegramBot();
-    connectDataWs();
-    initPriceEngine();
+    if (isDbotx) {
+      connectDataWs();
+    } else {
+      connectPumpStream();
+    }
+    initPriceEngine(!isDbotx);
 
     if (CONFIG.liveMode) {
       if (isDbotx) {
@@ -133,7 +137,11 @@ const services = {
     stopSignalQueue();
     positionEngine.stop();
     stopPriceEngine();
-    disconnectDataWs();
+    if (isDbotx) {
+      disconnectDataWs();
+    } else {
+      disconnectPumpStream();
+    }
     stopTelegramListener();
     shutdownTelegramBot();
     console.log("[Main] All services stopped");
