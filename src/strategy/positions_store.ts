@@ -174,6 +174,24 @@ export function addPosition(
 }
 
 /**
+ * Applies a partial patch to an open position and publishes the change.
+ *
+ * Used by exit strategies (e.g. Partial Take Profit) that need to advance
+ * internal state counters without removing the position.
+ */
+export function patchPosition(
+  id: string,
+  patch: Partial<Pick<Position, "partialTierIndex" | "soldPct">>,
+): void {
+  for (const position of positions.values()) {
+    if (position.id !== id) continue;
+    Object.assign(position, patch);
+    publish(position);
+    return;
+  }
+}
+
+/**
  * Removes a position from the repository.
  *
  * The position is marked as closed before being removed so subscribers

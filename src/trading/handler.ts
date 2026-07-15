@@ -15,6 +15,7 @@ import {
   removePosition,
   hasPosition,
   getPositions,
+  patchPosition,
   positionUpdated$,
 } from "../strategy/positions_store";
 import { trackToken, untrackToken } from "../data_stream/price_engine";
@@ -321,9 +322,15 @@ async function onExit(result: ExitDecision): Promise<void> {
     const closePrice = sellResult.price ?? position.currentPrice;
 
     if (reason === PositionExitReason.PartialTakeProfit) {
-      position.soldPct = Math.min(1, (position.soldPct ?? 0) + sellPct);
+      const nextSoldPct = Math.min(1, (position.soldPct ?? 0) + sellPct);
+      if (result.patch) {
+        patchPosition(position.id, {
+          ...result.patch,
+          soldPct: nextSoldPct,
+        });
+      }
       clearPendingExit(position.id);
-      const remainingPct = (1 - position.soldPct) * 100;
+      const remainingPct = (1 - nextSoldPct) * 100;
       const stats = getPositionStats();
       const wr =
         stats.winRate > 0
