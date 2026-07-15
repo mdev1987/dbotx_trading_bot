@@ -2,7 +2,7 @@ import { Subject, Subscription } from "rxjs";
 import { CONFIG } from "../../config";
 import { botHttp } from "../http";
 import { getStoreOrders, closePosition as storeClosePosition, type StoredOrder } from "./store";
-import { removePosition } from "../../strategy/positions_store";
+import { hasPosition, removePosition } from "../../strategy/positions_store";
 import { PositionExitReason } from "../../strategy/types";
 import { untrackToken } from "../../data_stream/price_engine";
 import { sendTelegram } from "../../telegram/telegram_bot";
@@ -87,6 +87,8 @@ function scheduleReconnect(): void {
 /** Open the trade-results WebSocket connection and subscribe. */
 export function connectTradeWs(): void {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+  shouldReconnect = true;
 
   try {
     ws = new WebSocket(CONFIG.tradeWsUrl, {
@@ -204,19 +206,21 @@ export function handleTradeResult(notif: TradeResultNotification): void {
   notifyTrade(order, notif).catch(() => {});
 
   if (notif.type === "sell" && notif.state === "done") {
-    storeClosePosition(order.pair, notif.priceUsd ?? 0, exitLabel(notif.source));
-    removePosition(order.pair, notif.priceUsd, toExitReason(notif));
-    untrackToken(order.token);
-    console.log(`[LiveMonitor] Exit done for ${order.tokenName}: $${notif.priceUsd}`);
+    if (hasPosition(order.pair)) {
+      storeClosePosition(order.pair, notif.priceUsd ?? 0, exitLabel(notif.source));
+      removePosition(order.pair, notif.priceUsd, toExitReason(notif));
+      untrackToken(order.token);
+      console.log(`[LiveMonitor] Exit done for ${order.tokenName}: $${notif.priceUsd}`);
+    }
   }
 }
 
 async function reconcile(): Promise<void> {
-  const openPositions = getStoreOrders().filter((o) => o.type === "buy");
-  if (openPositions.length === 0) return;
+  const openBuyOrders = getStoreOrders().filter((o) => o.type === "buy");
+  if (openBuyOrders.length === 0) return;
 
   console.log("[LiveMonitor] Reconciliation check...");
-  for (const order of openPositions) {
+  for (const order of openBuyOrders) {
     try {
       const response = await botHttp.get<{
         err: boolean;
@@ -228,7 +232,12 @@ async function reconcile(): Promise<void> {
       if (!task) continue;
 
       if (task.state === "done" || task.state === "fail" || task.state === "expired") {
-        console.log(`[LiveMonitor] Reconcile: ${order.tokenName} state=${task.state}`);
+        if (hasPosition(order.pair)) {
+          console.log(`[LiveMonitor] Reconcile: closing stale position ${order.tokenName} state=${task.state}`);
+          storeClosePosition(order.pair, task.txPriceUsd ?? 0, "Reconciliation");
+          removePosition(order.pair, task.txPriceUsd, PositionExitReason.Expired);
+          untrackToken(order.token);
+        }
       }
     } catch (err) {
       console.warn(`[LiveMonitor] Reconciliation failed for ${order.tokenName}:`, err);

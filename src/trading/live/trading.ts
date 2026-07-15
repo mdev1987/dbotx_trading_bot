@@ -234,11 +234,11 @@ export async function submitBuy(
 }
 
 /** Submit a sell order via the API. percentage must be in (0, 1]. */
-export async function submitSell(pair: string, percentage: number): Promise<LiveOrder> {
+export async function submitSell(pair: string, percentage: number, tokenName?: string, token?: string): Promise<LiveOrder> {
   if (percentage <= 0 || percentage > 1) {
     throw new Error("Sell percentage must be between 0 and 1.");
   }
-  return submitOrder("sell", pair, percentage);
+  return submitOrder("sell", pair, percentage, tokenName, token);
 }
 
 async function execute(orderPromise: Promise<LiveOrder>): Promise<OrderResult> {
@@ -256,17 +256,6 @@ async function execute(orderPromise: Promise<LiveOrder>): Promise<OrderResult> {
     txHash: task.txHash,
     error: task.error,
     updatedAt: task.updatedAt,
-  };
-}
-
-async function executeSell(orderPromise: Promise<LiveOrder>): Promise<OrderResult> {
-  const order = await orderPromise;
-  return {
-    id: order.id,
-    status: "done",
-    pair: order.pair,
-    type: "sell",
-    updatedAt: Date.now(),
   };
 }
 
@@ -291,9 +280,13 @@ export const liveTrading: TradingApi = {
     return result;
   },
 
-  /** Sell: submit sell order and return immediately without polling. */
-  async sell(pair: string, percentage: number, _tokenName: string, _token: string): Promise<OrderResult> {
-    return executeSell(submitSell(pair, percentage));
+  /** Sell: submit sell order and wait for confirmation. */
+  async sell(pair: string, percentage: number, tokenName: string, token: string): Promise<OrderResult> {
+    const result = await execute(submitSell(pair, percentage, tokenName, token));
+    if (result.id && (tokenName || token)) {
+      updateOrderMeta(result.id, { token, tokenName });
+    }
+    return result;
   },
 
   /** Fetch wallet balance and derive TradingAccount. */
@@ -304,7 +297,7 @@ export const liveTrading: TradingApi = {
   },
 
   async shutdown(): Promise<void> {
-    /* no-op */
+    console.log("[LiveTrading] Shutting down");
   },
 };
 

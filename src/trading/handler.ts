@@ -47,6 +47,23 @@ let debugSub: Subscription | null = null;
 /** Prevents duplicate buys for the same pair while a buy is in-flight. */
 const pendingBuyPairs = new Set<string>();
 
+/** Circuit breaker: pause trading after N consecutive losses. */
+const MAX_CONSECUTIVE_LOSSES = 5;
+let consecutiveLosses = 0;
+let circuitBreakerTrippedAt = 0;
+const CIRCUIT_BREAKER_COOLDOWN_MS = 300_000;
+
+function isCircuitBreakerTripped(): boolean {
+  if (circuitBreakerTrippedAt === 0) return false;
+  if (Date.now() - circuitBreakerTrippedAt > CIRCUIT_BREAKER_COOLDOWN_MS) {
+    console.log("[Handler] Circuit breaker reset after cooldown");
+    circuitBreakerTrippedAt = 0;
+    consecutiveLosses = 0;
+    return false;
+  }
+  return true;
+}
+
 /** Trading backend — set by startTrading. */
 let trading: TradingApi | null = null;
 
@@ -268,6 +285,11 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
 }
 
 function processNextSignal(): void {
+  if (isCircuitBreakerTripped()) {
+    console.warn("[Handler] Circuit breaker active — skipping signals");
+    return;
+  }
+
   if (
     CONFIG.maxOpenPositions > 0 &&
     positions.size >= CONFIG.maxOpenPositions
@@ -336,6 +358,22 @@ async function onExit(result: ExitCheckResult): Promise<void> {
       }
 
       recordTrade(closed, closePrice, reason);
+
+      // Track consecutive losses for circuit breaker
+      if (pnl < 0) {
+        consecutiveLosses++;
+        if (consecutiveLosses >= MAX_CONSECUTIVE_LOSSES && circuitBreakerTrippedAt === 0) {
+          circuitBreakerTrippedAt = Date.now();
+          console.warn(
+            `[Handler] Circuit breaker tripped after ${consecutiveLosses} consecutive losses — pausing for ${CIRCUIT_BREAKER_COOLDOWN_MS / 1000}s`,
+          );
+          sendTelegram(
+            `🔴 **Circuit Breaker Tripped**\n━━━━━━━━━━━━━━━━━━━\n📊 ${consecutiveLosses} consecutive losses\n⏸️ Pausing for ${CIRCUIT_BREAKER_COOLDOWN_MS / 60_000} min`,
+          );
+        }
+      } else {
+        consecutiveLosses = Math.max(0, consecutiveLosses - 1);
+      }
 
       const account = await trading.getAccount();
 

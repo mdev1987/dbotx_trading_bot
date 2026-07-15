@@ -10,6 +10,16 @@ import {
   type StoredPosition,
 } from "./store";
 
+const MAX_RECOVERY_PAGES = 10;
+const RECOVERY_PAGE_DELAY_MS = 200;
+const RECOVERY_TRADE_DELAY_MS = 100;
+
+export const __TEST_DELAY_OVERRIDE = { fn: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)) };
+
+function delay(ms: number): Promise<void> {
+  return __TEST_DELAY_OVERRIDE.fn(ms);
+}
+
 interface SwapTrade {
   id: string;
   timestamp: number;
@@ -69,11 +79,20 @@ export async function recoverLivePositions(): Promise<void> {
 
   console.log("[Recovery] Fetching recent trades for recovery...");
   try {
-    const solPrice = getSolPriceUsd();
+    let solPrice = getSolPriceUsd();
+    if (solPrice <= 0) {
+      // Wait briefly for price engine to establish SOL/USD rate
+      for (let i = 0; i < 10; i++) {
+        await delay(1000);
+        solPrice = getSolPriceUsd();
+        if (solPrice > 0) break;
+      }
+    }
+
     let page = 0;
     let allTrades: SwapTrade[] = [];
 
-    while (true) {
+    while (page < MAX_RECOVERY_PAGES) {
       const trades = await botHttp.get<SwapTradesResponse>(
         `/account/swap_trades?page=${page}&size=${CONFIG.recoveryFetchPageSize}&chain=solana&wallet=${CONFIG.walletAddress}`,
       );
@@ -83,6 +102,9 @@ export async function recoverLivePositions(): Promise<void> {
       allTrades = allTrades.concat(trades.res);
       if (trades.res.length < CONFIG.recoveryFetchPageSize) break;
       page++;
+      if (page < MAX_RECOVERY_PAGES) {
+        await delay(RECOVERY_PAGE_DELAY_MS);
+      }
     }
 
     const recentBuys = allTrades.filter((t) => t.type === "buy" && t.state === "done");
@@ -105,6 +127,7 @@ export async function recoverLivePositions(): Promise<void> {
 
       // Try to get better price from pending exit tasks
       const activeExits = await findActiveExits(trade.id);
+      await delay(RECOVERY_TRADE_DELAY_MS);
       if (activeExits.length > 0 && activeExits[0]!.basePriceUsd > 0) {
         entryPriceUsd = activeExits[0]!.basePriceUsd;
       }

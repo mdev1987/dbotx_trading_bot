@@ -158,3 +158,17 @@ describe("updateOrderMeta", () => {
     expect(getStoreOrders()).toHaveLength(0);
   });
 });
+
+describe("order cap", () => {
+  test("addOrder beyond cap drops oldest entries", async () => {
+    // Add just over the cap to verify trimming works
+    for (let i = 0; i < 5010; i++) {
+      addOrder({ ...sampleOrder, id: `order_${i}`, createdAt: Date.now() + i });
+    }
+    const orders = getStoreOrders();
+    expect(orders.length).toBeLessThanOrEqual(5000);
+    // The oldest entries should be gone, latest retained
+    expect(orders.some((o) => o.id === "order_0")).toBe(false);
+    expect(orders.some((o) => o.id === "order_5009")).toBe(true);
+  }, 30000);
+});

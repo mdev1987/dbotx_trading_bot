@@ -6,6 +6,7 @@ import { tmpdir } from "os";
 let lastTelegramMessage: string | undefined;
 let removedPosition: unknown;
 let untrackedToken: string | undefined;
+let hasPositionMock = (pair: string) => false;
 
 mock.module("../../telegram/telegram_bot", () => ({
   sendTelegram: (msg: string) => { lastTelegramMessage = msg; },
@@ -13,6 +14,7 @@ mock.module("../../telegram/telegram_bot", () => ({
 
 mock.module("../../strategy/positions_store", () => ({
   removePosition: (...args: unknown[]) => { removedPosition = args; },
+  hasPosition: (pair: string) => hasPositionMock(pair),
 }));
 
 mock.module("../../data_stream/price_engine", () => ({
@@ -100,6 +102,7 @@ describe("handleTradeResult with matching order", () => {
   });
 
   test("sell done notification closes position and untracks token", () => {
+    hasPositionMock = () => true;
     handleTradeResult(sellNotif);
     expect(untrackedToken).toBe("token1");
   });

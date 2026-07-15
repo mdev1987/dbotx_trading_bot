@@ -214,3 +214,12 @@ export const CONFIG = {
   // Observability
   logLevel: process.env.LOG_LEVEL ?? "info",
 };
+
+// Validate live-mode configuration at load time
+if (CONFIG.liveMode) {
+  if (!CONFIG.walletId || !CONFIG.walletAddress) {
+    throw new Error(
+      "[config] LIVE_MODE=true requires LIVE_WALLET_ID and LIVE_WALLET_ADDRESS to be set",
+    );
+  }
+}

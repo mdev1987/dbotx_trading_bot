@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, openSync, fsyncSync, closeSync } from "fs";
 import { dirname } from "path";
 
 export interface StoredOrder {
@@ -40,10 +40,24 @@ function tmpPath(): string {
   return filePath + ".tmp";
 }
 
+const MAX_STORED_ORDERS = 5000;
+
 function flush(): void {
   const tmp = tmpPath();
   writeFileSync(tmp, JSON.stringify(data, null, 2));
+  try {
+    const fd = openSync(tmp, "r");
+    fsyncSync(fd);
+    closeSync(fd);
+  } catch { /* best-effort fsync */ }
   renameSync(tmp, filePath);
+}
+
+function capOrders(): void {
+  if (data.orders.length > MAX_STORED_ORDERS) {
+    data.orders = data.orders.slice(-MAX_STORED_ORDERS);
+    flush();
+  }
 }
 
 /** Initialise or load the JSON store at the given path. */
@@ -68,6 +82,7 @@ export function initLiveStore(path: string): void {
 /** Persist a new order. */
 export function addOrder(order: StoredOrder): void {
   data.orders.push(order);
+  capOrders();
   flush();
 }
 
