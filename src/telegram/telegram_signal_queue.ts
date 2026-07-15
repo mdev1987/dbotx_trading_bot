@@ -16,7 +16,7 @@ export interface QueuedSignal {
 const ttlIntervalSub = timer(0, 1000).pipe(
   tap(() => {
     const now = Date.now();
-    const ttlMs = signalQueueTtlMs * 1000;
+    const ttlMs = signalQueueTtlMs;
     for (const [token, signal] of signalQueue) {
       if (now - signal.timestamp > ttlMs) {
         removeSignal(token);

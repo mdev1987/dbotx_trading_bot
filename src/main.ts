@@ -43,10 +43,10 @@ import { startTrading, stopTrading } from "./trading/handler";
 
 if (!CONFIG.liveMode) {
   registerStrategies([
-    new StopLossStrategy(CONFIG.stopLossEnabled, CONFIG.stopLossPct / 100),
+    new StopLossStrategy(CONFIG.stopLossEnabled, CONFIG.stopLossPct),
     new TrailingStopStrategy(
-      CONFIG.trailingActivationPct / 100,
-      CONFIG.trailingDistancePct / 100,
+      CONFIG.trailingActivationPct,
+      CONFIG.trailingDistancePct,
     ),
     new PartialTakeProfitStrategy(
       CONFIG.partialTpEnabled,
@@ -59,7 +59,7 @@ registerStrategies([
   new TtlStrategy(
     CONFIG.baseTtlSecs,
     CONFIG.maxTtlSecs,
-    CONFIG.profitPercentChange / 100,
+    CONFIG.profitPercentChange,
   ),
 ]);
 
