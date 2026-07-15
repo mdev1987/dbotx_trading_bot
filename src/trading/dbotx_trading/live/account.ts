@@ -1,7 +1,7 @@
 import { BehaviorSubject } from "rxjs";
-import { CONFIG } from "../../config";
-import { dataHttp } from "../http";
-import type { TradingAccount } from "../types";
+import { CONFIG } from "../../../config";
+import { dataHttp } from "../../http";
+import type { TradingAccount } from "../../types";
 
 interface WalletBalanceResponse {
   err: boolean;
@@ -20,7 +20,6 @@ let liveAccount: LiveAccount = { balance: 0 };
 
 export const liveAccount$ = new BehaviorSubject<LiveAccount>(liveAccount);
 
-/** Fetch SOL balance from wallet-balance API (5 credits). Only call when really needed. */
 export async function fetchLiveBalance(): Promise<LiveAccount> {
   try {
     const response = await dataHttp.get<WalletBalanceResponse>(
@@ -41,12 +40,10 @@ export async function fetchLiveBalance(): Promise<LiveAccount> {
   return liveAccount;
 }
 
-/** Force-refresh balance from API — call on startup, reconnect, or important events. */
 export async function refreshLiveBalance(): Promise<LiveAccount> {
   return fetchLiveBalance();
 }
 
-/** Convert live account into the generic TradingAccount shape used by the handler. */
 export function toTradingAccount(account: LiveAccount, solPriceUsd: number): TradingAccount {
   return {
     balance: account.balance * solPriceUsd,
@@ -56,7 +53,6 @@ export function toTradingAccount(account: LiveAccount, solPriceUsd: number): Tra
   };
 }
 
-/** Snapshot of the latest cached balance (no API call). */
 export function getLiveAccount(): LiveAccount {
   return liveAccount;
 }

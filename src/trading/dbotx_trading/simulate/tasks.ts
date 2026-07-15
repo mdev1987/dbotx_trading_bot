@@ -1,74 +1,41 @@
 import { Subject } from "rxjs";
-import { CONFIG } from "../../config";
-import { botHttp as http } from "../http";
+import { CONFIG } from "../../../config";
+import { botHttp as http } from "../../http";
 import { SimulatorOrderStatus } from "./orders";
-
-/* -------------------------------------------------------------------------- */
-/*                                   Types                                    */
-/* -------------------------------------------------------------------------- */
 
 type PnLOrderState = "done" | "fail" | "expired" | "init" | "processing";
 
 export interface SimulatorTask {
   id: string;
-
   status: SimulatorOrderStatus;
-
   pair: string;
-
   type: "buy" | "sell";
-
   priceUsd?: number;
-
   amountSol?: number;
-
   amountToken?: number;
-
   txHash?: string;
-
   error?: string;
-
   updatedAt: number;
 }
 
 interface PnLOrderItem {
   _id: string;
-
   state: PnLOrderState;
-
   pair: string;
-
   tradeType: "buy" | "sell";
-
   sourceId: string;
-
   basePriceUsd: number;
-
   currencyAmountUI: number;
-
   errorCode?: string;
-
   errorMessage?: string;
 }
 
 interface PnLOrdersResponse {
   err: boolean;
-
   res: PnLOrderItem[];
 }
 
-/* -------------------------------------------------------------------------- */
-/*                                   Events                                   */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Emitted whenever a task reaches a terminal state.
- */
 export const simulatorTaskCompleted$ = new Subject<SimulatorTask>();
-
-/* -------------------------------------------------------------------------- */
-/*                              State Mapping                                 */
-/* -------------------------------------------------------------------------- */
 
 function toSimulatorOrderStatus(state: PnLOrderState): SimulatorOrderStatus {
   switch (state) {
@@ -83,13 +50,6 @@ function toSimulatorOrderStatus(state: PnLOrderState): SimulatorOrderStatus {
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*                                Get Task                                    */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Downloads the latest task information.
- */
 export async function getTask(
   orderId: string,
   pair: string,
@@ -138,19 +98,11 @@ export async function getTask(
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*                               Wait For Task                                */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Polls until the order reaches a terminal state.
- */
 export async function waitForTaskConfirmed(
   orderId: string,
   pair: string,
 ): Promise<SimulatorTask> {
   const timeout = CONFIG.simulatorTaskTimeoutSecs * 1000;
-
   const started = Date.now();
 
   while (true) {
@@ -173,10 +125,6 @@ export async function waitForTaskConfirmed(
     await sleep(CONFIG.simulatorTaskPollIntervalMs);
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/*                                   Helper                                   */
-/* -------------------------------------------------------------------------- */
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

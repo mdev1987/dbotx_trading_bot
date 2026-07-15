@@ -81,3 +81,58 @@ export const botHttp = new HttpClient(CONFIG.servapiBaseUrl);
 
 /** Data API HTTP client (dataBaseUrl) */
 export const dataHttp = new HttpClient(CONFIG.dataBaseUrl);
+
+class PumpApiClient {
+  async post<T>(path: string, body: unknown): Promise<T> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt <= CONFIG.httpMaxRetries; attempt++) {
+      if (attempt > 0) {
+        await sleep(CONFIG.httpBaseDelayMs * 2 ** (attempt - 1));
+      }
+
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), CONFIG.httpTimeoutMs);
+
+        try {
+          const response = await fetch(`${CONFIG.pumpapiBaseUrl}${path}`, {
+            method: "POST",
+            signal: controller.signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+
+          if (!response.ok) {
+            const error = new Error(
+              `[PumpApi] POST ${path} failed (${response.status})`,
+            );
+            if (response.status >= 400 && response.status < 500) {
+              error.name = "NonRetryableError";
+            }
+            throw error;
+          }
+
+          return (await response.json()) as T;
+        } finally {
+          clearTimeout(timeout);
+        }
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        if (lastError.name === "NonRetryableError" || attempt >= CONFIG.httpMaxRetries) {
+          throw lastError;
+        }
+
+        console.warn(
+          `[PumpApi] POST ${path} attempt ${attempt + 1}/${CONFIG.httpMaxRetries + 1} failed: ${lastError.message}. Retrying...`,
+        );
+      }
+    }
+
+    throw lastError ?? new Error(`[PumpApi] POST ${path} failed`);
+  }
+}
+
+/** PumpAPI HTTP client (no API key needed) */
+export const pumpapiHttp = new PumpApiClient();

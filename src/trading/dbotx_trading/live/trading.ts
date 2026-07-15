@@ -1,10 +1,11 @@
 import { Subject } from "rxjs";
-import { CONFIG, type PartialTpTier } from "../../config";
-import { botHttp } from "../http";
-import { getSolPriceUsd } from "../../data_stream/price_engine";
+import { CONFIG, type PartialTpTier } from "../../../config";
+import { botHttp } from "../../http";
+import { getSolPriceUsd } from "../../../data_stream/price_engine";
 import { getLiveAccount, toTradingAccount } from "./account";
 import { addOrder, updateOrderMeta, addPosition as storeAddPosition } from "./store";
-import type { OrderResult, TradingAccount, TradingApi } from "../types";
+import { buildStopEarnGroup, buildStopLossGroup, type StopEarnGroupItem, type TrailingStopGroupItem } from "../exit-config";
+import type { OrderResult, TradingAccount, TradingApi } from "../../types";
 
 export type LiveOrderSide = "buy" | "sell";
 
@@ -52,29 +53,6 @@ interface SwapOrdersResponse {
 export const liveOrderSubmitted$ = new Subject<LiveOrder>();
 export const liveTaskCompleted$ = new Subject<LiveTask>();
 
-interface StopEarnGroupItem {
-  pricePercent: number;
-  amountPercent: number;
-}
-
-/** Build a take-profit tier group from partial TP config and optional backstop. */
-export function buildStopEarnGroup(tiers: PartialTpTier[], backstopPct: number): StopEarnGroupItem[] {
-  const group = tiers.map((tier) => ({
-    pricePercent: tier.at,
-    amountPercent: tier.pct,
-  }));
-
-  if (backstopPct > 0) {
-    const totalPct = tiers.reduce((sum, t) => sum + t.pct, 0);
-    const remaining = +(1 - totalPct).toFixed(4);
-    if (remaining > 0) {
-      group.push({ pricePercent: backstopPct, amountPercent: remaining });
-    }
-  }
-
-  return group;
-}
-
 async function submitOrder(
   type: LiveOrderSide,
   pair: string,
@@ -91,15 +69,12 @@ async function submitOrder(
 
   const hasStopLossTiers = CONFIG.stopLossTiers.length > 0;
   const stopLossGroup = hasStopLossTiers
-    ? CONFIG.stopLossTiers.map((tier) => ({
-        pricePercent: Math.abs(tier.at),
-        amountPercent: tier.pct,
-      }))
+    ? buildStopLossGroup(CONFIG.stopLossTiers)
     : null;
 
   const hasTrailing = CONFIG.trailingActivationPct > 0 && CONFIG.trailingDistancePct > 0;
   const trailingStopGroup = hasTrailing
-    ? [{ pricePercent: CONFIG.trailingDistancePct, amountPercent: 1, activePricePercent: CONFIG.trailingActivationPct }]
+    ? [{ pricePercent: CONFIG.trailingDistancePct, amountPercent: 1, activePricePercent: CONFIG.trailingActivationPct }] as TrailingStopGroupItem[]
     : null;
 
   const hasExitCustomConfig = CONFIG.pnlCustomConfigEnabled;
@@ -198,7 +173,6 @@ async function getTask(orderId: string): Promise<LiveTask> {
   };
 }
 
-/** Poll for task completion until done, fail, or timeout. */
 export async function waitForTaskConfirmed(orderId: string): Promise<LiveTask> {
   const timeout = CONFIG.pnlTaskPollMs * CONFIG.maxLiveBuyPollAttempts;
   const started = Date.now();
@@ -223,7 +197,6 @@ export async function waitForTaskConfirmed(orderId: string): Promise<LiveTask> {
   }
 }
 
-/** Submit a buy order via the API. */
 export async function submitBuy(
   pair: string,
   amountSol: number,
@@ -233,7 +206,6 @@ export async function submitBuy(
   return submitOrder("buy", pair, amountSol, tokenName, token);
 }
 
-/** Submit a sell order via the API. percentage must be in (0, 1]. */
 export async function submitSell(pair: string, percentage: number, tokenName?: string, token?: string): Promise<LiveOrder> {
   if (percentage <= 0 || percentage > 1) {
     throw new Error("Sell percentage must be between 0 and 1.");
@@ -259,9 +231,7 @@ async function execute(orderPromise: Promise<LiveOrder>): Promise<OrderResult> {
   };
 }
 
-/** Live trading adapter implementing TradingApi. */
-export const liveTrading: TradingApi = {
-  /** Buy: place order, wait for confirmation, update store metadata. */
+export const dbotxLiveTrading: TradingApi = {
   async buy(pair: string, amountSol: number, tokenName: string, token: string): Promise<OrderResult> {
     const result = await execute(submitBuy(pair, amountSol, tokenName, token));
     if (result.id && (tokenName || token)) {
@@ -280,7 +250,6 @@ export const liveTrading: TradingApi = {
     return result;
   },
 
-  /** Sell: submit sell order and wait for confirmation. */
   async sell(pair: string, percentage: number, tokenName: string, token: string): Promise<OrderResult> {
     const result = await execute(submitSell(pair, percentage, tokenName, token));
     if (result.id && (tokenName || token)) {
@@ -289,7 +258,6 @@ export const liveTrading: TradingApi = {
     return result;
   },
 
-  /** Return cached wallet balance (no API call — 5 credits each). */
   async getAccount(): Promise<TradingAccount> {
     const account = getLiveAccount();
     const solPrice = getSolPriceUsd();

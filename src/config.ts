@@ -49,6 +49,13 @@ function parsePartialTpTiers(raw: string | undefined): PartialTpTier[] {
 }
 
 export const CONFIG = {
+  // Engine selection
+  tradingEngine: (process.env.TRADING_ENGINE ?? "pumpapi").toLowerCase() as "pumpapi" | "dbotx",
+
+  // PumpAPI
+  pumpapiPrivateKey: process.env.PUMPAPI_PRIVATE_KEY ?? "",
+  pumpapiBaseUrl: process.env.PUMPAPI_BASE_URL ?? "https://api.pumpapi.io",
+
   // DBotX API
   dbotxApiKey: required("DBOTX_API_KEY", "DBOTX_API_KEY_SEALED"),
   wsUrl: required("DBOTX_WS_URL"),

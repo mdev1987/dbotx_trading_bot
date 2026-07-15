@@ -1,11 +1,15 @@
 import { CONFIG } from "./config";
 
-import { simulatorTrading } from "./trading/simulator/trading";
-import { liveTrading } from "./trading/live/trading";
-import { refreshLiveBalance } from "./trading/live/account";
-import { initLiveStore } from "./trading/live/store";
-import { recoverLivePositions } from "./trading/live/recovery";
-import { connectTradeWs, disconnectTradeWs, startLiveMonitor, stopLiveMonitor } from "./trading/live/trade-ws";
+import { dbotxSimulateTrading } from "./trading/dbotx_trading/simulate/trading";
+import { dbotxLiveTrading } from "./trading/dbotx_trading/live/trading";
+import { refreshLiveBalance as refreshDbotxBalance } from "./trading/dbotx_trading/live/account";
+import { initLiveStore as initDbotxStore } from "./trading/dbotx_trading/live/store";
+import { recoverLivePositions as recoverDbotxPositions } from "./trading/dbotx_trading/live/recovery";
+import { connectTradeWs as connectDbotxTradeWs, disconnectTradeWs as disconnectDbotxTradeWs, startLiveMonitor as startDbotxMonitor, stopLiveMonitor as stopDbotxMonitor } from "./trading/dbotx_trading/live/trade-ws";
+
+import { pumpapiLiveTrading } from "./trading/pumpapi_trading/live/trading";
+import { refreshPumpBalance } from "./trading/pumpapi_trading/live/account";
+import { pumpapiPaperTrading, initPaperTrading } from "./trading/pumpapi_trading/paper/trading";
 
 import {
   unifiedPriceUpdate$,
@@ -38,9 +42,7 @@ import {
 } from "./telegram/telegram_signal_queue";
 import { startTrading, stopTrading } from "./trading/handler";
 
-/* -------------------------------------------------------------------------- */
-/*                          Strategy Engine Wiring                            */
-/* -------------------------------------------------------------------------- */
+const isDbotx = CONFIG.tradingEngine === "dbotx";
 
 if (!CONFIG.liveMode) {
   registerStrategies([
@@ -74,27 +76,43 @@ const services = {
   async start(): Promise<void> {
     initTelegramBot();
     connectDataWs();
-    // connectPumpStream();   // Uncomment this line if you want to enable pumpapi data stream
     initPriceEngine();
 
     if (CONFIG.liveMode) {
-      initLiveStore(CONFIG.liveDbPath);
+      if (isDbotx) {
+        initDbotxStore(CONFIG.liveDbPath);
 
-      if (CONFIG.recoveryOnStart) {
-        await recoverLivePositions();
+        if (CONFIG.recoveryOnStart) {
+          await recoverDbotxPositions();
+        }
+
+        connectDbotxTradeWs();
+        startDbotxMonitor();
       }
-
-      connectTradeWs();
-      startLiveMonitor();
+    } else {
+      if (!isDbotx) {
+        initPaperTrading();
+      }
     }
 
     positionEngine.start();
-    await startTrading(CONFIG.liveMode ? liveTrading : simulatorTrading);
+
+    const tradingImpl = CONFIG.liveMode
+      ? (isDbotx ? dbotxLiveTrading : pumpapiLiveTrading)
+      : (isDbotx ? dbotxSimulateTrading : pumpapiPaperTrading);
+
+    await startTrading(tradingImpl);
 
     if (CONFIG.liveMode) {
-      refreshLiveBalance().catch((err) =>
-        console.warn("[Main] Failed to refresh wallet balance:", err),
-      );
+      const refreshBalance = isDbotx
+        ? refreshDbotxBalance().catch((err) =>
+            console.warn("[Main] Failed to refresh DBotX balance:", err),
+          )
+        : refreshPumpBalance().catch((err) =>
+            console.warn("[Main] Failed to refresh PumpAPI balance:", err),
+          );
+
+      await refreshBalance;
     }
 
     startTelegramListener()
@@ -107,16 +125,15 @@ const services = {
   },
 
   stop(): void {
-    if (CONFIG.liveMode) {
-      stopLiveMonitor();
-      disconnectTradeWs();
+    if (CONFIG.liveMode && isDbotx) {
+      stopDbotxMonitor();
+      disconnectDbotxTradeWs();
     }
     stopTrading();
     stopSignalQueue();
     positionEngine.stop();
     stopPriceEngine();
     disconnectDataWs();
-    // disconnectPumpStream(); // Uncomment this line if you want to disable pumpapi data stream
     stopTelegramListener();
     shutdownTelegramBot();
     console.log("[Main] All services stopped");

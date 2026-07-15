@@ -1,11 +1,11 @@
 import { Subject, Subscription } from "rxjs";
-import { CONFIG } from "../../config";
-import { botHttp } from "../http";
+import { CONFIG } from "../../../config";
+import { botHttp } from "../../http";
 import { getStoreOrders, closePosition as storeClosePosition, type StoredOrder } from "./store";
-import { hasPosition, removePosition } from "../../strategy/positions_store";
-import { PositionExitReason } from "../../strategy/types";
-import { untrackToken } from "../../data_stream/price_engine";
-import { sendTelegram } from "../../telegram/telegram_bot";
+import { hasPosition, removePosition } from "../../../strategy/positions_store";
+import { PositionExitReason } from "../../../strategy/types";
+import { untrackToken } from "../../../data_stream/price_engine";
+import { sendTelegram } from "../../../telegram/telegram_bot";
 
 export interface TradeResultNotification {
   id: string;
@@ -25,7 +25,6 @@ export interface TradeResultNotification {
   receive?: { amount: string };
 }
 
-/** Stream of trade-result notifications from the WebSocket. */
 export const tradeResult$ = new Subject<TradeResultNotification>();
 
 let ws: WebSocket | null = null;
@@ -84,7 +83,6 @@ function scheduleReconnect(): void {
   reconnectTimer = setTimeout(connectTradeWs, delay + jitter);
 }
 
-/** Open the trade-results WebSocket connection and subscribe. */
 export function connectTradeWs(): void {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
@@ -132,7 +130,6 @@ export function connectTradeWs(): void {
   ws.onerror = () => { /* onclose will fire next */ };
 }
 
-/** Close WebSocket and disable auto-reconnect. */
 export function disconnectTradeWs(): void {
   shouldReconnect = false;
   stopHeartbeat();
@@ -150,7 +147,6 @@ export function disconnectTradeWs(): void {
 let monitorSub: Subscription | null = null;
 let reconcileTimer: ReturnType<typeof setInterval> | null = null;
 
-/** Map an event source string to a human-readable exit label. */
 export function exitLabel(type: string): string {
   if (type.includes("take_profit")) return "Take Profit";
   if (type.includes("stop_loss")) return "Stop Loss";
@@ -158,7 +154,6 @@ export function exitLabel(type: string): string {
   return "Sell";
 }
 
-/** Derive a PositionExitReason from a trade result notification's subSource. */
 export function toExitReason(notif: TradeResultNotification): PositionExitReason | undefined {
   if (notif.subSource?.includes("take_profit")) return PositionExitReason.TakeProfit;
   if (notif.subSource?.includes("stop_loss")) return PositionExitReason.StopLoss;
@@ -193,7 +188,6 @@ async function notifyTrade(order: StoredOrder | undefined, notif: TradeResultNot
   sendTelegram(lines.join("\n"));
 }
 
-/** Process an incoming trade result: notify Telegram and close position on sell-done. */
 export function handleTradeResult(notif: TradeResultNotification): void {
   const orders = getStoreOrders();
   const order = orders.find((o) => o.id === notif.id || o.pair === notif.pair);
@@ -245,7 +239,6 @@ async function reconcile(): Promise<void> {
   }
 }
 
-/** Subscribe to trade results and start periodic reconciliation. */
 export function startLiveMonitor(): void {
   if (monitorSub) return;
   monitorSub = tradeResult$.subscribe(handleTradeResult);
@@ -253,7 +246,6 @@ export function startLiveMonitor(): void {
   console.log("[LiveMonitor] Started");
 }
 
-/** Unsubscribe from trade results and stop reconciliation. */
 export function stopLiveMonitor(): void {
   if (monitorSub) {
     monitorSub.unsubscribe();

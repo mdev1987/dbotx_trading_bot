@@ -1,7 +1,7 @@
-import { CONFIG } from "../../config";
-import { botHttp } from "../http";
-import { addPosition } from "../../strategy/positions_store";
-import { trackToken, getSolPriceUsd } from "../../data_stream/price_engine";
+import { CONFIG } from "../../../config";
+import { botHttp } from "../../http";
+import { addPosition } from "../../../strategy/positions_store";
+import { trackToken, getSolPriceUsd } from "../../../data_stream/price_engine";
 import {
   getStoreOrders,
   getStoreOpenPositions,
@@ -53,12 +53,10 @@ interface PnlOrdersResponse {
   res: PnlOrder[];
 }
 
-/** Rebuild in-memory positions from the local store (fast path) or remote API (fallback). */
 export async function recoverLivePositions(): Promise<void> {
   const storeOrders = getStoreOrders();
   const storeOpenPositions = getStoreOpenPositions();
 
-  // Rebuild from store positions first (fast path)
   if (storeOpenPositions.length > 0) {
     console.log(`[Recovery] Found ${storeOpenPositions.length} open positions in store`);
     for (const pos of storeOpenPositions) {
@@ -71,7 +69,6 @@ export async function recoverLivePositions(): Promise<void> {
     return;
   }
 
-  // Fallback: fetch recent trades from API
   if (!CONFIG.walletAddress) {
     console.log("[Recovery] No wallet address configured — skipping API recovery");
     return;
@@ -81,7 +78,6 @@ export async function recoverLivePositions(): Promise<void> {
   try {
     let solPrice = getSolPriceUsd();
     if (solPrice <= 0) {
-      // Wait briefly for price engine to establish SOL/USD rate
       for (let i = 0; i < 10; i++) {
         await delay(1000);
         solPrice = getSolPriceUsd();
@@ -111,13 +107,11 @@ export async function recoverLivePositions(): Promise<void> {
 
     for (const trade of recentBuys) {
       const pair = trade.pair;
-      // Skip if we already have it tracked via store
       if (storeOrders.some((o) => o.pair === pair)) continue;
 
       const tokenContract = trade.receive.info.contract;
       const tokenName = trade.receive.info.name || trade.receive.info.symbol || tokenContract.slice(0, 8);
 
-      // Derive entry price from send/receive amounts
       const sendAmount = Number(trade.send.amount) / 10 ** (trade.send.info.decimals || 9);
       const receiveAmount = Number(trade.receive.amount) / 10 ** trade.receive.info.decimals;
       let entryPriceUsd = 0;
@@ -125,7 +119,6 @@ export async function recoverLivePositions(): Promise<void> {
         entryPriceUsd = solPrice > 0 ? (sendAmount / receiveAmount) * solPrice : 0;
       }
 
-      // Try to get better price from pending exit tasks
       const activeExits = await findActiveExits(trade.id);
       await delay(RECOVERY_TRADE_DELAY_MS);
       if (activeExits.length > 0 && activeExits[0]!.basePriceUsd > 0) {
@@ -139,10 +132,8 @@ export async function recoverLivePositions(): Promise<void> {
 
       const sizeSol = sendAmount;
 
-      // Check if exit tasks still exist (position still open)
       const hasActiveExit = activeExits.some((e) => e.state === "init" || e.state === "processing");
       if (!hasActiveExit && activeExits.length > 0) {
-        // Exit already completed or expired — position is closed
         console.log(`[Recovery] Skipping ${tokenName} — exit tasks already finished`);
         continue;
       }

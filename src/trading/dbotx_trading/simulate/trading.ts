@@ -17,11 +17,7 @@ import type {
   OrderResult,
   TradingAccount,
   TradingApi,
-} from "../types";
-
-/* -------------------------------------------------------------------------- */
-/*                              Internal Helper                               */
-/* -------------------------------------------------------------------------- */
+} from "../../types";
 
 async function execute(
   orderPromise: Promise<SimulatorOrder>,
@@ -43,11 +39,7 @@ async function execute(
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*                             Trading Implementation                         */
-/* -------------------------------------------------------------------------- */
-
-export const simulatorTrading: TradingApi = {
+export const dbotxSimulateTrading: TradingApi = {
   async buy(
     pair: string,
     amountSol: number,
