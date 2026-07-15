@@ -59,7 +59,7 @@ export function addPosition(
     currentProfitPct: 0,
 
     sizeSol,
-    sizeToken: entryPriceUsd > 0 ? (sizeSol * getSolPriceUsd()) / entryPriceUsd : 0,
+    sizeToken: (entryPriceUsd > 0 && getSolPriceUsd() > 0) ? (sizeSol * getSolPriceUsd()) / entryPriceUsd : 0,
 
     soldPct: 0,
     partialTierIndex: 0,

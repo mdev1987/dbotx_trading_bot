@@ -90,7 +90,7 @@ export async function recoverLivePositions(): Promise<void> {
 
     while (page < MAX_RECOVERY_PAGES) {
       const trades = await botHttp.get<SwapTradesResponse>(
-        `/account/swap_trades?page=${page}&size=${CONFIG.recoveryFetchPageSize}&chain=solana&wallet=${CONFIG.walletAddress}`,
+        `/account/swap_trades?page=${page}&size=${CONFIG.recoveryFetchPageSize}&chain=solana`,
       );
 
       if (trades.err || !trades.res || trades.res.length === 0) break;

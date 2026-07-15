@@ -30,7 +30,7 @@ function number(key: string, fallback?: number): number {
   return n;
 }
 
-function parsePartialTpTiers(raw: string | undefined): PartialTpTier[] {
+export function parsePartialTpTiers(raw: string | undefined): PartialTpTier[] {
   if (!raw) return [];
   return raw.split(",").flatMap((part) => {
     const trimmed = part.trim();

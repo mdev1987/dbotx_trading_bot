@@ -73,13 +73,19 @@ export const signalRemoved$ = new Subject<QueuedSignal>();
 // emits when all signals are cleared
 export const queueCleared$ = new Subject<void>();
 
+function signalKey(signal: QueuedSignal): string {
+  return signal.signal.Token ?? signal.signal.CA ?? "unknown";
+}
+
 /**
  * Adds a signal to the queue. Returns false if the queue is full
  * and the signal is not already queued.
  */
 export function enqueueSignal(signal: QueuedSignal): boolean {
-  if (signalQueue.has(signal.signal.Token!)) {
-    signalQueue.set(signal.signal.Token!, signal);
+  const key = signalKey(signal);
+
+  if (signalQueue.has(key)) {
+    signalQueue.set(key, signal);
     signalQueue$.next([...signalQueue.values()]);
     signalQueued$.next(signal);
     return true;
@@ -89,7 +95,7 @@ export function enqueueSignal(signal: QueuedSignal): boolean {
     dequeueSignal();
   }
 
-  signalQueue.set(signal.signal.Token!, signal);
+  signalQueue.set(key, signal);
   signalQueue$.next([...signalQueue.values()]);
   signalQueued$.next(signal);
   return true;

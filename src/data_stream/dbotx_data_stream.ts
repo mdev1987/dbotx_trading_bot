@@ -22,7 +22,6 @@ const states = new Map<string, PairState>();
 let ws: WebSocket | null = null;
 
 let heartbeat: ReturnType<typeof setInterval> | null = null;
-let pongTimeout: ReturnType<typeof setTimeout> | null = null;
 let reconnect: ReturnType<typeof setTimeout> | null = null;
 
 let reconnectDelay = CONFIG.wsDataInitialReconnectDelayMs;
@@ -85,7 +84,6 @@ export function connectDataWs(): void {
   ws.addEventListener("message", onMessage);
   ws.addEventListener("close", onClose);
   ws.addEventListener("error", onError);
-  ws.addEventListener("pong", onPong);
 }
 
 function startHeartbeat(): void {
@@ -96,11 +94,6 @@ function startHeartbeat(): void {
     } catch (err) {
       console.warn("[DBotX Data] Heartbeat ping failed:", err);
     }
-    if (pongTimeout) clearTimeout(pongTimeout);
-    pongTimeout = setTimeout(() => {
-      console.warn("[DBotX Data] Pong timeout — closing connection");
-      ws?.close();
-    }, CONFIG.wsHeartbeatIntervalMs / 2);
   }, CONFIG.wsHeartbeatIntervalMs);
 }
 
@@ -108,17 +101,6 @@ function stopHeartbeat(): void {
   if (heartbeat) {
     clearInterval(heartbeat);
     heartbeat = null;
-  }
-  if (pongTimeout) {
-    clearTimeout(pongTimeout);
-    pongTimeout = null;
-  }
-}
-
-function onPong(): void {
-  if (pongTimeout) {
-    clearTimeout(pongTimeout);
-    pongTimeout = null;
   }
 }
 
