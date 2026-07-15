@@ -12,7 +12,11 @@ import {
   subscribePairs,
   unsubscribePair,
 } from "./dbotx_data_stream";
-import { pumpApiPriceUpdateEvent$ } from "./pumpapi_data_stream";
+import {
+  pumpApiPriceUpdateEvent$,
+  subscribeMint,
+  unsubscribeMint,
+} from "./pumpapi_data_stream";
 
 function isValidPrice(price: number): boolean {
   return Number.isFinite(price) && price > 0;
@@ -37,7 +41,9 @@ export function trackToken(token: string, pair: string): void {
     if (tracked.pair !== pair) {
       pairToToken.delete(tracked.pair);
       unsubscribePair(tracked.pair);
+      unsubscribeMint(tracked.pair);
       subscribePairs([pair]);
+      subscribeMint(token);
       pairToToken.set(pair, token);
       tracked.pair = pair;
     }
@@ -49,6 +55,7 @@ export function trackToken(token: string, pair: string): void {
   pairToToken.set(pair, token);
   trackedTokens.set(token, { pair, timestamp: Date.now() });
   subscribePairs([pair]);
+  subscribeMint(token);
 }
 
 export function untrackToken(token: string): void {
@@ -59,6 +66,7 @@ export function untrackToken(token: string): void {
 
   pairToToken.delete(tracked.pair);
   unsubscribePair(tracked.pair);
+  unsubscribeMint(token);
   trackedTokens.delete(token);
 }
 
@@ -144,8 +152,9 @@ export function stopPriceEngine(): void {
   pumpApiSub = null;
   dbotxSub = null;
 
-  for (const tracked of trackedTokens.values()) {
-    unsubscribePair(tracked.pair);
+  for (const [token] of trackedTokens) {
+    unsubscribePair(trackedTokens.get(token)!.pair);
+    unsubscribeMint(token);
   }
   trackedTokens.clear();
   pairToToken.clear();

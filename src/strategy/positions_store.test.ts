@@ -4,7 +4,7 @@ import {
   removePosition,
   updatePositionPrice,
   hasPosition,
-  positions,
+  getPositions,
 } from "./positions_store";
 import { PositionExitReason } from "./types";
 import * as priceEngine from "../data_stream/price_engine";
@@ -12,7 +12,7 @@ import type { PriceInfo } from "../data_stream/types";
 import { PriceSource } from "../data_stream/types";
 
 beforeEach(() => {
-  positions.clear();
+  getPositions().forEach((pos) => removePosition(pos.pair));
 });
 
 describe("addPosition", () => {
@@ -41,7 +41,7 @@ describe("addPosition", () => {
 
   test("stores position keyed by pair", () => {
     addPosition("token1", "pair1", "TestToken", 1.5, 0.1);
-    expect(positions.has("pair1")).toBe(true);
+    expect(getPositions().has("pair1")).toBe(true);
   });
 });
 
@@ -54,16 +54,16 @@ describe("removePosition", () => {
     expect(removed!.closePrice).toBe(2.0);
     expect(removed!.reason).toBe(PositionExitReason.TakeProfit);
     expect(removed!.closedAt).toBeGreaterThan(0);
-    expect(positions.has("pair1")).toBe(false);
+    expect(getPositions().has("pair1")).toBe(false);
   });
-
+ 
   test("returns null for non-existent pair", () => {
     expect(removePosition("nonexistent")).toBeNull();
   });
-
+ 
   test("uses currentPriceUsd when no closePrice given", () => {
     addPosition("token1", "pair1", "TestToken", 1.5, 0.1);
-    const pos = positions.get("pair1")!;
+    const pos = getPositions().get("pair1")!;
     pos.currentPrice = 2.5;
     const removed = removePosition("pair1");
     expect(removed!.closePrice).toBe(2.5);
@@ -73,7 +73,7 @@ describe("removePosition", () => {
 describe("updatePositionPrice", () => {
   test("updates current price and profit", () => {
     addPosition("token1", "pair1", "TestToken", 1.0, 0.1);
-    const pos = positions.get("pair1")!;
+    const pos = getPositions().get("pair1")!;
     pos.lastPriceTimestamp = 0;
     const update: PriceInfo = {
       token: "token1",
@@ -90,7 +90,7 @@ describe("updatePositionPrice", () => {
 
   test("ignores stale updates", () => {
     addPosition("token1", "pair1", "TestToken", 1.0, 0.1);
-    const pos = positions.get("pair1")!;
+    const pos = getPositions().get("pair1")!;
     pos.lastPriceTimestamp = 1000;
     const stale: PriceInfo = {
       token: "token1",
@@ -106,7 +106,7 @@ describe("updatePositionPrice", () => {
 
   test("tracks peak price", () => {
     addPosition("token1", "pair1", "TestToken", 1.0, 0.1);
-    const pos = positions.get("pair1")!;
+    const pos = getPositions().get("pair1")!;
     pos.lastPriceTimestamp = 0;
     const update1: PriceInfo = {
       token: "token1",
@@ -131,7 +131,7 @@ describe("updatePositionPrice", () => {
 
   test("ignores invalid prices", () => {
     addPosition("token1", "pair1", "TestToken", 1.0, 0.1);
-    const pos = positions.get("pair1")!;
+    const pos = getPositions().get("pair1")!;
     pos.lastPriceTimestamp = 0;
     const bad: PriceInfo = {
       token: "token1",

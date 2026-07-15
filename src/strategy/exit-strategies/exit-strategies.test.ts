@@ -124,7 +124,7 @@ describe("PartialTakeProfitStrategy", () => {
     const s = new PartialTakeProfitStrategy(true, tiers);
     const r = s.check(makePos({ currentProfitPct: 0.3 }), 0);
     expect(r).not.toBeNull();
-    expect(r!.reason).toBe(PositionExitReason.PartialTP);
+    expect(r!.reason).toBe(PositionExitReason.PartialTakeProfit);
     expect(r!.percentage).toBeCloseTo(0.25);
   });
 

@@ -5,11 +5,19 @@ import { dbotxLiveTrading } from "./trading/dbotx_trading/live/trading";
 import { refreshLiveBalance as refreshDbotxBalance } from "./trading/dbotx_trading/live/account";
 import { initLiveStore as initDbotxStore } from "./trading/dbotx_trading/live/store";
 import { recoverLivePositions as recoverDbotxPositions } from "./trading/dbotx_trading/live/recovery";
-import { connectTradeWs as connectDbotxTradeWs, disconnectTradeWs as disconnectDbotxTradeWs, startLiveMonitor as startDbotxMonitor, stopLiveMonitor as stopDbotxMonitor } from "./trading/dbotx_trading/live/trade-ws";
+import {
+  connectTradeWs as connectDbotxTradeWs,
+  disconnectTradeWs as disconnectDbotxTradeWs,
+  startLiveMonitor as startDbotxMonitor,
+  stopLiveMonitor as stopDbotxMonitor,
+} from "./trading/dbotx_trading/live/trade-ws";
 
 import { pumpapiLiveTrading } from "./trading/pumpapi_trading/live/trading";
 import { refreshPumpBalance } from "./trading/pumpapi_trading/live/account";
-import { pumpapiPaperTrading, initPaperTrading } from "./trading/pumpapi_trading/paper/trading";
+import {
+  pumpapiPaperTrading,
+  initPaperTrading,
+} from "./trading/pumpapi_trading/paper/trading";
 
 import {
   unifiedPriceUpdate$,
@@ -25,7 +33,10 @@ import {
   disconnectPumpStream,
 } from "./data_stream/pumpapi_data_stream";
 import { updatePositionPrice } from "./strategy/positions_store";
-import { registerStrategies, scanPositions } from "./strategy/scanner";
+import {
+  registerStrategies,
+  scanPositions,
+} from "./strategy/positions_scanner";
 import { PositionEngine } from "./strategy/positions_engine";
 import { StopLossStrategy } from "./strategy/exit-strategies/stop-loss";
 import { TrailingStopStrategy } from "./strategy/exit-strategies/trailing-stop";
@@ -45,7 +56,7 @@ import { startTrading, stopTrading } from "./trading/handler";
 const isDbotx = CONFIG.tradingEngine === "dbotx";
 
 if (!CONFIG.liveMode) {
-  registerStrategies([
+  registerStrategies(
     new StopLossStrategy(CONFIG.stopLossEnabled, CONFIG.stopLossPct),
     new TrailingStopStrategy(
       CONFIG.trailingActivationPct,
@@ -55,21 +66,19 @@ if (!CONFIG.liveMode) {
       CONFIG.partialTpEnabled,
       CONFIG.partialTpTiers,
     ),
-  ]);
+  );
 }
 
-registerStrategies([
+registerStrategies(
   new TtlStrategy(
     CONFIG.baseTtlSecs,
     CONFIG.maxTtlSecs,
     CONFIG.profitPercentChange,
   ),
-]);
+);
 
 const positionEngine = new PositionEngine(
   unifiedPriceUpdate$,
-  updatePositionPrice,
-  scanPositions,
 );
 
 const services = {
@@ -102,8 +111,12 @@ const services = {
     positionEngine.start();
 
     const tradingImpl = CONFIG.liveMode
-      ? (isDbotx ? dbotxLiveTrading : pumpapiLiveTrading)
-      : (isDbotx ? dbotxSimulateTrading : pumpapiPaperTrading);
+      ? isDbotx
+        ? dbotxLiveTrading
+        : pumpapiLiveTrading
+      : isDbotx
+        ? dbotxSimulateTrading
+        : pumpapiPaperTrading;
 
     await startTrading(tradingImpl);
 
@@ -160,10 +173,8 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
-services
-  .start()
-  .catch((err) => {
-    console.error("[Main] Startup failed:", err);
-    services.stop();
-    process.exit(1);
-  });
+services.start().catch((err) => {
+  console.error("[Main] Startup failed:", err);
+  services.stop();
+  process.exit(1);
+});

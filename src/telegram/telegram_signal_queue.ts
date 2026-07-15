@@ -74,7 +74,7 @@ export const signalRemoved$ = new Subject<QueuedSignal>();
 export const queueCleared$ = new Subject<void>();
 
 function signalKey(signal: QueuedSignal): string {
-  return signal.signal.Token ?? signal.signal.CA ?? "unknown";
+  return signal.signal.CA ?? signal.signal.Token ?? "unknown";
 }
 
 /**
@@ -84,10 +84,11 @@ function signalKey(signal: QueuedSignal): string {
 export function enqueueSignal(signal: QueuedSignal): boolean {
   const key = signalKey(signal);
 
+  // Duplicate — update in place but don't emit signalQueued$,
+  // which would trigger an unnecessary processNextSignal dequeue.
   if (signalQueue.has(key)) {
     signalQueue.set(key, signal);
     signalQueue$.next([...signalQueue.values()]);
-    signalQueued$.next(signal);
     return true;
   }
 

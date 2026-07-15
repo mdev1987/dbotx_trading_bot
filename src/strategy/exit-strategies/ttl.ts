@@ -1,39 +1,148 @@
-import type { Position } from "../types";
-import { PositionExitReason } from "../types";
-import type { ExitCheckResult, ExitStrategy } from "./types";
+import { ExitAction, type ExitDecision, type ExitStrategy } from "./types";
 
+import { PositionExitReason, type Position } from "../types";
+
+// ============================================================================
+// Time-To-Live (TTL) Strategy
+// ============================================================================
+
+/**
+ * Limits how long a position may remain open.
+ *
+ * A position is periodically renewed when its price changes by a configured
+ * percentage. If no meaningful movement occurs before the base TTL expires,
+ * the position is closed.
+ *
+ * Regardless of renewals, the position is always closed once the maximum TTL
+ * is reached.
+ */
 export class TtlStrategy implements ExitStrategy {
   readonly name = "ttl";
 
   constructor(
     private readonly baseTtlSecs: number,
     private readonly maxTtlSecs: number,
-    private readonly profitPercentChange: number,
+    private readonly renewThresholdPct: number,
   ) {}
 
-  check(position: Position, now: number): ExitCheckResult | null {
-    const ageSinceRenew = (now - position.renewedAt) / 1000;
+  /**
+   * Returns the number of seconds since the last renewal.
+   */
+  private ageSinceRenew(position: Position, now: number): number {
+    return (now - position.renewedAt) / 1000;
+  }
 
-    if (ageSinceRenew < this.baseTtlSecs) {
-      return null;
+  /**
+   * Returns the total lifetime of the position.
+   */
+  private totalAge(position: Position, now: number): number {
+    return (now - position.openedAt) / 1000;
+  }
+
+  /**
+   * Calculates the absolute price change since the last renewal.
+   */
+  private renewalPriceChange(position: Position): number {
+    if (!Number.isFinite(position.renewPrice) || position.renewPrice <= 0) {
+      return 0;
     }
 
-    const totalAge = (now - position.openedAt) / 1000;
-
-    if (totalAge >= this.maxTtlSecs) {
-      return { position, reason: PositionExitReason.Expired };
-    }
-
-    const priceChange = Math.abs(
+    return Math.abs(
       (position.currentPrice - position.renewPrice) / position.renewPrice,
     );
+  }
 
-    if (priceChange >= this.profitPercentChange) {
-      position.renewedAt = now;
-      position.renewPrice = position.currentPrice;
+  /**
+   * Evaluates the position lifetime.
+   *
+   * Possible outcomes:
+   *
+   * • Hold   → Continue monitoring.
+   * • Renew  → Extend the TTL window.
+   * • Close  → Position has expired.
+   */
+  check(position: Position, now: number): ExitDecision | null {
+    // -----------------------------------------------------------------------
+    // Wait until the base TTL has elapsed.
+    // -----------------------------------------------------------------------
+
+    const renewAge = this.ageSinceRenew(position, now);
+
+    if (renewAge < this.baseTtlSecs) {
       return null;
     }
 
-    return { position, reason: PositionExitReason.Expired };
+    // -----------------------------------------------------------------------
+    // Hard expiration.
+    //
+    // Maximum lifetime reached regardless of renewals.
+    // -----------------------------------------------------------------------
+
+    const totalAge = this.totalAge(position, now);
+
+    if (totalAge >= this.maxTtlSecs) {
+      return {
+        position,
+
+        action: ExitAction.Close,
+
+        reason: PositionExitReason.Expired,
+
+        metadata: {
+          totalAge,
+          maxTtl: this.maxTtlSecs,
+        },
+      };
+    }
+
+    // -----------------------------------------------------------------------
+    // Check whether the position has moved enough to renew.
+    // -----------------------------------------------------------------------
+
+    const priceChange = this.renewalPriceChange(position);
+
+    if (priceChange >= this.renewThresholdPct) {
+      return {
+        position,
+
+        action: ExitAction.Renew,
+
+        reason: PositionExitReason.Manual,
+
+        patch: {
+          renewedAt: now,
+
+          renewPrice: position.currentPrice,
+        },
+
+        metadata: {
+          renewAge,
+
+          priceChange,
+
+          threshold: this.renewThresholdPct,
+        },
+      };
+    }
+
+    // -----------------------------------------------------------------------
+    // No renewal occurred before the TTL expired.
+    // -----------------------------------------------------------------------
+
+    return {
+      position,
+
+      action: ExitAction.Close,
+
+      reason: PositionExitReason.Expired,
+
+      metadata: {
+        renewAge,
+
+        priceChange,
+
+        threshold: this.renewThresholdPct,
+      },
+    };
   }
 }

@@ -6,7 +6,7 @@ import {
   updatePaperAccount,
 } from "./account";
 
-import { positions } from "../../../strategy/positions_store";
+import { getPositions } from "../../../strategy/positions_store";
 
 import type { OrderResult, TradingAccount, TradingApi } from "../../types";
 import { CONFIG } from "../../../config";
@@ -95,7 +95,7 @@ function calculateSellProceeds(
   proceeds: number;
   price?: number;
 } {
-  const position = positions.get(pair);
+  const position = getPositions().get(pair);
 
   if (!position || position.entryPrice <= 0) {
     return {

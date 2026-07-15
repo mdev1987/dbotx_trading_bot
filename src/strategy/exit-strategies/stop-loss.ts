@@ -1,7 +1,23 @@
-import type { Position } from "../types";
-import { PositionExitReason } from "../types";
-import type { ExitCheckResult, ExitStrategy } from "./types";
+import { ExitAction, type ExitDecision, type ExitStrategy } from "./types";
 
+import { PositionExitReason, type Position } from "../types";
+
+// ============================================================================
+// Stop Loss Strategy
+// ============================================================================
+
+/**
+ * Closes a position once its unrealized loss reaches the configured limit.
+ *
+ * Example:
+ *
+ * Entry Price:      1.00
+ * Stop Loss:      -15%
+ *
+ * Price falls to 0.85
+ *
+ * → Strategy requests a full position close.
+ */
 export class StopLossStrategy implements ExitStrategy {
   readonly name = "stop_loss";
 
@@ -10,7 +26,12 @@ export class StopLossStrategy implements ExitStrategy {
     private readonly stopLossPct: number,
   ) {}
 
-  check(position: Position, _now: number): ExitCheckResult | null {
+  /**
+   * Evaluates the current position.
+   *
+   * Returns null when no action is required.
+   */
+  check(position: Position, _now: number): ExitDecision | null {
     if (!this.enabled) {
       return null;
     }
@@ -23,6 +44,18 @@ export class StopLossStrategy implements ExitStrategy {
       return null;
     }
 
-    return { position, reason: PositionExitReason.StopLoss };
+    return {
+      position,
+
+      action: ExitAction.Close,
+
+      reason: PositionExitReason.StopLoss,
+
+      metadata: {
+        profitPct: position.currentProfitPct,
+
+        threshold: this.stopLossPct,
+      },
+    };
   }
 }

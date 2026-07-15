@@ -6,18 +6,20 @@ import {
   queueSize,
   signalQueued$,
 } from "../telegram/telegram_signal_queue";
-import { positionExitRequested$, clearPendingExit } from "../strategy/scanner";
+import {
+  exitDecision$,
+  clearPendingExit,
+} from "../strategy/positions_scanner";
 import {
   addPosition,
   removePosition,
   hasPosition,
+  getPositions,
   positionUpdated$,
-  positions,
 } from "../strategy/positions_store";
 import { trackToken, untrackToken } from "../data_stream/price_engine";
-import { PositionExitReason, type Position } from "../strategy/types";
+import { PositionExitReason, type Position, type ExitDecision } from "../strategy/types";
 import type { AveScannerSignal } from "../telegram/ave_scanner_parser";
-import type { ExitCheckResult } from "../strategy/exit-strategies/types";
 import type { TradingApi } from "./types";
 import {
   sendTelegram,
@@ -64,7 +66,7 @@ function isCircuitBreakerTripped(): boolean {
 let trading: TradingApi | null = null;
 
 function getPositionStats(): { open: number; total: number; winRate: number } {
-  const open = positions.size;
+  const open = getPositions().size;
   const closed = completedTrades.length;
   const wins = completedTrades.filter((t) => t.pnl >= 0).length;
   const winRate = closed > 0 ? wins / closed : 0;
@@ -95,7 +97,7 @@ function recordTrade(
   reason: PositionExitReason,
 ): void {
   const pnl = (closePrice - closed.entryPrice) / closed.entryPrice;
-  if (reason === PositionExitReason.PartialTP) return;
+  if (reason === PositionExitReason.PartialTakeProfit) return;
 
   completedTrades.push({
     tokenName: closed.tokenName,
@@ -173,7 +175,7 @@ function flushTradeReportBatch(): void {
     { tokenName: worst.tokenName, pnl: worst.pnl },
     exitTypes,
     avgMcap,
-    positions.size,
+    getPositions().size,
     queueSize(),
   );
 
@@ -196,7 +198,7 @@ function reasonToLabel(reason: PositionExitReason): string {
       return "Trailing Stop";
     case PositionExitReason.Expired:
       return "Expired (TTL)";
-    case PositionExitReason.PartialTP:
+    case PositionExitReason.PartialTakeProfit:
       return "Partial TP";
     case PositionExitReason.TakeProfit:
       return "Take Profit";
@@ -285,7 +287,7 @@ function processNextSignal(): void {
 
   if (
     CONFIG.maxOpenPositions > 0 &&
-    positions.size >= CONFIG.maxOpenPositions
+    getPositions().size >= CONFIG.maxOpenPositions
   ) {
     return;
   }
@@ -300,7 +302,7 @@ function processNextSignal(): void {
 /*                              Exit → Sell                                   */
 /* -------------------------------------------------------------------------- */
 
-async function onExit(result: ExitCheckResult): Promise<void> {
+async function onExit(result: ExitDecision): Promise<void> {
   const { position, reason, percentage } = result;
   const sellPct = percentage ?? 1;
   const token = position.token;
@@ -317,7 +319,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
     const sellResult = await trading.sell(pair, sellPct, tokenName, token);
     const closePrice = sellResult.price ?? position.currentPrice;
 
-    if (reason === PositionExitReason.PartialTP) {
+    if (reason === PositionExitReason.PartialTakeProfit) {
       position.soldPct = Math.min(1, (position.soldPct ?? 0) + sellPct);
       clearPendingExit(position.id);
       const remainingPct = (1 - position.soldPct) * 100;
@@ -333,6 +335,8 @@ async function onExit(result: ExitCheckResult): Promise<void> {
     }
 
     const closed = removePosition(pair, closePrice, reason);
+
+    clearPendingExit(position.id);
 
     if (closed) {
       const pnl = (closePrice - closed.entryPrice) / closed.entryPrice;
@@ -424,7 +428,7 @@ export async function startTrading(api: TradingApi): Promise<void> {
   trading = api;
 
   signalSub = signalQueued$.subscribe(() => processNextSignal());
-  exitSub = positionExitRequested$.subscribe(onExit);
+  exitSub = exitDecision$.subscribe(onExit);
 
   if (DEBUG) {
     debugSub = positionUpdated$.subscribe(onPositionUpdate);
