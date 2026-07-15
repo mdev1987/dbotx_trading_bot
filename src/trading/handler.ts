@@ -17,7 +17,6 @@ import {
 import {
   trackToken,
   untrackToken,
-  getSolPriceUsd,
 } from "../data_stream/price_engine";
 import { PositionExitReason, type Position } from "../strategy/types";
 import type { AveScannerSignal } from "../telegram/ave_scanner_parser";

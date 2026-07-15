@@ -138,21 +138,7 @@ function initPumpSub(): void {
     const rawPrice = Number(event.price);
     if (!isValidPrice(rawPrice)) return;
 
-    let priceUsd: number;
-    if (event.quoteMint === "So11111111111111111111111111111111111111112") {
-      if (solPriceUsd <= 0) return;
-      priceUsd = rawPrice * solPriceUsd;
-    } else if (
-      event.quoteMint === "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" ||
-      event.quoteMint === "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
-    ) {
-      priceUsd = rawPrice;
-    } else {
-      console.warn(`[PriceEngine] Unknown quote mint ${event.quoteMint} for ${event.mint} — price may be incorrect`);
-      priceUsd = rawPrice;
-    }
-
-    emitPrice(event.mint, undefined, priceUsd, PriceSource.PUMPAPI, event.timestamp ?? Date.now());
+    emitPrice(event.mint, undefined, rawPrice, PriceSource.PUMPAPI, event.timestamp ?? Date.now());
   });
 }
 

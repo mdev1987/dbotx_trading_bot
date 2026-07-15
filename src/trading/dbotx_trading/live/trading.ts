@@ -1,7 +1,6 @@
 import { Subject } from "rxjs";
 import { CONFIG, type PartialTpTier } from "../../../config";
 import { botHttp } from "../../http";
-import { getSolPriceUsd } from "../../../data_stream/price_engine";
 import { getLiveAccount, toTradingAccount } from "./account";
 import { addOrder, updateOrderMeta, addPosition as storeAddPosition } from "./store";
 import { buildStopEarnGroup, buildStopLossGroup, type StopEarnGroupItem, type TrailingStopGroupItem } from "../exit-config";
@@ -260,8 +259,7 @@ export const dbotxLiveTrading: TradingApi = {
 
   async getAccount(): Promise<TradingAccount> {
     const account = getLiveAccount();
-    const solPrice = getSolPriceUsd();
-    return toTradingAccount(account, solPrice);
+    return toTradingAccount(account);
   },
 
   async shutdown(): Promise<void> {

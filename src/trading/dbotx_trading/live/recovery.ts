@@ -1,7 +1,7 @@
 import { CONFIG } from "../../../config";
 import { botHttp } from "../../http";
 import { addPosition } from "../../../strategy/positions_store";
-import { trackToken, getSolPriceUsd } from "../../../data_stream/price_engine";
+import { trackToken } from "../../../data_stream/price_engine";
 import {
   getStoreOrders,
   getStoreOpenPositions,
@@ -76,15 +76,6 @@ export async function recoverLivePositions(): Promise<void> {
 
   console.log("[Recovery] Fetching recent trades for recovery...");
   try {
-    let solPrice = getSolPriceUsd();
-    if (solPrice <= 0) {
-      for (let i = 0; i < 10; i++) {
-        await delay(1000);
-        solPrice = getSolPriceUsd();
-        if (solPrice > 0) break;
-      }
-    }
-
     let page = 0;
     let allTrades: SwapTrade[] = [];
 
@@ -116,7 +107,7 @@ export async function recoverLivePositions(): Promise<void> {
       const receiveAmount = Number(trade.receive.amount) / 10 ** trade.receive.info.decimals;
       let entryPriceUsd = 0;
       if (receiveAmount > 0) {
-        entryPriceUsd = solPrice > 0 ? (sendAmount / receiveAmount) * solPrice : 0;
+        entryPriceUsd = sendAmount / receiveAmount;
       }
 
       const activeExits = await findActiveExits(trade.id);

@@ -1,5 +1,4 @@
 import { CONFIG } from "../../../config";
-import { getSolPriceUsd } from "../../../data_stream/price_engine";
 import {
   getPaperAccount,
   updatePaperBalance,
@@ -9,18 +8,8 @@ import {
 } from "./account";
 import type { OrderResult, TradingAccount, TradingApi } from "../../types";
 
-function getFillPrice(): number | undefined {
-  const solPrice = getSolPriceUsd();
-  return solPrice > 0 ? solPrice : undefined;
-}
-
 export const pumpapiPaperTrading: TradingApi = {
   async buy(pair: string, amountSol: number, tokenName: string, token: string): Promise<OrderResult> {
-    const fillPrice = getFillPrice();
-    if (!fillPrice) {
-      throw new Error("Paper trading: no SOL price available");
-    }
-
     const account = getPaperAccount();
 
     if (amountSol > account.balance) {
@@ -32,7 +21,7 @@ export const pumpapiPaperTrading: TradingApi = {
     updatePaperBalance(account.balance - amountSol);
 
     console.log(
-      `[PaperTrading] Buy ${tokenName} ${amountSol} SOL @ $${fillPrice} → bal: ${(account.balance - amountSol).toFixed(4)} SOL`,
+      `[PaperTrading] Buy ${tokenName} ${amountSol} SOL → bal: ${(account.balance - amountSol).toFixed(4)} SOL`,
     );
 
     return {
@@ -40,7 +29,6 @@ export const pumpapiPaperTrading: TradingApi = {
       status: "done",
       pair,
       type: "buy",
-      priceUsd: fillPrice,
       amountSol,
       updatedAt: Date.now(),
     };
@@ -51,13 +39,8 @@ export const pumpapiPaperTrading: TradingApi = {
       throw new Error("Sell percentage must be between 0 and 1.");
     }
 
-    const fillPrice = getFillPrice();
-    if (!fillPrice) {
-      throw new Error("Paper trading: no SOL price available");
-    }
-
     console.log(
-      `[PaperTrading] Sell ${tokenName} ${(percentage * 100).toFixed(0)}% @ $${fillPrice}`,
+      `[PaperTrading] Sell ${tokenName} ${(percentage * 100).toFixed(0)}%`,
     );
 
     return {
@@ -65,7 +48,6 @@ export const pumpapiPaperTrading: TradingApi = {
       status: "done",
       pair,
       type: "sell",
-      priceUsd: fillPrice,
       updatedAt: Date.now(),
     };
   },
