@@ -7,6 +7,9 @@ import type {
 } from "../data_stream/types";
 
 import type { Position, PositionExitReason } from "./types";
+import { CONFIG } from "../config";
+
+const DEBUG = CONFIG.logLevel === "debug";
 
 // ============================================================================
 // Repository State
@@ -290,12 +293,16 @@ export function updatePositionPrice(update: PriceInfo): void {
   if (position.entryPrice <= 0) {
     initializePositionPrice(position, update);
 
+    if (DEBUG) console.log(`[Store] Init ${position.tokenName} entry=\$${update.priceUsd}`);
+
     publish(position);
 
     return;
   }
 
   applyPriceUpdate(position, update);
+
+  if (DEBUG) console.log(`[Store] Update ${position.tokenName} price=\$${update.priceUsd} pnl=${(position.currentProfitPct * 100).toFixed(2)}%`);
 
   publish(position);
 }

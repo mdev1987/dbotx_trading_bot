@@ -1,22 +1,14 @@
 import { Subject, Subscription } from "rxjs";
 
-import type {
-  PriceInfo,
-  DbotxEvent,
-  PumpEvent,
-  TrackedToken,
-} from "./types";
+import type { PriceInfo, DexScreenerEvent, TrackedToken } from "./types";
 import { PriceSource } from "./types";
 import {
-  dbotxPriceUpdateEvent$,
-  subscribePairs,
-  unsubscribePair,
-} from "./dbotx_data_stream";
-import {
-  pumpApiPriceUpdateEvent$,
-  subscribeMint,
-  unsubscribeMint,
-} from "./pumpapi_data_stream";
+  dexScreenerPriceUpdateEvent$,
+  subscribeToken as dexSubscribeToken,
+  unsubscribeToken as dexUnsubscribeToken,
+  disconnectDexScreener,
+} from "./dexscreener_data_stream";
+import { CONFIG } from "../config";
 
 function isValidPrice(price: number): boolean {
   return Number.isFinite(price) && price > 0;
@@ -25,10 +17,11 @@ function isValidPrice(price: number): boolean {
 const trackedTokens = new Map<string, TrackedToken>();
 const pairToToken = new Map<string, string>();
 
+const DEBUG = CONFIG.logLevel === "debug";
+
 export const unifiedPriceUpdate$ = new Subject<PriceInfo>();
 
-let pumpApiSub: Subscription | null = null;
-let dbotxSub: Subscription | null = null;
+let dexSub: Subscription | null = null;
 
 /* -------------------------------------------------------------------------- */
 /*                        Token tracking                                      */
@@ -39,11 +32,8 @@ export function trackToken(token: string, pair: string): void {
 
   if (tracked) {
     if (tracked.pair !== pair) {
+      if (DEBUG) console.log(`[PriceEngine] Re-track ${token.slice(0, 8)}: ${tracked.pair.slice(0, 8)} → ${pair.slice(0, 8)}`);
       pairToToken.delete(tracked.pair);
-      unsubscribePair(tracked.pair);
-      unsubscribeMint(tracked.pair);
-      subscribePairs([pair]);
-      subscribeMint(token);
       pairToToken.set(pair, token);
       tracked.pair = pair;
     }
@@ -52,21 +42,19 @@ export function trackToken(token: string, pair: string): void {
     return;
   }
 
+  if (DEBUG) console.log(`[PriceEngine] Track ${token.slice(0, 8)} pair=${pair.slice(0, 8)}`);
   pairToToken.set(pair, token);
   trackedTokens.set(token, { pair, timestamp: Date.now() });
-  subscribePairs([pair]);
-  subscribeMint(token);
+  dexSubscribeToken(token, "solana", pair);
 }
 
 export function untrackToken(token: string): void {
   const tracked = trackedTokens.get(token);
-  if (!tracked) {
-    return;
-  }
+  if (!tracked) return;
 
+  if (DEBUG) console.log(`[PriceEngine] Untrack ${token.slice(0, 8)}`);
   pairToToken.delete(tracked.pair);
-  unsubscribePair(tracked.pair);
-  unsubscribeMint(token);
+  dexUnsubscribeToken(token);
   trackedTokens.delete(token);
 }
 
@@ -82,24 +70,17 @@ function emitPrice(
   timestamp: number,
 ): void {
   const resolvedToken = token || (pair ? pairToToken.get(pair) : undefined);
-
-  if (!resolvedToken) {
-    return;
-  }
+  if (!resolvedToken) return;
 
   const tracked = trackedTokens.get(resolvedToken);
+  if (!tracked) return;
 
-  if (!tracked) {
-    return;
-  }
-
-  if (pair && tracked.pair !== pair) {
-    return;
-  }
+  if (pair && tracked.pair !== pair) return;
 
   tracked.timestamp = timestamp;
-
   const resolvedPair = pair || tracked.pair;
+
+  if (DEBUG) console.log(`[PriceEngine] Price ${resolvedToken.slice(0, 8)}: \$${priceUsd.toExponential(4)} (${source})`);
 
   unifiedPriceUpdate$.next({
     token: resolvedToken,
@@ -107,57 +88,33 @@ function emitPrice(
     priceUsd,
     source,
     timestamp,
-    currency: source === PriceSource.PUMPAPI ? "SOL" : "USD",
+    currency: "USD",
   });
 }
 
-function initDbotxSub(): void {
-  dbotxSub = dbotxPriceUpdateEvent$.subscribe((update: DbotxEvent) => {
-    const price = update.priceUsd;
-    if (!isValidPrice(price)) return;
-    emitPrice(
-      update.token,
-      update.pair,
-      price,
-      update.source,
-      update.timestamp,
-    );
+function initDexSub(): void {
+  dexSub = dexScreenerPriceUpdateEvent$.subscribe((event: DexScreenerEvent) => {
+    if (!isValidPrice(event.priceUsd)) return;
+    emitPrice(event.token, event.pair, event.priceUsd, PriceSource.DEXSCREENER, event.timestamp);
   });
 }
 
-function initPumpSub(): void {
-  pumpApiSub = pumpApiPriceUpdateEvent$.subscribe((event: PumpEvent) => {
-    const rawPrice = Number(event.price);
-    if (!isValidPrice(rawPrice)) return;
-
-    emitPrice(event.mint, undefined, rawPrice, PriceSource.PUMPAPI, event.timestamp ?? Date.now());
-  });
-}
-
-export function initPriceEngine(usePumpApi?: boolean): void {
-  if (usePumpApi) {
-    if (pumpApiSub) return;
-    initPumpSub();
-  } else {
-    if (dbotxSub) return;
-    initDbotxSub();
-  }
-  console.log(`[PriceEngine] Initialized (source: ${usePumpApi ? "PumpAPI" : "DBotX"})`);
+export function initPriceEngine(): void {
+  if (dexSub) return;
+  initDexSub();
+  console.log("[PriceEngine] Initialized (DexScreener)");
 }
 
 export function stopPriceEngine(): void {
-  pumpApiSub?.unsubscribe();
-  dbotxSub?.unsubscribe();
-
-  pumpApiSub = null;
-  dbotxSub = null;
+  dexSub?.unsubscribe();
+  dexSub = null;
 
   for (const [token] of trackedTokens) {
-    unsubscribePair(trackedTokens.get(token)!.pair);
-    unsubscribeMint(token);
+    dexUnsubscribeToken(token);
   }
   trackedTokens.clear();
   pairToToken.clear();
 
+  disconnectDexScreener();
   console.log("[PriceEngine] Stopped");
 }

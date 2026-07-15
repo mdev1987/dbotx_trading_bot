@@ -25,15 +25,6 @@ import {
   stopPriceEngine,
 } from "./data_stream/price_engine";
 import {
-  connectDataWs,
-  disconnectDataWs,
-} from "./data_stream/dbotx_data_stream";
-import {
-  connectPumpStream,
-  disconnectPumpStream,
-} from "./data_stream/pumpapi_data_stream";
-import { updatePositionPrice } from "./strategy/positions_store";
-import {
   registerStrategies,
   scanPositions,
 } from "./strategy/positions_scanner";
@@ -84,12 +75,7 @@ const positionEngine = new PositionEngine(
 const services = {
   async start(): Promise<void> {
     initTelegramBot();
-    if (isDbotx) {
-      connectDataWs();
-    } else {
-      connectPumpStream();
-    }
-    initPriceEngine(!isDbotx);
+    initPriceEngine();
 
     if (CONFIG.liveMode) {
       if (isDbotx) {
@@ -150,11 +136,6 @@ const services = {
     stopSignalQueue();
     positionEngine.stop();
     stopPriceEngine();
-    if (isDbotx) {
-      disconnectDataWs();
-    } else {
-      disconnectPumpStream();
-    }
     stopTelegramListener();
     shutdownTelegramBot();
     console.log("[Main] All services stopped");
