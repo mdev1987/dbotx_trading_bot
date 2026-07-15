@@ -1,4 +1,4 @@
-import type { PriceSource } from "../data_stream/types";
+import type { PriceCurrency, PriceSource } from "../data_stream/types";
 
 export enum PositionExitReason {
   StopLoss = "stop_loss",
@@ -54,6 +54,8 @@ export interface Position {
   currentProfitPct: number;
   priceSource?: PriceSource;
   lastPriceTimestamp: number;
+
+  priceCurrency: PriceCurrency;
 
   signalMeta?: { marketCapUSD?: number; dex?: string };
 }

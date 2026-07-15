@@ -71,6 +71,7 @@ describe("updatePositionPrice", () => {
       priceUsd: 1.5,
       source: PriceSource.PUMPAPI,
       timestamp: 1000,
+      currency: "SOL",
     };
     updatePositionPrice(update);
     expect(pos.currentPriceUsd).toBe(1.5);
@@ -87,6 +88,7 @@ describe("updatePositionPrice", () => {
       priceUsd: 2.0,
       source: PriceSource.PUMPAPI,
       timestamp: 500,
+      currency: "SOL",
     };
     updatePositionPrice(stale);
     expect(pos.currentPriceUsd).toBe(1.0);
@@ -96,9 +98,9 @@ describe("updatePositionPrice", () => {
     addPosition("token1", "pair1", "TestToken", 1.0, 0.1);
     const pos = positions.get("pair1")!;
     pos.lastPriceTimestamp = 0;
-    const update1: PriceInfo = { token: "token1", pair: "pair1", priceUsd: 2.0, source: PriceSource.PUMPAPI, timestamp: 2000 };
+    const update1: PriceInfo = { token: "token1", pair: "pair1", priceUsd: 2.0, source: PriceSource.PUMPAPI, timestamp: 2000, currency: "SOL" };
     updatePositionPrice(update1);
-    const update2: PriceInfo = { token: "token1", pair: "pair1", priceUsd: 1.5, source: PriceSource.PUMPAPI, timestamp: 3000 };
+    const update2: PriceInfo = { token: "token1", pair: "pair1", priceUsd: 1.5, source: PriceSource.PUMPAPI, timestamp: 3000, currency: "SOL" };
     updatePositionPrice(update2);
     expect(pos.peakPriceUsd).toBe(2.0);
   });
@@ -107,7 +109,7 @@ describe("updatePositionPrice", () => {
     addPosition("token1", "pair1", "TestToken", 1.0, 0.1);
     const pos = positions.get("pair1")!;
     pos.lastPriceTimestamp = 0;
-    const bad: PriceInfo = { token: "token1", pair: "pair1", priceUsd: -1, source: PriceSource.PUMPAPI, timestamp: 1000 };
+    const bad: PriceInfo = { token: "token1", pair: "pair1", priceUsd: -1, source: PriceSource.PUMPAPI, timestamp: 1000, currency: "SOL" };
     updatePositionPrice(bad);
     expect(pos.currentPriceUsd).toBe(1.0);
   });

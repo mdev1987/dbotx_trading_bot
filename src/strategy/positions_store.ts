@@ -1,6 +1,6 @@
 import { Subject } from "rxjs";
 
-import type { PriceInfo } from "../data_stream/types";
+import type { PriceCurrency, PriceInfo } from "../data_stream/types";
 import type { Position, PositionExitReason } from "./types";
 import { clearPendingExit } from "./scanner";
 
@@ -32,45 +32,48 @@ export function addPosition(
   tokenName: string,
   entryPriceUsd: number,
   sizeSol: number,
-  signalMeta?: { marketCapUSD?: number; dex?: string },
-): Position | null {
-  if (!Number.isFinite(entryPriceUsd) || entryPriceUsd <= 0) {
-    return null;
-  }
+    signalMeta?: { marketCapUSD?: number; dex?: string },
+    priceCurrency: PriceCurrency = "USD",
+  ): Position | null {
+    if (!Number.isFinite(entryPriceUsd) || entryPriceUsd <= 0) {
+      return null;
+    }
 
-  const now = Date.now();
+    const now = Date.now();
 
-  const position: Position = {
-    id: createPositionId(),
-    token,
-    pair,
-    tokenName,
+    const position: Position = {
+      id: createPositionId(),
+      token,
+      pair,
+      tokenName,
 
-    status: "open",
+      status: "open",
 
-    openedAt: now,
-    lastUpdateAt: now,
-    lastPriceTimestamp: now,
+      openedAt: now,
+      lastUpdateAt: now,
+      lastPriceTimestamp: now,
 
-    entryPriceUsd,
-    currentPriceUsd: entryPriceUsd,
-    peakPriceUsd: entryPriceUsd,
+      entryPriceUsd,
+      currentPriceUsd: entryPriceUsd,
+      peakPriceUsd: entryPriceUsd,
 
-    currentProfitPct: 0,
+      currentProfitPct: 0,
 
-    sizeSol,
-    sizeToken: entryPriceUsd > 0
-      ? sizeSol / entryPriceUsd
-      : 0,
+      sizeSol,
+      sizeToken: entryPriceUsd > 0
+        ? sizeSol / entryPriceUsd
+        : 0,
 
-    soldPct: 0,
-    partialTierIndex: 0,
+      soldPct: 0,
+      partialTierIndex: 0,
 
-    renewedAt: now,
-    renewPriceUsd: entryPriceUsd,
+      renewedAt: now,
+      renewPriceUsd: entryPriceUsd,
 
-    signalMeta,
-  };
+      priceCurrency,
+
+      signalMeta,
+    };
 
   positions.set(pair, position);
 
@@ -127,6 +130,7 @@ export function updatePositionPrice(update: PriceInfo): void {
   position.lastPriceTimestamp = update.timestamp;
   position.lastUpdateAt = update.timestamp;
   position.priceSource = update.source;
+  position.priceCurrency = update.currency;
 
   if (price > position.peakPriceUsd) {
     position.peakPriceUsd = price;

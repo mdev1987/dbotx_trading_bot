@@ -47,6 +47,7 @@ export async function refreshLiveBalance(): Promise<LiveAccount> {
 export function toTradingAccount(account: LiveAccount): TradingAccount {
   return {
     balance: account.balance,
+    currency: "SOL",
     change24h: 0,
     changeAll: 0,
     holdTokens: 0,

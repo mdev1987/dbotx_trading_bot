@@ -4,6 +4,7 @@ import { simHttp as http } from "../../http";
 
 export interface SimulatorAccount {
   balance: number;
+  currency: "SOL" | "USD";
   change24h: number;
   changeAll: number;
   holdTokens: number;
@@ -21,6 +22,7 @@ interface SimulatorAccountResponse {
 
 let simulatorAccount: SimulatorAccount = {
   balance: 0,
+  currency: "SOL",
   change24h: 0,
   changeAll: 0,
   holdTokens: 0,
@@ -42,6 +44,7 @@ export async function refreshSimulatorAccount(): Promise<SimulatorAccount> {
 
     simulatorAccount = {
       balance: Number(response.res.balance),
+      currency: "SOL",
       change24h: response.res.change24h,
       changeAll: response.res.changeAll,
       holdTokens: response.res.holdTokens,
@@ -62,6 +65,7 @@ export function getSimulatorAccount(): SimulatorAccount {
 export function resetSimulatorAccount(): void {
   simulatorAccount = {
     balance: 0,
+    currency: "SOL",
     change24h: 0,
     changeAll: 0,
     holdTokens: 0,

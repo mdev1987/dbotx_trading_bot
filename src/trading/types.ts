@@ -13,6 +13,7 @@ export interface OrderResult {
 
 export interface TradingAccount {
   balance: number;
+  currency: "SOL" | "USD";
   change24h: number;
   changeAll: number;
   holdTokens: number;

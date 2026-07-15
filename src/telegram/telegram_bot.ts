@@ -44,11 +44,21 @@ export function sendTelegram(text: string): void {
 /*                               Formatters                                   */
 /* -------------------------------------------------------------------------- */
 
-export function fmtPrice(price: number): string {
-  if (price >= 1) return `$${price.toFixed(4)}`;
-  if (price >= 0.001) return `$${price.toFixed(6)}`;
-  if (price >= 0.000001) return `$${price.toFixed(9)}`;
-  return `$${price.toFixed(12)}`;
+export function fmtPrice(price: number, currency?: "SOL" | "USD"): string {
+  const s = price >= 1
+    ? price.toFixed(4)
+    : price >= 0.001
+      ? price.toFixed(6)
+      : price >= 0.000001
+        ? price.toFixed(9)
+        : price.toFixed(12);
+  if (currency === "SOL") return `${s} SOL`;
+  return `$${s}`;
+}
+
+function fmtBalance(balance: number, currency: "SOL" | "USD"): string {
+  if (currency === "SOL") return `${balance.toFixed(4)} SOL`;
+  return `$${balance.toFixed(2)}`;
 }
 
 export function fmtPct(value: number): string {
@@ -78,7 +88,8 @@ export function notifyBuyOpened(
   tokenName: string,
   fillPrice: number,
   sizeSol: number,
-  balanceUsd: number,
+  balance: number,
+  balanceCurrency: "SOL" | "USD",
   mcap?: number,
   dex?: string,
   openPositions?: number,
@@ -91,7 +102,7 @@ export function notifyBuyOpened(
     `🔖 Token: \`${tokenName}\``,
     `💵 Entry: \`${fmtPrice(fillPrice)}\``,
     `💰 Size: \`${sizeSol} SOL\``,
-    `💳 Balance: \`$${balanceUsd.toFixed(2)}\``,
+    `💳 Balance: \`${fmtBalance(balance, balanceCurrency)}\``,
   ];
 
   if (mcap) lines.push(`📊 MCap: \`${fmtMcap(mcap)}\``);
@@ -110,7 +121,8 @@ export function notifyTradeClosed(
   entryPrice: number,
   exitPrice: number,
   sizeSol: number,
-  balanceUsd: number,
+  balance: number,
+  balanceCurrency: "SOL" | "USD",
   reason: string,
   durationMs: number,
   openPositions?: number,
@@ -127,7 +139,7 @@ export function notifyTradeClosed(
     `💵 Entry: \`${fmtPrice(entryPrice)}\``,
     `💵 Exit: \`${fmtPrice(exitPrice)}\``,
     `💰 Size: \`${sizeSol} SOL\``,
-    `💳 Balance: \`$${balanceUsd.toFixed(2)}\``,
+    `💳 Balance: \`${fmtBalance(balance, balanceCurrency)}\``,
     `📋 Reason: \`${reason}\``,
     `⏱ Duration: \`${fmtDuration(durationMs)}\``,
   ];

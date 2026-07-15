@@ -39,6 +39,7 @@ export function toTradingAccount(account: PaperAccount): TradingAccount {
 
   return {
     balance: account.balance,
+    currency: "SOL",
     change24h: 0,
     changeAll: changeTotal,
     holdTokens: 0,

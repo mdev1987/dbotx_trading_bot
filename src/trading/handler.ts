@@ -245,6 +245,8 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       return;
     }
 
+    const priceCurrency: "SOL" | "USD" = CONFIG.tradingEngine === "dbotx" ? "USD" : "SOL";
+
     const position = addPosition(
       token,
       pair,
@@ -252,6 +254,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       fillPrice,
       CONFIG.positionSize,
       signalMeta,
+      priceCurrency,
     );
     if (!position) {
       console.log(`[Handler] Skipping ${tokenName} — addPosition failed`);
@@ -267,6 +270,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       fillPrice,
       CONFIG.positionSize,
       account.balance,
+      account.currency,
       signal.marketCapUSD,
       signal.dex,
       stats.open,
@@ -331,7 +335,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
           ? ` · Win rate: \`${(stats.winRate * 100).toFixed(0)}%\``
           : "";
       sendTelegram(
-        `🟡 **Partial TP**\n━━━━━━━━━━━━━━━━━━━\n🔖 Token: \`${tokenName}\`\n💵 Sold at: \`${fmtPrice(closePrice)}\`\n📊 Sold: \`${(sellPct * 100).toFixed(0)}%\`\n📊 Remaining: \`${remainingPct.toFixed(0)}%\`\n📊 Positions: \`${stats.open}/${stats.total}\`${wr}`,
+        `🟡 **Partial TP**\n━━━━━━━━━━━━━━━━━━━\n🔖 Token: \`${tokenName}\`\n💵 Sold at: \`${fmtPrice(closePrice, position.priceCurrency)}\`\n📊 Sold: \`${(sellPct * 100).toFixed(0)}%\`\n📊 Remaining: \`${remainingPct.toFixed(0)}%\`\n📊 Positions: \`${stats.open}/${stats.total}\`${wr}`,
       );
       return;
     }
@@ -382,6 +386,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
         closePrice,
         closed.sizeSol,
         account.balance,
+        account.currency,
         reasonToLabel(reason),
         durationMs,
         stats.open,

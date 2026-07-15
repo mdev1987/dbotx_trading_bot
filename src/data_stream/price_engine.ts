@@ -115,6 +115,7 @@ function emitPrice(
     priceUsd,
     source,
     timestamp,
+    currency: source === PriceSource.PUMPAPI ? "SOL" : "USD",
   });
 }
 

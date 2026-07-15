@@ -4,12 +4,15 @@ export enum PriceSource {
   DEXSCREENER = "dexscreener",
 }
 
+export type PriceCurrency = "SOL" | "USD";
+
 export interface PriceInfo {
   token: string;
   pair?: string;
   priceUsd: number;
   source: PriceSource;
   timestamp: number;
+  currency: PriceCurrency;
 }
 
 export interface DbotxEvent {

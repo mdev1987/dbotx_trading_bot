@@ -27,6 +27,7 @@ function makePos(overrides: Partial<Position> = {}): Position {
     lastUpdateAt: now,
     currentProfitPct: 0,
     lastPriceTimestamp: now,
+    priceCurrency: "USD",
     ...overrides,
   };
 }
