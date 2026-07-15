@@ -6,6 +6,7 @@ import {
   resetPaperAccount,
   toTradingAccount,
 } from "./account";
+import { positions } from "../../../strategy/positions_store";
 import type { OrderResult, TradingAccount, TradingApi } from "../../types";
 
 export const pumpapiPaperTrading: TradingApi = {
@@ -39,8 +40,25 @@ export const pumpapiPaperTrading: TradingApi = {
       throw new Error("Sell percentage must be between 0 and 1.");
     }
 
+    const account = getPaperAccount();
+    const position = positions.get(pair);
+
+    let proceedsSol = 0;
+    let priceUsd: number | undefined;
+
+    if (position && position.entryPriceUsd > 0) {
+      const exitPrice = position.currentPriceUsd;
+      const valueMultiplier = exitPrice / position.entryPriceUsd;
+      proceedsSol = position.sizeSol * valueMultiplier * percentage;
+      priceUsd = exitPrice;
+    }
+
+    if (proceedsSol > 0) {
+      updatePaperBalance(account.balance + proceedsSol);
+    }
+
     console.log(
-      `[PaperTrading] Sell ${tokenName} ${(percentage * 100).toFixed(0)}%`,
+      `[PaperTrading] Sell ${tokenName} ${(percentage * 100).toFixed(0)}% → proceeds: ${proceedsSol.toFixed(6)} SOL, bal: ${(account.balance + proceedsSol).toFixed(4)} SOL`,
     );
 
     return {
@@ -48,6 +66,7 @@ export const pumpapiPaperTrading: TradingApi = {
       status: "done",
       pair,
       type: "sell",
+      priceUsd,
       updatedAt: Date.now(),
     };
   },

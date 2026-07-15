@@ -6,9 +6,7 @@ import { PriceSource, type DbotxEvent, type DbotxTrade, type DbotxWsPacket } fro
 interface PairState {
   pair: string;
   priceUsd: number;
-  priceSol: number;
   previousPriceUsd: number;
-  previousPriceSol: number;
   lastSide: "buy" | "sell";
   lastTradeUsd: number;
   lastTradeSol: number;
@@ -180,7 +178,6 @@ function processTrade(trade: DbotxTrade): void {
   const inv = 1 / trade.q;
 
   const priceUsd = trade.u * inv;
-  const priceSol = trade.s * inv;
 
   let state = states.get(trade.p);
 
@@ -189,10 +186,8 @@ function processTrade(trade: DbotxTrade): void {
       pair: trade.p,
 
       priceUsd,
-      priceSol,
 
       previousPriceUsd: priceUsd,
-      previousPriceSol: priceSol,
 
       lastSide: trade.tt,
 
@@ -212,7 +207,6 @@ function processTrade(trade: DbotxTrade): void {
       pair: trade.p,
       token: "",
       priceUsd,
-      priceSol,
       source: PriceSource.DBOTX,
       timestamp: trade.t * 1000,
     });
@@ -221,10 +215,8 @@ function processTrade(trade: DbotxTrade): void {
   }
 
   state.previousPriceUsd = state.priceUsd;
-  state.previousPriceSol = state.priceSol;
 
   state.priceUsd = priceUsd;
-  state.priceSol = priceSol;
 
   state.lastSide = trade.tt;
 
@@ -241,7 +233,6 @@ function processTrade(trade: DbotxTrade): void {
     pair: trade.p,
     token: "",
     priceUsd,
-    priceSol,
     source: PriceSource.DBOTX,
     timestamp: trade.t * 1000,
   });

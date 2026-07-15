@@ -276,6 +276,7 @@ async function onSignal(signal: AveScannerSignal): Promise<void> {
       stats.open,
       stats.total,
       stats.winRate,
+      priceCurrency,
     );
   } catch (err) {
     console.error(`[Handler] Buy failed for ${tokenName}:`, err);
@@ -392,6 +393,7 @@ async function onExit(result: ExitCheckResult): Promise<void> {
         stats.open,
         stats.total,
         stats.winRate,
+        closed.priceCurrency,
       );
 
       untrackToken(token);

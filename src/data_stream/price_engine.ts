@@ -27,22 +27,6 @@ let pumpApiSub: Subscription | null = null;
 let dbotxSub: Subscription | null = null;
 
 /* -------------------------------------------------------------------------- */
-/*                            SOL → USD rate                                  */
-/* -------------------------------------------------------------------------- */
-
-let solPriceUsd = 0;
-
-export function getSolPriceUsd(): number {
-  return solPriceUsd;
-}
-
-function updateSolPriceFromEvent(priceUsd: number, priceSol: number): void {
-  if (priceSol > 0 && priceUsd > 0) {
-    solPriceUsd = priceUsd / priceSol;
-  }
-}
-
-/* -------------------------------------------------------------------------- */
 /*                        Token tracking                                      */
 /* -------------------------------------------------------------------------- */
 
@@ -123,7 +107,6 @@ function initDbotxSub(): void {
   dbotxSub = dbotxPriceUpdateEvent$.subscribe((update: DbotxEvent) => {
     const price = update.priceUsd;
     if (!isValidPrice(price)) return;
-    updateSolPriceFromEvent(update.priceUsd, update.priceSol);
     emitPrice(
       update.token,
       update.pair,

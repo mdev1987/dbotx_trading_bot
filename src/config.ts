@@ -168,10 +168,10 @@ export const CONFIG = {
 
   // Price Data Streams
   pumpapiWsUrl: process.env.PUMPAPI_WS_URL ?? "wss://stream.pumpapi.io/",
-  dexscreenerApiUrl:
-    process.env.DEXSCREENER_API_URL ??
-    "https://api.dexscreener.com/tokens/v1/solana",
-  dexscreenerPollIntervalMs: number("DEXSCREENER_POLL_INTERVAL_MS", 30_000),
+  // dexscreenerApiUrl:
+  //   process.env.DEXSCREENER_API_URL ??
+  //   "https://api.dexscreener.com/tokens/v1/solana",
+  // dexscreenerPollIntervalMs: number("DEXSCREENER_POLL_INTERVAL_MS", 30_000),
   wsDataMaxReconnectDelayMs: number("WS_DATA_MAX_RECONNECT_DELAY_MS", 30_000),
   wsDataInitialReconnectDelayMs: number(
     "WS_DATA_INITIAL_RECONNECT_DELAY_MS",

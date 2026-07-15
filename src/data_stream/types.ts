@@ -1,7 +1,7 @@
 export enum PriceSource {
   DBOTX = "dbotx",
   PUMPAPI = "pumpapi",
-  DEXSCREENER = "dexscreener",
+  // DEXSCREENER = "dexscreener",
 }
 
 export type PriceCurrency = "SOL" | "USD";
@@ -19,7 +19,6 @@ export interface DbotxEvent {
   pair: string;
   token: string;
   priceUsd: number;
-  priceSol: number;
   source: PriceSource;
   timestamp: number;
 }
@@ -33,31 +32,31 @@ export interface PumpEvent {
   timestamp: number;
 }
 
-export interface DexScreenerEvent {
-  token: string;
-  pair: string;
-  priceUsd: number;
-  source: PriceSource;
-  timestamp: number;
-}
+// export interface DexScreenerEvent {
+//   token: string;
+//   pair: string;
+//   priceUsd: number;
+//   source: PriceSource;
+//   timestamp: number;
+// }
 
 export interface TrackedToken {
   pair: string;
   timestamp: number;
 }
 
-export interface DexPair {
-  chainId: string;
-  dexId: string;
-  pairAddress: string;
-  baseToken: { address: string; symbol: string; name: string };
-  quoteToken: { address: string; symbol: string };
-  priceUsd: string;
-  priceNative: string;
-  liquidity?: { usd?: number };
-  fdv?: number;
-  marketCap?: number;
-}
+// export interface DexPair {
+//   chainId: string;
+//   dexId: string;
+//   pairAddress: string;
+//   baseToken: { address: string; symbol: string; name: string };
+//   quoteToken: { address: string; symbol: string };
+//   priceUsd: string;
+//   priceNative: string;
+//   liquidity?: { usd?: number };
+//   fdv?: number;
+//   marketCap?: number;
+// }
 
 export interface DbotxTrade {
   p: string;

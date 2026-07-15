@@ -95,12 +95,13 @@ export function notifyBuyOpened(
   openPositions?: number,
   totalPositions?: number,
   winRate?: number,
+  priceCurrency?: "SOL" | "USD",
 ): void {
   const lines = [
     `🟢 **Position Opened**`,
     `━━━━━━━━━━━━━━━━━━━`,
     `🔖 Token: \`${tokenName}\``,
-    `💵 Entry: \`${fmtPrice(fillPrice)}\``,
+    `💵 Entry: \`${fmtPrice(fillPrice, priceCurrency)}\``,
     `💰 Size: \`${sizeSol} SOL\``,
     `💳 Balance: \`${fmtBalance(balance, balanceCurrency)}\``,
   ];
@@ -128,6 +129,7 @@ export function notifyTradeClosed(
   openPositions?: number,
   totalPositions?: number,
   winRate?: number,
+  priceCurrency?: "SOL" | "USD",
 ): void {
   const label = pnl >= 0 ? "🟢" : "🔴";
 
@@ -136,8 +138,8 @@ export function notifyTradeClosed(
     `━━━━━━━━━━━━━━━━━━━`,
     `🔖 Token: \`${tokenName}\``,
     `📈 PnL: **${fmtPct(pnl)}**`,
-    `💵 Entry: \`${fmtPrice(entryPrice)}\``,
-    `💵 Exit: \`${fmtPrice(exitPrice)}\``,
+    `💵 Entry: \`${fmtPrice(entryPrice, priceCurrency)}\``,
+    `💵 Exit: \`${fmtPrice(exitPrice, priceCurrency)}\``,
     `💰 Size: \`${sizeSol} SOL\``,
     `💳 Balance: \`${fmtBalance(balance, balanceCurrency)}\``,
     `📋 Reason: \`${reason}\``,
