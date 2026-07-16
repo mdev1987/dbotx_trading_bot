@@ -65,30 +65,33 @@ interface PumpApiTradeResponse {
 // ============================================================================
 
 /**
- * Converts the application's slippage configuration into
- * PumpAPI's expected integer percentage.
+ * Converts a decimal slippage value into PumpAPI's expected integer
+ * percentage (1–99).
  *
- * Example:
- *
- * 0.10 -> 10
- * 0.25 -> 25
- * 1.00 -> 99 (clamped)
+ * Examples:
+ *   0.10 -> 10
+ *   0.25 -> 25
+ *   1.00 -> 99 (clamped)
  */
-function parseSlippage(): number {
-  const percent = Math.round(CONFIG.maxSlippage * 100);
-
+function parseSlippage(base: number): number {
+  const percent = Math.round(base * 100);
   return Math.min(Math.max(percent, 1), 99);
 }
 
 /**
- * Parses the configured priority fee.
+ * Parses a priority fee string and checks whether custom fees are enabled.
  *
- * Returns undefined when disabled.
+ * Returns undefined when:
+ *  - `enabled` is false
+ *  - the value is empty, NaN, or ≤ 0
  */
-function parsePriorityFee(): number | undefined {
-  const value = Number(CONFIG.priorityFee);
-
-  return Number.isFinite(value) && value > 0 ? value : undefined;
+function parsePriorityFee(
+  value: string,
+  enabled: boolean,
+): number | undefined {
+  if (!enabled) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 // ============================================================================
@@ -149,28 +152,6 @@ function validateResponse(response: PumpApiTradeResponse): void {
 // ============================================================================
 
 /**
- * Creates an immutable PumpAPI trade request.
- */
-function createTradeRequest(
-  action: "buy" | "sell",
-  mint: string,
-  amount: number | string,
-): Readonly<PumpApiTradeRequest> {
-  validateConfiguration();
-  validateMint(mint);
-
-  return Object.freeze({
-    privateKey: CONFIG.pumpapiPrivateKey,
-    action,
-    mint,
-    amount,
-    denominatedInQuote: true,
-    slippage: parseSlippage(),
-    priorityFee: parsePriorityFee(),
-  });
-}
-
-/**
  * Returns the transaction signature.
  */
 function getSignature(response: PumpApiTradeResponse): string {
@@ -184,18 +165,29 @@ function getSignature(response: PumpApiTradeResponse): string {
 /**
  * Executes a trade through PumpAPI.
  *
- * This function is responsible for:
- *   - Building the request
- *   - Sending it to PumpAPI
- *   - Validating the response
- *   - Returning a normalized OrderResult
+ * Accepts pre-resolved slippage and priorityFee so the caller can use
+ * entry- or exit-specific configuration.
  */
 async function submitTrade(
+  pair: string,
   action: "buy" | "sell",
   mint: string,
   amount: number | string,
+  slippage: number,
+  priorityFee: number | undefined,
 ): Promise<OrderResult> {
-  const request = createTradeRequest(action, mint, amount);
+  validateConfiguration();
+  validateMint(mint);
+
+  const request: Readonly<PumpApiTradeRequest> = Object.freeze({
+    privateKey: CONFIG.pumpapiPrivateKey,
+    action,
+    mint,
+    amount,
+    denominatedInQuote: true,
+    slippage,
+    priorityFee,
+  });
 
   console.log(`[PumpAPI] ${action.toUpperCase()} ${mint.slice(0, 8)}...`);
 
@@ -225,7 +217,7 @@ async function submitTrade(
   return {
     id: txHash.slice(0, 16),
     status: "done",
-    pair: "",
+    pair,
     type: action,
     price: undefined,
     amountSol,
@@ -253,7 +245,14 @@ export const pumpapiLiveTrading: TradingApi = {
   ): Promise<OrderResult> {
     validateBuyAmount(amountSol);
 
-    return submitTrade("buy", mint, amountSol);
+    return submitTrade(
+      pair,
+      "buy",
+      mint,
+      amountSol,
+      parseSlippage(CONFIG.maxSlippage),
+      parsePriorityFee(CONFIG.priorityFee, CONFIG.customFeeAndTip),
+    );
   },
 
   /**
@@ -261,6 +260,9 @@ export const pumpapiLiveTrading: TradingApi = {
    *
    * PumpAPI expects the amount as a percentage
    * string ("25%", "100%", etc.).
+   *
+   * When pnlCustomConfigEnabled is true, exit-specific fee and slippage
+   * settings are used instead of the entry defaults.
    */
   async sell(
     pair: string,
@@ -272,17 +274,33 @@ export const pumpapiLiveTrading: TradingApi = {
 
     const amount = `${Math.round(percentage * 100)}%`;
 
-    return submitTrade("sell", mint, amount);
+    const useExitConfig = CONFIG.pnlCustomConfigEnabled;
+
+    const slippage = parseSlippage(
+      useExitConfig ? CONFIG.exitMaxSlippage : CONFIG.maxSlippage,
+    );
+
+    const priorityFee = parsePriorityFee(
+      useExitConfig ? CONFIG.exitPriorityFee : CONFIG.priorityFee,
+      useExitConfig ? CONFIG.exitCustomFeeAndTip : CONFIG.customFeeAndTip,
+    );
+
+    return submitTrade(pair, "sell", mint, amount, slippage, priorityFee);
   },
 
   /**
    * Returns the current trading account.
    *
-   * If the balance has not yet been loaded,
-   * refresh it from PumpAPI.
-   */
+   * Balance is cached for CONFIG.balanceTtlMs to avoid paying the
+    * 10 000‑lamport getBalances fee on every call.
+    */
   async getAccount(): Promise<TradingAccount> {
-    if (!getPumpAccount().balance) {
+    const cached = getPumpAccount();
+
+    if (
+      !cached.balance ||
+      Date.now() - cached.updatedAt > CONFIG.balanceTtlMs
+    ) {
       await refreshPumpBalance();
     }
 

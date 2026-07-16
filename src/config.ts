@@ -115,9 +115,9 @@ export const CONFIG = {
     (process.env.LIVE_JITO_ENABLED ?? "true").toLowerCase() === "true",
   jitoTip: number("LIVE_JITO_TIP", 0.0001),
   customFeeAndTip:
-    (process.env.LIVE_CUSTOM_FEE_AND_TIP ?? "false").toLowerCase() === "true",
-  priorityFee: process.env.LIVE_PRIORITY_FEE ?? "",
-  maxSlippage: number("LIVE_MAX_SLIPPAGE", 0.1),
+    (process.env.LIVE_CUSTOM_FEE_AND_TIP ?? "true").toLowerCase() === "true",
+  priorityFee: process.env.LIVE_PRIORITY_FEE ?? "0.00002",
+  maxSlippage: number("LIVE_MAX_SLIPPAGE", 0.15),
   concurrentNodes: number("LIVE_CONCURRENT_NODES", 2),
   retries: number("LIVE_RETRIES", 1),
   migrateSellPercent: number("LIVE_MIGRATE_SELL_PERCENT", 1),
@@ -142,13 +142,14 @@ export const CONFIG = {
     (process.env.LIVE_PNL_CUSTOM_CONFIG_ENABLED ?? "true").toLowerCase() ===
     "true",
   exitCustomFeeAndTip:
-    (process.env.LIVE_EXIT_CUSTOM_FEE_AND_TIP ?? "false").toLowerCase() ===
+    (process.env.LIVE_EXIT_CUSTOM_FEE_AND_TIP ?? "true").toLowerCase() ===
     "true",
-  exitPriorityFee: process.env.LIVE_EXIT_PRIORITY_FEE ?? "",
+  exitPriorityFee: process.env.LIVE_EXIT_PRIORITY_FEE ?? "0.00005",
   exitJitoEnabled:
     (process.env.LIVE_EXIT_JITO_ENABLED ?? "true").toLowerCase() === "true",
   exitJitoTip: number("LIVE_EXIT_JITO_TIP", 0.0001),
   exitMaxSlippage: number("LIVE_EXIT_MAX_SLIPPAGE", 0.3),
+  balanceTtlMs: number("BALANCE_TTL_MS", 60_000),
   exitConcurrentNodes: number("LIVE_EXIT_CONCURRENT_NODES", 2),
   exitRetries: number("LIVE_EXIT_RETRIES", 2),
 
@@ -173,10 +174,9 @@ export const CONFIG = {
 
   // Price Data Streams
   pumpapiWsUrl: process.env.PUMPAPI_WS_URL ?? "wss://stream.pumpapi.io/",
-  // dexscreenerApiUrl:
-  //   process.env.DEXSCREENER_API_URL ??
-  //   "https://api.dexscreener.com/tokens/v1/solana",
-  // dexscreenerPollIntervalMs: number("DEXSCREENER_POLL_INTERVAL_MS", 30_000),
+  dexscreenerApiUrl:
+    process.env.DEXSCREENER_API_URL ?? "https://api.dexscreener.com/tokens/v1",
+  dexscreenerPollIntervalMs: number("DEXSCREENER_POLL_INTERVAL_MS", 200),
   wsDataMaxReconnectDelayMs: number("WS_DATA_MAX_RECONNECT_DELAY_MS", 30_000),
   wsDataInitialReconnectDelayMs: number(
     "WS_DATA_INITIAL_RECONNECT_DELAY_MS",
